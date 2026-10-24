@@ -12,8 +12,17 @@ import {
   where,
   orderBy
 } from 'firebase/firestore';
-import { UserProfile, ContactMessage, AnnouncementItem, FaqItem } from '../types';
+import {
+  UserProfile,
+  ContactMessage,
+  AnnouncementItem,
+  FaqItem,
+  CourseItem,
+  TimetableEntry,
+  AcademicLevel
+} from '../types';
 import { SOT_DEPARTMENTS_LIST, INITIAL_ANNOUNCEMENTS } from '../data/departments';
+import { INITIAL_COURSES, INITIAL_TIMETABLES } from '../data/coursesAndTimetables';
 import {
   ShieldAlert,
   Users,
@@ -40,7 +49,13 @@ import {
   RefreshCw,
   Home,
   Bot,
-  HelpCircle
+  HelpCircle,
+  BookOpen,
+  Calendar,
+  Clock,
+  Award,
+  Check,
+  CheckSquare
 } from 'lucide-react';
 
 interface AdminDashboardProps {
@@ -50,7 +65,7 @@ interface AdminDashboardProps {
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }) => {
   const { user, profile, isAdmin, roleReadError, refreshProfile, logout } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'messages' | 'announcements' | 'faqs'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'messages' | 'announcements' | 'courses' | 'timetables' | 'faqs'>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Data states
@@ -58,7 +73,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
   const [loading, setLoading] = useState(true);
+
+  // Message reply drafts
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replySuccessMessage, setReplySuccessMessage] = useState<string | null>(null);
+
+  // Course management states
+  const [showCourseModal, setShowCourseModal] = useState(false);
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
+  const [courseDept, setCourseDept] = useState(SOT_DEPARTMENTS_LIST[0]);
+  const [courseCode, setCourseCode] = useState('');
+  const [courseTitle, setCourseTitle] = useState('');
+  const [courseLevel, setCourseLevel] = useState<AcademicLevel>('ND I');
+  const [courseSemester, setCourseSemester] = useState<'1st Semester' | '2nd Semester'>('1st Semester');
+  const [courseSearch, setCourseSearch] = useState('');
+  const [courseDeptFilter, setCourseDeptFilter] = useState('All');
+  const [courseLevelFilter, setCourseLevelFilter] = useState('All');
+
+  // Timetable management states
+  const [showTtModal, setShowTtModal] = useState(false);
+  const [editingTtId, setEditingTtId] = useState<string | null>(null);
+  const [ttDept, setTtDept] = useState(SOT_DEPARTMENTS_LIST[0]);
+  const [ttLevel, setTtLevel] = useState<AcademicLevel>('ND I');
+  const [ttDay, setTtDay] = useState('Monday');
+  const [ttStartTime, setTtStartTime] = useState('08:00 AM');
+  const [ttEndTime, setTtEndTime] = useState('10:00 AM');
+  const [ttCourseCode, setTtCourseCode] = useState('');
+  const [ttVenue, setTtVenue] = useState('Hall 1');
+  const [ttType, setTtType] = useState<'class' | 'exam'>('class');
+  const [ttDeptFilter, setTtDeptFilter] = useState('All');
+  const [ttLevelFilter, setTtLevelFilter] = useState('All');
+  const [ttTypeFilter, setTtTypeFilter] = useState<'All' | 'class' | 'exam'>('All');
 
   // FAQ modal & form
   const [showFaqModal, setShowFaqModal] = useState(false);

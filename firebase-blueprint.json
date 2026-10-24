@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Student or Admin user profile",
+      "description": "Student, Course Rep, or Admin user profile",
       "type": "object",
       "properties": {
         "uid": {
@@ -19,7 +19,7 @@
         },
         "role": {
           "type": "string",
-          "enum": ["student", "admin"]
+          "enum": ["student", "rep", "admin"]
         },
         "department": {
           "type": "string",
@@ -35,6 +35,10 @@
         "disabled": {
           "type": "boolean"
         },
+        "lastSeenAnnouncements": {
+          "type": "string",
+          "format": "date-time"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -45,6 +49,40 @@
         }
       },
       "required": ["uid", "email", "profileComplete", "role"]
+    },
+    "CourseItem": {
+      "title": "CourseItem",
+      "description": "Department syllabus courses categorized by academic level and semester",
+      "type": "object",
+      "properties": {
+        "department": { "type": "string", "maxLength": 64 },
+        "code": { "type": "string", "maxLength": 32 },
+        "title": { "type": "string", "maxLength": 200 },
+        "level": { "type": "string", "enum": ["ND I", "ND II", "HND I", "HND II"] },
+        "semester": { "type": "string", "enum": ["1st Semester", "2nd Semester"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["department", "code", "title", "level", "semester"]
+    },
+    "TimetableEntry": {
+      "title": "TimetableEntry",
+      "description": "Department weekly class schedule or examination timetable",
+      "type": "object",
+      "properties": {
+        "department": { "type": "string", "maxLength": 64 },
+        "level": { "type": "string", "enum": ["ND I", "ND II", "HND I", "HND II"] },
+        "day": { "type": "string", "enum": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] },
+        "startTime": { "type": "string", "maxLength": 32 },
+        "endTime": { "type": "string", "maxLength": 32 },
+        "courseCode": { "type": "string", "maxLength": 64 },
+        "venue": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["class", "exam"] },
+        "date": { "type": "string", "maxLength": 32 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["department", "level", "day", "startTime", "endTime", "courseCode", "venue", "type"]
     },
     "AdminDoc": {
       "title": "AdminDoc",
@@ -70,7 +108,7 @@
     },
     "ContactMessage": {
       "title": "ContactMessage",
-      "description": "Contact form submissions including complaints, reviews, and enquiries",
+      "description": "Contact form submissions including complaints, reviews, and enquiries with admin tracking & reply",
       "type": "object",
       "properties": {
         "name": { "type": "string", "maxLength": 128 },
@@ -79,13 +117,17 @@
         "message": { "type": "string", "maxLength": 3000 },
         "status": { "type": "string", "enum": ["New", "Read", "Resolved"] },
         "userId": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "uid": { "type": "string" },
+        "adminReply": { "type": "string", "maxLength": 3000 },
+        "repliedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["name", "email", "type", "message", "status"]
     },
     "Announcement": {
       "title": "Announcement",
-      "description": "Faculty announcements created by admins",
+      "description": "Faculty announcements created by admins or department course reps",
       "type": "object",
       "properties": {
         "title": { "type": "string", "maxLength": 200 },
@@ -114,23 +156,35 @@
   "firestore": {
     "/users/{userId}": {
       "schema": "UserProfile",
-      "description": "User profiles. Students read/write own; Admins read all"
+      "description": "User profiles. Students read/write own; Admins read/manage all"
     },
     "/admins/{adminId}": {
       "schema": "AdminDoc",
       "description": "Admin authorization documents"
     },
+    "/matricNumbers/{matricId}": {
+      "schema": "MatricRegistry",
+      "description": "Active matriculation number reservation documents"
+    },
     "/matric_registry/{matricId}": {
       "schema": "MatricRegistry",
-      "description": "Guarantees matric number uniqueness"
+      "description": "Legacy matric number uniqueness mapping"
+    },
+    "/courses/{courseId}": {
+      "schema": "CourseItem",
+      "description": "Department syllabus courses. Read by all students; Managed by admins"
+    },
+    "/timetables/{timetableId}": {
+      "schema": "TimetableEntry",
+      "description": "Department class and exam timetables. Read by students; Managed by admins"
     },
     "/messages/{messageId}": {
       "schema": "ContactMessage",
-      "description": "Contact enquiries, complaints, and reviews"
+      "description": "Contact enquiries, complaints, and reviews with student tracking & admin replies"
     },
     "/announcements/{announcementId}": {
       "schema": "Announcement",
-      "description": "Department and general announcements"
+      "description": "Department and general announcements posted by admins and department reps"
     },
     "/faqs/{faqId}": {
       "schema": "FaqItem",
@@ -138,4 +192,3 @@
     }
   }
 }
-

@@ -28,6 +28,14 @@ service cloud.firestore {
       );
     }
 
+    function isRep() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'rep' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Rep' ||
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'REP');
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -58,9 +66,9 @@ service cloud.firestore {
                        (incoming().role == 'student' || isAdmin());
 
       // Update profile:
-      // Students can update their own details (name, department, matric if completing profile)
-      // but cannot elevate their own role to admin!
-      // Admins can update any profile (e.g., disable/delete)
+      // Students/reps can update their own details (name, department, matric, lastSeenAnnouncements)
+      // but cannot elevate their own role to admin or rep!
+      // Admins can update any profile (e.g. promote to rep, disable, delete)
       allow update: if (
         (isOwner(userId) && isValidId(userId) && incoming().uid == existing().uid && (incoming().role == existing().role || isAdmin())) ||
         isAdmin()
@@ -107,7 +115,23 @@ service cloud.firestore {
                      );
     }
 
-    // Contact Messages (Complaints, Reviews, Enquiries)
+    // Department Courses Collection
+    match /courses/{courseId} {
+      // Courses are visible to all students and visitors
+      allow read, list: if true;
+      // Only admins can create, edit, or delete courses
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Timetables Collection (Class schedules & Exam timetables)
+    match /timetables/{timetableId} {
+      // Any signed in student can read timetables
+      allow read, list: if isSignedIn();
+      // Only admins can create, edit, or delete timetable entries
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Contact Messages (Complaints, Reviews, Enquiries with tracking & replies)
     match /messages/{messageId} {
       // Anyone logged in or guest submitting from contact page can create
       allow create: if isValidId(messageId) &&
@@ -116,16 +140,40 @@ service cloud.firestore {
                        incoming().type in ['Complaint', 'Review', 'Enquiry'] &&
                        incoming().status in ['New', 'Read', 'Resolved'];
 
-      // Only admins can read, list, update status, or delete messages
-      allow read, list, update, delete: if isAdmin();
+      // Admins can read all; Students can read their own submitted messages
+      allow get: if isAdmin() || (
+        isSignedIn() && (
+          (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+          (resource.data.uid != null && resource.data.uid == request.auth.uid)
+        )
+      );
+
+      allow list: if isAdmin() || (
+        isSignedIn() && (
+          (resource.data.userId != null && resource.data.userId == request.auth.uid) ||
+          (resource.data.uid != null && resource.data.uid == request.auth.uid)
+        )
+      );
+
+      // Only admins can update status, provide admin replies, or delete messages
+      allow update, delete: if isAdmin();
     }
 
     // Announcements
     match /announcements/{announcementId} {
       // Anyone signed in can read announcements
       allow read, list: if isSignedIn();
-      // Only admins can create, edit, or delete announcements
-      allow create, update, delete: if isAdmin();
+
+      // Admins can create any announcement.
+      // Course Reps can create announcements ONLY for their own department!
+      allow create: if isAdmin() || (
+        isRep() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        incoming().department == get(/databases/$(database)/documents/users/$(request.auth.uid)).data.department
+      );
+
+      // Only admins can edit or delete announcements
+      allow update, delete: if isAdmin();
     }
 
     // FAQs (Chatbot Knowledge Base & Public FAQs)
@@ -137,4 +185,3 @@ service cloud.firestore {
     }
   }
 }
-

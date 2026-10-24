@@ -1,4 +1,4 @@
-export type UserRole = 'student' | 'admin';
+export type UserRole = 'student' | 'rep' | 'admin';
 
 export interface UserProfile {
   uid: string;
@@ -9,6 +9,7 @@ export interface UserProfile {
   profileComplete: boolean;
   role: UserRole;
   disabled?: boolean;
+  lastSeenAnnouncements?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -45,7 +46,39 @@ export interface ContactMessage {
   message: string;
   status: MessageStatus;
   userId?: string;
+  uid?: string;
+  adminReply?: string;
+  repliedAt?: string;
   createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CourseItem {
+  id: string;
+  department: string;
+  code: string;
+  title: string;
+  level: string; // 'ND I' | 'ND II' | 'HND I' | 'HND II'
+  semester: string; // '1st Semester' | '2nd Semester'
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type TimetableType = 'class' | 'exam';
+
+export interface TimetableEntry {
+  id: string;
+  department: string;
+  level: string; // 'ND I' | 'ND II' | 'HND I' | 'HND II'
+  day: string; // 'Monday' | 'Tuesday' | 'Wednesday' | 'Thursday' | 'Friday' | 'Saturday'
+  startTime: string; // e.g. "08:00 AM"
+  endTime: string; // e.g. "10:00 AM"
+  courseCode: string;
+  venue: string;
+  type: TimetableType;
+  date?: string; // Optional specific date for exams
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AnnouncementItem {

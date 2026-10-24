@@ -1,6 +1,9 @@
-import React from 'react';
-import { DepartmentItem } from '../types';
+import React, { useState, useEffect } from 'react';
+import { DepartmentItem, CourseItem } from '../types';
 import { DepartmentIcon } from './PublicLanding';
+import { db } from '../lib/firebase';
+import { collection, getDocs, query, where } from 'firebase/firestore';
+import { INITIAL_COURSES } from '../data/coursesAndTimetables';
 import {
   ArrowLeft,
   BookOpen,
@@ -8,7 +11,9 @@ import {
   Calendar,
   Sparkles,
   ArrowRight,
-  GraduationCap
+  GraduationCap,
+  Layers,
+  Clock
 } from 'lucide-react';
 
 interface DepartmentDetailPageProps {
@@ -17,11 +22,54 @@ interface DepartmentDetailPageProps {
   onJoinDepartment: (deptName: string) => void;
 }
 
+const ACADEMIC_LEVELS = ['ND I', 'ND II', 'HND I', 'HND II'];
+
 export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
   department,
   onBack,
   onJoinDepartment
 }) => {
+  const [courses, setCourses] = useState<CourseItem[]>([]);
+  const [loadingCourses, setLoadingCourses] = useState(true);
+  const [selectedLevel, setSelectedLevel] = useState<string>('All');
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      setLoadingCourses(true);
+      try {
+        const q = query(collection(db, 'courses'), where('department', '==', department.name));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const list: CourseItem[] = [];
+          snap.forEach(d => {
+            list.push({ id: d.id, ...d.data() } as CourseItem);
+          });
+          setCourses(list);
+        } else {
+          // Fallback to default curriculum seed
+          const defaultList = INITIAL_COURSES.filter(c => c.department === department.name);
+          setCourses(defaultList);
+        }
+      } catch (err) {
+        console.warn('Courses fetch notice:', err);
+        const defaultList = INITIAL_COURSES.filter(c => c.department === department.name);
+        setCourses(defaultList);
+      } finally {
+        setLoadingCourses(false);
+      }
+    };
+
+    fetchCourses();
+  }, [department.name]);
+
+  // Group courses by level
+  const coursesByLevel = ACADEMIC_LEVELS.reduce((acc, lvl) => {
+    acc[lvl] = courses.filter(c => c.level === lvl);
+    return acc;
+  }, {} as Record<string, CourseItem[]>);
+
+  const displayedLevels = selectedLevel === 'All' ? ACADEMIC_LEVELS : [selectedLevel];
+
   return (
     <div className="py-12 md:py-20 bg-[#0A1224] text-[#E6ECFA] min-h-[80vh]">
       <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-10">
@@ -113,34 +161,109 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
 
         </div>
 
-        {/* Courses Offered (Placeholder as requested) */}
-        <div className="p-7 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-          <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
+        {/* DEPARTMENT COURSES BY LEVEL */}
+        <div className="p-7 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-6 shadow-[0_0_30px_rgba(47,82,255,0.06)]">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#24315A] pb-4">
             <div>
-              <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                Semester Course Catalog
+              <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0A1224] border border-[#24315A] text-[11px] font-semibold text-[#FFC700] mb-1">
+                <Layers className="w-3 h-3 text-[#FFC700]" />
+                <span>Department Syllabus</span>
+              </div>
+              <h3 className="font-display font-bold text-xl sm:text-2xl text-[#E6ECFA]">
+                Department Courses by Academic Level
               </h3>
-              <p className="text-xs text-[#9AA8C7]">Approved student syllabus breakdown</p>
+              <p className="text-xs text-[#9AA8C7]">
+                Approved curriculum units for National Diploma (ND) and Higher National Diploma (HND) programmes
+              </p>
             </div>
-            <span className="text-xs font-mono px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-              Under Review
-            </span>
+
+            {/* Level Filter Tabs */}
+            <div className="flex flex-wrap items-center gap-1.5 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
+              <button
+                onClick={() => setSelectedLevel('All')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  selectedLevel === 'All'
+                    ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
+                    : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                }`}
+              >
+                All Levels
+              </button>
+              {ACADEMIC_LEVELS.map(lvl => (
+                <button
+                  key={lvl}
+                  onClick={() => setSelectedLevel(lvl)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                    selectedLevel === lvl
+                      ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
+                      : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                  }`}
+                >
+                  {lvl}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="p-8 rounded-xl bg-[#0A1224] border border-[#24315A] text-center space-y-2">
-            <BookOpen className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-            <div className="text-sm font-semibold text-[#E6ECFA]">
-              Detailed Course Syllabi & Lecture Modules: <span className="text-[#FFC700]">Coming soon</span>
+          {loadingCourses ? (
+            <div className="p-12 text-center text-xs text-[#9AA8C7] animate-pulse">
+              Loading department curriculum...
             </div>
-            <p className="text-xs text-[#9AA8C7] max-w-md mx-auto">
-              The student committee is currently digitizing the complete course guides and booklists for this department. Registered students will receive course access directly in their portal.
-            </p>
-          </div>
+          ) : (
+            <div className="space-y-6">
+              {displayedLevels.map(lvl => {
+                const lvlCourses = coursesByLevel[lvl] || [];
+                return (
+                  <div key={lvl} className="space-y-3">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-[#FFC700]" />
+                      <h4 className="font-display font-bold text-sm tracking-wide text-[#E6ECFA]">
+                        {lvl} Curriculum ({lvlCourses.length} {lvlCourses.length === 1 ? 'course' : 'courses'})
+                      </h4>
+                    </div>
+
+                    {lvlCourses.length === 0 ? (
+                      <div className="p-5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] italic">
+                        No courses recorded yet for {lvl} in {department.name}.
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {lvlCourses.map(course => (
+                          <div
+                            key={course.id}
+                            className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF]/60 transition-all flex flex-col justify-between gap-3 group"
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <span className="font-mono text-xs font-extrabold px-2.5 py-1 rounded-md bg-[#121C36] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/50 transition-colors">
+                                {course.code}
+                              </span>
+                              <span className="text-[11px] font-semibold text-[#9AA8C7] px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A]">
+                                {course.semester}
+                              </span>
+                            </div>
+
+                            <div>
+                              <h5 className="font-semibold text-sm text-[#E6ECFA] group-hover:text-white transition-colors">
+                                {course.title}
+                              </h5>
+                              <p className="text-[11px] text-[#9AA8C7] mt-0.5">
+                                Level: <strong className="text-[#FFC700]">{course.level}</strong>
+                              </p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           <div className="pt-2 flex justify-end">
             <button
               onClick={() => onJoinDepartment(department.name)}
-              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] cursor-pointer"
+              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.25)]"
             >
               Sign up to Enroll in {department.name}
             </button>

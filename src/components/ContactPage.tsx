@@ -38,13 +38,15 @@ export const ContactPage: React.FC = () => {
     }
 
     setLoading(true);
+    const studentUid = user?.uid || profile?.uid || undefined;
     const newMsg: Omit<ContactMessage, 'id'> = {
       name: name.trim(),
       email: email.trim(),
       type,
       message: message.trim(),
       status: 'New',
-      userId: user?.uid,
+      userId: studentUid,
+      uid: studentUid,
       createdAt: new Date().toISOString()
     };
 
@@ -187,9 +189,15 @@ export const ContactPage: React.FC = () => {
                   <p className="text-sm text-[#9AA8C7] max-w-md mx-auto leading-relaxed">
                     Your message has been received by our student editorial team. We will review it promptly and get back to you at <span className="text-[#FFC700] font-semibold">{email}</span>.
                   </p>
+                  {user && (
+                    <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] max-w-md mx-auto flex items-center justify-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-[#FFC700] shrink-0" />
+                      <span>You can track this message status and admin replies in your dashboard under <strong>"My Messages"</strong>.</span>
+                    </div>
+                  )}
                   <button
                     onClick={() => setSubmitted(false)}
-                    className="mt-4 px-6 py-2.5 rounded-xl text-xs font-bold bg-[#2F52FF] text-white hover:bg-[#2545df] cursor-pointer"
+                    className="mt-4 px-6 py-2.5 rounded-xl text-xs font-bold bg-[#2F52FF] text-white hover:bg-[#2545df] cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.3)]"
                   >
                     Submit Another Message
                   </button>

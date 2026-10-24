@@ -138,8 +138,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const rawRole = (data as any)?.role;
         const trimmedRole = typeof rawRole === 'string' ? rawRole.trim() : '';
         const isDocAdmin = trimmedRole.toLowerCase() === 'admin';
+        const isDocRep = trimmedRole.toLowerCase() === 'rep';
 
-        const finalRole: UserRole = (isDocAdmin || isConfigAdmin || hasAdminDoc) ? 'admin' : 'student';
+        const finalRole: UserRole = (isDocAdmin || isConfigAdmin || hasAdminDoc)
+          ? 'admin'
+          : (isDocRep ? 'rep' : 'student');
         const resolvedProfile: UserProfile = {
           ...(data as any),
           uid: firebaseUser.uid,
