@@ -1,0 +1,141 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Student or Admin user profile",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "pattern": "^[a-zA-Z0-9_-]{1,128}$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "fullName": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "role": {
+          "type": "string",
+          "enum": ["student", "admin"]
+        },
+        "department": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "matricNumber": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "profileComplete": {
+          "type": "boolean"
+        },
+        "disabled": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "profileComplete", "role"]
+    },
+    "AdminDoc": {
+      "title": "AdminDoc",
+      "description": "Admin authorization entry",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "grantedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email"]
+    },
+    "MatricRegistry": {
+      "title": "MatricRegistry",
+      "description": "Uniqueness reservation index mapping matricNumber uppercase to user UID",
+      "type": "object",
+      "properties": {
+        "matricNumber": { "type": "string", "maxLength": 32 },
+        "uid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matricNumber", "uid"]
+    },
+    "ContactMessage": {
+      "title": "ContactMessage",
+      "description": "Contact form submissions including complaints, reviews, and enquiries",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "type": { "type": "string", "enum": ["Complaint", "Review", "Enquiry"] },
+        "message": { "type": "string", "maxLength": 3000 },
+        "status": { "type": "string", "enum": ["New", "Read", "Resolved"] },
+        "userId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["name", "email", "type", "message", "status"]
+    },
+    "Announcement": {
+      "title": "Announcement",
+      "description": "Faculty announcements created by admins",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 200 },
+        "content": { "type": "string", "maxLength": 5000 },
+        "category": { "type": "string" },
+        "department": { "type": "string" },
+        "urgent": { "type": "boolean" },
+        "author": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["title", "content", "department", "createdAt"]
+    },
+    "FaqItem": {
+      "title": "FaqItem",
+      "description": "Knowledge base Q&A for the SOT Assistant chatbot and FAQ pages",
+      "type": "object",
+      "properties": {
+        "question": { "type": "string", "maxLength": 500 },
+        "answer": { "type": "string", "maxLength": 3000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["question", "answer"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles. Students read/write own; Admins read all"
+    },
+    "/admins/{adminId}": {
+      "schema": "AdminDoc",
+      "description": "Admin authorization documents"
+    },
+    "/matric_registry/{matricId}": {
+      "schema": "MatricRegistry",
+      "description": "Guarantees matric number uniqueness"
+    },
+    "/messages/{messageId}": {
+      "schema": "ContactMessage",
+      "description": "Contact enquiries, complaints, and reviews"
+    },
+    "/announcements/{announcementId}": {
+      "schema": "Announcement",
+      "description": "Department and general announcements"
+    },
+    "/faqs/{faqId}": {
+      "schema": "FaqItem",
+      "description": "Frequently asked questions for chatbot knowledge and student queries"
+    }
+  }
+}
+

@@ -1,0 +1,12 @@
+{
+  "projectId": "sot-portal",
+  "appId": "1:805818332164:web:c08e89f29561b473acb151",
+  "apiKey": "AIzaSyByWZ3nRHHWxGTXmr94thI8ithkA5cjbcs",
+  "authDomain": "sot-portal.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-3c7079bd-2bf7-4083-bcb0-ec91f15986e7",
+  "storageBucket": "sot-portal.firebasestorage.app",
+  "messagingSenderId": "805818332164",
+  "measurementId": "",
+  "oAuthClientId": "805818332164-n7plockm1g4cihonmcbcbc5b4b1o2noa.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
+}

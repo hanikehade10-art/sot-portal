@@ -1,0 +1,6 @@
+{
+  "name": "School of Technology (SOT) Portal",
+  "description": "Official web app and student portal for the School of Technology (SOT) faculty, featuring department directories, secure two-step registration, and student dashboard.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

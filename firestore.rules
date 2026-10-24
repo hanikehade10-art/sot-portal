@@ -1,0 +1,140 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
+        (request.auth.token.email != null && request.auth.token.email == 'kemibuhari8@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'))
+      );
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidMatricId(id) {
+      return id is string && id.size() >= 3 && id.size() <= 64 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // User Profiles Collection
+    match /users/{userId} {
+      // Authenticated users can get a user document to check profile/existence; admins can read and list all users
+      allow get: if (isSignedIn() && isValidId(userId)) || isAdmin();
+      allow list: if isAdmin(); // Only admins can list users for the admin table
+
+      // Create profile: own UID, defaults role to student unless admin
+      allow create: if isOwner(userId) && isValidId(userId) &&
+                       incoming().uid == request.auth.uid &&
+                       incoming().email is string &&
+                       incoming().profileComplete is bool &&
+                       (incoming().role == 'student' || isAdmin());
+
+      // Update profile:
+      // Students can update their own details (name, department, matric if completing profile)
+      // but cannot elevate their own role to admin!
+      // Admins can update any profile (e.g., disable/delete)
+      allow update: if (
+        (isOwner(userId) && isValidId(userId) && incoming().uid == existing().uid && (incoming().role == existing().role || isAdmin())) ||
+        isAdmin()
+      );
+
+      // Delete: only admins can delete an account
+      allow delete: if isAdmin() && isValidId(userId);
+    }
+
+    // Admins Collection
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Matric Number Collections (For Uniqueness & Reservations)
+    match /matricNumbers/{matricId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() &&
+                       (incoming().uid == request.auth.uid || incoming().userId == request.auth.uid || isAdmin());
+      allow update: if isSignedIn() &&
+                       ((existing().uid == request.auth.uid || existing().userId == request.auth.uid) ||
+                        isAdmin() ||
+                        (existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))));
+      allow delete: if isAdmin() || (
+                       isSignedIn() &&
+                       ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))))
+                     );
+    }
+
+    match /matric_registry/{matricId} {
+      allow read: if isSignedIn();
+      allow create, update: if isSignedIn() &&
+                       ((incoming().uid == request.auth.uid || incoming().userId == request.auth.uid) ||
+                        isAdmin() ||
+                        (existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))));
+      allow delete: if isAdmin() || (
+                       isSignedIn() &&
+                       ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))))
+                     );
+    }
+
+    // Contact Messages (Complaints, Reviews, Enquiries)
+    match /messages/{messageId} {
+      // Anyone logged in or guest submitting from contact page can create
+      allow create: if isValidId(messageId) &&
+                       incoming().name is string && incoming().name.size() <= 128 &&
+                       incoming().email is string && incoming().email.size() <= 128 &&
+                       incoming().type in ['Complaint', 'Review', 'Enquiry'] &&
+                       incoming().status in ['New', 'Read', 'Resolved'];
+
+      // Only admins can read, list, update status, or delete messages
+      allow read, list, update, delete: if isAdmin();
+    }
+
+    // Announcements
+    match /announcements/{announcementId} {
+      // Anyone signed in can read announcements
+      allow read, list: if isSignedIn();
+      // Only admins can create, edit, or delete announcements
+      allow create, update, delete: if isAdmin();
+    }
+
+    // FAQs (Chatbot Knowledge Base & Public FAQs)
+    match /faqs/{faqId} {
+      // Public / all students can read FAQs to empower the chatbot and FAQ views
+      allow read, list: if true;
+      // Only admins can create, edit, or delete FAQs
+      allow create, update, delete: if isAdmin();
+    }
+  }
+}
+
