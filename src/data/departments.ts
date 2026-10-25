@@ -1,33 +1,13 @@
 import { DepartmentItem, SotDepartmentName, AnnouncementItem } from '../types';
+import { SOT_DEPARTMENTS_CONFIG, DEPARTMENT_COUNT } from '../config/site';
 
 export const DEPARTMENTS: DepartmentItem[] = [
-  {
-    id: 'agric-tech',
-    name: 'Agricultural Technology',
-    shortCode: 'AGT',
-    iconName: 'Sprout',
-    oneLiner: 'Modern mechanized agronomy, greenhouse crop production, and sustainable farm resource systems.',
-    description: 'The Department of Agricultural Technology focuses on sustainable farming practices, farm automation, post-harvest techniques, and contemporary bio-resource management for modern agriculture.',
-    programFocus: [
-      'Crop Production & Agronomy Techniques',
-      'Post-Harvest Processing & Preservation',
-      'Farm Mechanization & Irrigation Systems',
-      'Soil Management & Bio-Fertilizers'
-    ],
-    careerProspects: [
-      'Agricultural Production Specialist',
-      'Farm Operations Supervisor',
-      'Agro-Enterprise Technologist',
-      'Post-Harvest Storage Officer'
-    ],
-    facilityNotice: 'Department Workstations: Coming soon'
-  },
   {
     id: 'comp-tech',
     name: 'Computer Technology',
     shortCode: 'CPT',
     iconName: 'Cpu',
-    oneLiner: 'Software development, networking, database administration, web technologies, and system support.',
+    oneLiner: 'Software development, networking, database administration, web technologies, and systems engineering.',
     description: 'Providing comprehensive technological training covering computer hardware maintenance, software programming, web architecture, network administration, and information systems management.',
     programFocus: [
       'Software Development & Web Technologies',
@@ -45,11 +25,11 @@ export const DEPARTMENTS: DepartmentItem[] = [
   },
   {
     id: 'food-tech',
-    name: 'Food Technology',
-    shortCode: 'FDT',
+    name: 'Food Science and Technology',
+    shortCode: 'FST',
     iconName: 'FlaskConical',
-    oneLiner: 'Industrial food processing, quality control, preservation techniques, and food packaging.',
-    description: 'Equipping students to process agricultural harvests into hygienic consumer products through food microbiology, processing operations, quality testing, and shelf-life preservation techniques.',
+    oneLiner: 'Industrial food processing, quality control, preservation techniques, and food safety standards.',
+    description: 'Equipping students to process agricultural harvests into hygienic consumer products through food microbiology, industrial processing operations, quality testing, and shelf-life preservation techniques.',
     programFocus: [
       'Food Processing & Preservation Operations',
       'Food Microbiology & Sanitation Standards',
@@ -86,9 +66,9 @@ export const DEPARTMENTS: DepartmentItem[] = [
     facilityNotice: 'Demonstration Units: Coming soon'
   },
   {
-    id: 'leisure-tourism',
-    name: 'Leisure & Tourism Management',
-    shortCode: 'LTM',
+    id: 'tourism-mgmt',
+    name: 'Tourism Management',
+    shortCode: 'TRM',
     iconName: 'Compass',
     oneLiner: 'Tourism destination operations, travel booking services, leisure recreation, and heritage management.',
     description: 'Focused on travel services, tour packaging, recreation facility management, cultural tourism preservation, and modern booking systems.',
@@ -107,8 +87,29 @@ export const DEPARTMENTS: DepartmentItem[] = [
     facilityNotice: 'Simulation Studios: Coming soon'
   },
   {
+    id: 'polymer-textile',
+    name: 'Polymer and Textile Management',
+    shortCode: 'PTM',
+    iconName: 'Layers',
+    oneLiner: 'Fibre science, fabric manufacture, polymer processing, dye chemistry, and textile testing.',
+    description: 'Focusing on textile yarn manufacturing, weaving, polymer compounding, fabric dyeing and printing, and materials quality control.',
+    programFocus: [
+      'Textile Fibre & Yarn Production',
+      'Polymer Materials & Processing',
+      'Textile Coloration & Chemical Finishing',
+      'Quality Testing & Fabric Inspection'
+    ],
+    careerProspects: [
+      'Textile Production Supervisor',
+      'Polymer Processing Specialist',
+      'Dyeing & Finishing Technologist',
+      'Quality Assurance Inspector'
+    ],
+    facilityNotice: 'Textile Workrooms: Coming soon'
+  },
+  {
     id: 'nutr-dietetics',
-    name: 'Nutrition & Dietetics',
+    name: 'Nutrition and Dietetics',
     shortCode: 'NTD',
     iconName: 'Activity',
     oneLiner: 'Dietary planning, community wellness nutrition, therapeutic meal preparation, and public health food.',
@@ -126,39 +127,26 @@ export const DEPARTMENTS: DepartmentItem[] = [
       'Food Service Nutrition Specialist'
     ],
     facilityNotice: 'Dietary Laboratories: Coming soon'
-  },
-  {
-    id: 'polymer-textile',
-    name: 'Polymer & Textile Technology',
-    shortCode: 'PTT',
-    iconName: 'Layers',
-    oneLiner: 'Fibre science, fabric manufacture, polymer processing, dye chemistry, and textile testing.',
-    description: 'Focusing on textile yarn manufacturing, weaving, polymer compounding, fabric dyeing and printing, and materials quality control.',
-    programFocus: [
-      'Textile Fibre & Yarn Production',
-      'Polymer Materials & Processing',
-      'Textile Coloration & Chemical Finishing',
-      'Quality Testing & Fabric Inspection'
-    ],
-    careerProspects: [
-      'Textile Production Supervisor',
-      'Polymer Processing Specialist',
-      'Dyeing & Finishing Technologist',
-      'Quality Assurance Inspector'
-    ],
-    facilityNotice: 'Textile Workrooms: Coming soon'
   }
 ];
 
 export const SOT_DEPARTMENTS_LIST: SotDepartmentName[] = [
-  'Agricultural Technology',
-  'Computer Technology',
-  'Food Technology',
-  'Hospitality Management',
-  'Leisure & Tourism Management',
-  'Nutrition & Dietetics',
-  'Polymer & Textile Technology'
+  ...SOT_DEPARTMENTS_CONFIG
 ];
+
+/**
+ * Normalizes any legacy or variant department name into the official canonical name.
+ */
+export function normalizeDepartmentName(name?: string): SotDepartmentName {
+  if (!name) return 'Computer Technology';
+  const trimmed = name.trim();
+  if (trimmed === 'Food Technology') return 'Food Science and Technology';
+  if (trimmed === 'Leisure & Tourism Management' || trimmed === 'Leisure and Tourism Management') return 'Tourism Management';
+  if (trimmed === 'Nutrition & Dietetics') return 'Nutrition and Dietetics';
+  if (trimmed === 'Polymer & Textile Technology' || trimmed === 'Polymer & Textile Management') return 'Polymer and Textile Management';
+  if (trimmed === 'Agricultural Technology') return 'Computer Technology'; // Fallback if old doc had AGT
+  return trimmed as SotDepartmentName;
+}
 
 export const INITIAL_ANNOUNCEMENTS: AnnouncementItem[] = [
   {
@@ -174,7 +162,7 @@ export const INITIAL_ANNOUNCEMENTS: AnnouncementItem[] = [
   {
     id: 'ann-2',
     title: 'Student Peer Tutoring & Workshop Schedule',
-    content: 'Weekly student-led tutorial sessions in programming, agronomy basics, and food chemistry meet every Wednesday in the student hall.',
+    content: 'Weekly student-led tutorial sessions in programming, food processing, and nutritional science meet every Wednesday in the student hall.',
     category: 'Student Notice',
     department: 'All',
     createdAt: '2026-10-22T14:30:00Z',
@@ -183,7 +171,7 @@ export const INITIAL_ANNOUNCEMENTS: AnnouncementItem[] = [
   {
     id: 'ann-3',
     title: 'Inter-Department Tech & Cultural Exhibition',
-    content: 'All seven departments will participate in the annual student innovation display. Project submissions open next week.',
+    content: 'All six departments will participate in the annual student innovation display. Project submissions open next week.',
     category: 'General',
     department: 'All',
     createdAt: '2026-10-23T09:15:00Z',
@@ -206,7 +194,7 @@ export const FAQS = [
   },
   {
     q: 'Who can access the Admin Dashboard?',
-    a: 'The Admin Dashboard is strictly restricted to designated student portal administrators. Regular student accounts cannot access admin routes.'
+    a: 'The Admin Dashboard is strictly restricted to designated student portal administrators. Regular student accounts and Course Reps cannot access admin routes.'
   },
   {
     q: 'Why was my login locked?',

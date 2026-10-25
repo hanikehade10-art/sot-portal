@@ -1,14 +1,29 @@
 /**
  * Single source of truth configuration for the School of Technology Student Portal.
- * You can edit the contact details, student representatives, and portal metadata here.
+ * You can edit the contact details, student representatives, portal metadata, and departments here.
  */
+
+export const SOT_DEPARTMENTS_CONFIG = [
+  'Computer Technology',
+  'Food Science and Technology',
+  'Hospitality Management',
+  'Tourism Management',
+  'Polymer and Textile Management',
+  'Nutrition and Dietetics'
+] as const;
+
+export type SotDepartmentConfigName = typeof SOT_DEPARTMENTS_CONFIG[number];
+
+export const DEPARTMENT_COUNT = 6;
 
 export const SITE_CONFIG = {
   portalName: 'School of Technology (SOT) Student Portal',
   shortName: 'SOT Student Portal',
   tagline: 'Built by students, for students',
   disclaimer: 'Student-run portal. Not an official university channel.',
-  description: 'School of Technology offering technology, agriculture, food, hospitality, tourism, nutrition and textile programmes.',
+  description: 'School of Technology offering computer technology, food science, hospitality, tourism, nutrition and polymer & textile management programmes.',
+  departmentCount: DEPARTMENT_COUNT,
+  departments: SOT_DEPARTMENTS_CONFIG,
   
   // Student Representative Contact Details
   contact: {

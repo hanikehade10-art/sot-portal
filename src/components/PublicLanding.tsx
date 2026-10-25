@@ -20,6 +20,8 @@ import {
 import { DEPARTMENTS } from '../data/departments';
 import { DepartmentItem } from '../types';
 import { SITE_CONFIG } from '../config/site';
+import { useSiteSettings } from '../hooks/useSiteSettings';
+import { WhatsAppChannelButton } from './WhatsAppChannelButton';
 
 interface PublicLandingProps {
   openSignUp: () => void;
@@ -46,7 +48,7 @@ export const DepartmentIcon: React.FC<{ name: string; className?: string }> = ({
     case 'Layers':
       return <Layers className={className} />;
     default:
-      return <Building2 className={className} />;
+      return <BookOpen className={className} />;
   }
 };
 
@@ -57,26 +59,24 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
   onNavigateContact,
   onNavigateFaq
 }) => {
+  const { settings } = useSiteSettings();
+
   return (
-    <div className="w-full bg-[#0A1224] text-[#E6ECFA] overflow-hidden">
+    <div className="flex flex-col bg-[#070D1A] text-[#E6ECFA]">
       
       {/* HERO SECTION */}
-      <section id="hero" className="relative pt-24 pb-20 md:pt-32 md:pb-28 border-b border-[#24315A]/60">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-[#2F52FF]/10 rounded-full blur-[130px] pointer-events-none" />
-        <div className="absolute top-12 right-12 w-[300px] h-[300px] bg-[#FFC700]/5 rounded-full blur-[110px] pointer-events-none" />
+      <section className="relative overflow-hidden pt-12 pb-20 md:pt-20 md:pb-32">
+        {/* Glow Effects */}
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-[#2F52FF]/15 blur-[120px] rounded-full pointer-events-none" />
+        <div className="absolute top-1/3 right-10 w-[300px] h-[300px] bg-[#FFC700]/10 blur-[100px] rounded-full pointer-events-none" />
 
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-          <div className="max-w-3xl mx-auto text-center space-y-6">
+          <div className="text-center max-w-3xl mx-auto space-y-6">
             
-            {/* Student Tagline & Notice */}
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-[#121C36] border border-[#FFC700]/40 text-xs font-bold text-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.15)]">
-                <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
-                <span>{SITE_CONFIG.tagline}</span>
-              </div>
-              <p className="text-xs text-[#9AA8C7] font-medium tracking-wide">
-                {SITE_CONFIG.disclaimer}
-              </p>
+            {/* Disclaimer pill */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#121C36] border border-[#24315A] text-xs text-[#9AA8C7]">
+              <span className="w-2 h-2 rounded-full bg-[#FFC700] animate-pulse" />
+              <span>{SITE_CONFIG.disclaimer}</span>
             </div>
 
             {/* Main Headline */}
@@ -84,9 +84,9 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
               School of Technology
             </h1>
 
-            {/* School Description: technology, agriculture, food, hospitality, tourism, nutrition and textile programmes */}
+            {/* School Description */}
             <p className="text-base sm:text-xl text-[#9AA8C7] leading-relaxed max-w-2xl mx-auto font-normal">
-              A student-powered platform for the School of Technology, offering technology, agriculture, food, hospitality, tourism, nutrition and textile programmes.
+              {SITE_CONFIG.description}
             </p>
 
             {/* CTAs */}
@@ -105,12 +105,21 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
               >
                 <span>Student Login</span>
               </button>
+
+              {/* WhatsApp Channel Button */}
+              {settings.whatsappChannelUrl && (
+                <WhatsAppChannelButton
+                  url={settings.whatsappChannelUrl}
+                  variant="solid"
+                  className="w-full sm:w-auto py-4"
+                />
+              )}
             </div>
 
-            {/* Stats: Kept ONLY 7 Departments and Coming soon for others */}
+            {/* Stats: 6 Departments */}
             <div className="pt-8 grid grid-cols-2 sm:grid-cols-4 gap-4 text-left">
               <div className="p-4 rounded-xl bg-[#121C36]/70 border border-[#24315A]">
-                <div className="text-2xl font-display font-extrabold text-[#FFC700]">7</div>
+                <div className="text-2xl font-display font-extrabold text-[#FFC700]">6</div>
                 <div className="text-xs text-[#9AA8C7] font-medium mt-1">Departments</div>
               </div>
               <div className="p-4 rounded-xl bg-[#121C36]/70 border border-[#24315A]">
@@ -140,22 +149,20 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
               Academic Departments
             </div>
             <h2 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
-              Seven Specialized Departments
+              Six Specialized Departments
             </h2>
             <p className="text-sm sm:text-base text-[#9AA8C7]">
               Select your department to view curriculum highlights, course placeholders, and register with your matric number.
             </p>
           </div>
 
-          {/* Department Cards Grid */}
+          {/* Department Cards Grid: 6 cards in 3x2 grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {DEPARTMENTS.map((dept, index) => (
+            {DEPARTMENTS.map((dept) => (
               <div
                 key={dept.id}
                 onClick={() => onSelectDepartment(dept)}
-                className={`group relative p-7 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all duration-300 hover:shadow-[0_0_25px_rgba(47,82,255,0.2)] cursor-pointer flex flex-col justify-between ${
-                  index === 6 ? 'md:col-span-2 lg:col-span-1' : ''
-                }`}
+                className="group relative p-7 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all duration-300 hover:shadow-[0_0_25px_rgba(47,82,255,0.2)] cursor-pointer flex flex-col justify-between"
               >
                 <div>
                   <div className="flex items-center justify-between mb-5">
@@ -189,7 +196,7 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
         </div>
       </section>
 
-      {/* ABOUT SECTION (Student Run, No faculty leadership/dean/professors) */}
+      {/* ABOUT SECTION */}
       <section id="about" className="py-20 md:py-28 bg-[#0A1224] border-t border-b border-[#24315A]/60 relative">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
@@ -202,10 +209,10 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                 Built by Students, for Students
               </h2>
               <p className="text-sm sm:text-base text-[#9AA8C7] leading-relaxed">
-                This student-operated portal was initiated to provide classmates across our seven departments with a clean, centralized digital space. We help each other keep track of student schedules, share peer learning resources, and organize student-led exhibitions.
+                This student-operated portal was initiated to provide classmates across our six departments with a clean, centralized digital space. We help each other keep track of student schedules, share peer learning resources, and organize student-led exhibitions.
               </p>
               <p className="text-sm text-[#9AA8C7] leading-relaxed">
-                Whether you are studying agricultural methods, computer hardware and programming, food processing, hospitality operations, tourism management, dietary planning, or polymer and textile sciences, this space belongs to all of us.
+                Whether you are studying computer hardware and software, food processing, hospitality operations, tourism management, dietary planning, or polymer and textile sciences, this space belongs to all of us.
               </p>
 
               <div className="space-y-3 pt-2">
@@ -238,32 +245,38 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                 </p>
               </div>
 
-              <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
-                <p className="text-xs font-semibold text-[#FFC700] uppercase tracking-wider">
-                  Representative Desk
+              <div className="space-y-4 text-xs text-[#9AA8C7]">
+                <p>
+                  This platform is created and sustained independently by students enrolled in the School of Technology.
                 </p>
-                <p className="text-xs text-[#E6ECFA] leading-relaxed">
-                  Coordinator: <strong>{SITE_CONFIG.contact.representativeName}</strong>
-                </p>
-                <p className="text-xs text-[#9AA8C7]">
-                  Telephone: {SITE_CONFIG.contact.phone} | Email: {SITE_CONFIG.contact.email}
+                <p>
+                  Official administrative records, tuition bursaries, and exam results remain on the official university portal.
                 </p>
               </div>
 
-              <div className="pt-2 flex flex-col sm:flex-row gap-3">
+              {settings.whatsappChannelUrl && (
+                <div className="pt-2">
+                  <WhatsAppChannelButton
+                    url={settings.whatsappChannelUrl}
+                    variant="banner"
+                  />
+                </div>
+              )}
+
+              <div className="pt-4 flex flex-col sm:flex-row gap-3">
                 <button
                   onClick={onNavigateContact}
-                  className="px-5 py-2.5 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#E6ECFA] hover:border-[#2F52FF] transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>Submit an Inquiry or Complaint</span>
+                  <MessageSquare className="w-4 h-4 text-[#FFC700]" />
+                  <span>Contact Student Rep Desk</span>
                 </button>
                 <button
                   onClick={onNavigateFaq}
-                  className="px-5 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] text-xs font-semibold hover:border-[#FFC700] flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#E6ECFA] hover:border-[#2F52FF] transition-all flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <HelpCircle className="w-4 h-4 text-[#FFC700]" />
-                  <span>Read FAQs</span>
+                  <span>Portal FAQs</span>
                 </button>
               </div>
             </div>

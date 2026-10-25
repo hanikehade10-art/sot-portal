@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { GraduationCap, Menu, X, LogOut, LayoutDashboard, ShieldAlert, MessageSquare, ShieldCheck, HelpCircle } from 'lucide-react';
+import { GraduationCap, Menu, X, LogOut, LayoutDashboard, ShieldAlert, MessageSquare, ShieldCheck, HelpCircle, Sparkles } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
 interface NavbarProps {
@@ -16,7 +16,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   openLogin,
   openSignUp
 }) => {
-  const { user, profile, isAdmin, logout } = useAuth();
+  const { user, profile, isAdmin, isRep, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleNav = (target: string) => {
@@ -104,6 +104,21 @@ export const Navbar: React.FC<NavbarProps> = ({
                   >
                     <ShieldCheck className="w-3.5 h-3.5" />
                     <span>Admin Dashboard</span>
+                  </button>
+                )}
+
+                {/* Course Rep button if rep */}
+                {isRep && (
+                  <button
+                    onClick={() => handleNav('rep')}
+                    className={`flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                      currentView === 'rep'
+                        ? 'bg-[#2F52FF] text-white border-[#2F52FF] shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                        : 'bg-[#121C36] text-[#FFC700] border-[#FFC700]/40 hover:bg-[#2F52FF] hover:text-white'
+                    }`}
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
+                    <span>Course Rep Desk</span>
                   </button>
                 )}
 
@@ -209,6 +224,15 @@ export const Navbar: React.FC<NavbarProps> = ({
                   >
                     <ShieldCheck className="w-4 h-4" />
                     <span>Admin Dashboard</span>
+                  </button>
+                )}
+                {isRep && (
+                  <button
+                    onClick={() => handleNav('rep')}
+                    className="w-full py-2.5 rounded-lg text-xs font-bold bg-gradient-to-r from-[#2F52FF] to-[#1E3AB8] text-white border border-[#FFC700]/50 flex items-center justify-center gap-2"
+                  >
+                    <Sparkles className="w-4 h-4 text-[#FFC700]" />
+                    <span>Course Rep Desk</span>
                   </button>
                 )}
                 {profile?.profileComplete || isAdmin ? (

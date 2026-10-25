@@ -30,6 +30,7 @@ interface AuthContextType {
   loading: boolean;
   authReady: boolean;
   isAdmin: boolean;
+  isRep: boolean;
   roleReadError: string | null;
   clearRoleReadError: () => void;
   loginLockoutMinutesRemaining: number | null;
@@ -636,10 +637,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await sendPasswordResetEmail(auth, email.trim());
   };
 
-  // Case-insensitive and trimmed check for admin role
+  // Case-insensitive and trimmed check for admin and rep roles
   const isProfileAdmin = typeof profile?.role === 'string' && profile.role.trim().toLowerCase() === 'admin';
   const isEmailAdmin = typeof user?.email === 'string' && user.email.trim().toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase();
   const isAdmin = Boolean(isProfileAdmin || isEmailAdmin);
+  const isRep = !isAdmin && typeof profile?.role === 'string' && profile.role.trim().toLowerCase() === 'rep';
 
   return (
     <AuthContext.Provider
@@ -649,6 +651,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loading,
         authReady,
         isAdmin,
+        isRep,
         roleReadError,
         clearRoleReadError,
         loginLockoutMinutesRemaining: lockoutRemaining,

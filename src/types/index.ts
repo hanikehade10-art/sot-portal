@@ -1,5 +1,16 @@
 export type UserRole = 'student' | 'rep' | 'admin';
 
+export interface BookmarkItem {
+  id: string; // unique id (or target id)
+  type: 'course' | 'material' | 'announcement';
+  title: string;
+  link?: string;
+  code?: string;
+  category?: string;
+  department?: string;
+  createdAt: string;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -10,15 +21,23 @@ export interface UserProfile {
   role: UserRole;
   disabled?: boolean;
   lastSeenAnnouncements?: string;
+  bookmarks?: BookmarkItem[];
+  streakCount?: number;
+  longestStreak?: number;
+  lastActiveDate?: string; // YYYY-MM-DD formatted in Africa/Lagos
   createdAt?: string;
   updatedAt?: string;
 }
 
 export type SotDepartmentName =
-  | 'Agricultural Technology'
   | 'Computer Technology'
-  | 'Food Technology'
+  | 'Food Science and Technology'
   | 'Hospitality Management'
+  | 'Tourism Management'
+  | 'Polymer and Textile Management'
+  | 'Nutrition and Dietetics'
+  // Legacy aliases for backward compatibility with existing Firestore documents
+  | 'Food Technology'
   | 'Leisure & Tourism Management'
   | 'Nutrition & Dietetics'
   | 'Polymer & Textile Technology';
@@ -53,13 +72,46 @@ export interface ContactMessage {
   updatedAt?: string;
 }
 
+export type AcademicLevel = 'ND1' | 'ND2' | 'HND1' | 'HND2' | 'ND I' | 'ND II' | 'HND I' | 'HND II';
+
+export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
+export type ResourceCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Assignment' | 'Other';
+
+export interface CourseMaterial {
+  id?: string;
+  title: string;
+  url: string;
+  category: CourseMaterialCategory;
+}
+
+export interface ResourceItem {
+  id: string;
+  department: string;
+  level: string; // 'ND1' | 'ND2' | 'HND1' | 'HND2'
+  semester: string; // 'First Semester' | 'Second Semester'
+  courseCode: string;
+  title: string;
+  category: ResourceCategory;
+  url: string;
+  description?: string;
+  uploadedBy: string; // uid
+  uploadedByEmail: string;
+  uploadedByRole?: string; // 'Course Rep' | 'admin' | string
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export interface CourseItem {
   id: string;
   department: string;
   code: string;
   title: string;
-  level: string; // 'ND I' | 'ND II' | 'HND I' | 'HND II'
-  semester: string; // '1st Semester' | '2nd Semester'
+  level: string; // 'ND1' | 'ND2' | 'HND1' | 'HND2' (or 'ND I' | 'ND II' | 'HND I' | 'HND II')
+  semester: string; // 'First Semester' | 'Second Semester' (or '1st Semester' | '2nd Semester')
+  units: number;
+  type: 'Core' | 'Elective';
+  description?: string;
+  materials?: CourseMaterial[];
   createdAt?: string;
   updatedAt?: string;
 }

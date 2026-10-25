@@ -4,8 +4,8 @@ import { DEPARTMENTS, INITIAL_ANNOUNCEMENTS } from '../data/departments';
 import { DepartmentIcon } from './PublicLanding';
 import { auth, db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, addDoc, query, where } from 'firebase/firestore';
-import { AnnouncementItem, ContactMessage, TimetableEntry } from '../types';
-import { INITIAL_TIMETABLES } from '../data/coursesAndTimetables';
+import { AnnouncementItem, ContactMessage, TimetableEntry, CourseItem, CourseMaterial, ResourceItem } from '../types';
+import { INITIAL_COURSES, INITIAL_TIMETABLES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
 import { AskAiView } from './AskAiView';
 import {
   LayoutDashboard,
@@ -36,7 +36,11 @@ import {
   Megaphone,
   CheckCircle,
   Eye,
-  Filter
+  Filter,
+  Search,
+  ChevronDown,
+  ChevronUp,
+  FolderOpen
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -44,11 +48,13 @@ interface StudentDashboardProps {
   onNavigateHome: () => void;
   onNavigateContact: () => void;
   onNavigateAdmin?: () => void;
+  onNavigateRep?: () => void;
 }
 
 type TabType =
   | 'overview'
   | 'department'
+  | 'courses'
   | 'timetables'
   | 'announcements'
   | 'my-messages'
@@ -62,11 +68,15 @@ const ACADEMIC_LEVELS = ['ND I', 'ND II', 'HND I', 'HND II'];
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateHome,
   onNavigateContact,
-  onNavigateAdmin
+  onNavigateAdmin,
+  onNavigateRep
 }) => {
   const { user, profile, isAdmin, roleReadError, refreshProfile, logout, updateStudentProfile } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Department uploaded resources from Course Reps
+  const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
 
   // Profile edit states (Full Name and Password only; matric is locked)
   const [editFullName, setEditFullName] = useState(profile?.fullName || '');
@@ -84,6 +94,14 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
   const [ttLevelFilter, setTtLevelFilter] = useState<string>('All');
   const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
+
+  // Department Courses for Student's own department
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [loadingCourses, setLoadingCourses] = useState(false);
+  const [courseLevel, setCourseLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [courseSemester, setCourseSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
+  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
+  const [courseSearchQuery, setCourseSearchQuery] = useState('');
 
   // Student's tracked messages (Complaints / Enquiries / Reviews)
   const [myMessages, setMyMessages] = useState<ContactMessage[]>([]);
@@ -151,6 +169,98 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     fetchTimetables();
   }, [studentDept]);
+
+  // Fetch Courses for student's department
+  useEffect(() => {
+    const fetchCourses = async () => {
+      setLoadingCourses(true);
+      try {
+        const q = query(collection(db, 'courses'), where('department', '==', studentDept));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const list: CourseItem[] = [];
+          snap.forEach(d => {
+            const data = d.data();
+            list.push({
+              id: d.id,
+              department: data.department || studentDept,
+              code: data.code || '',
+              title: data.title || '',
+              level: data.level || 'ND1',
+              semester: data.semester || 'First Semester',
+              units: typeof data.units === 'number' ? data.units : 3,
+              type: data.type === 'Elective' ? 'Elective' : 'Core',
+              description: data.description || '',
+              materials: Array.isArray(data.materials) ? data.materials : [],
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt
+            } as CourseItem);
+          });
+          setCourses(list);
+        } else {
+          const defaults = INITIAL_COURSES.filter(c => c.department === studentDept);
+          setCourses(defaults.length > 0 ? defaults : INITIAL_COURSES);
+        }
+      } catch (err) {
+        const defaults = INITIAL_COURSES.filter(c => c.department === studentDept);
+        setCourses(defaults.length > 0 ? defaults : INITIAL_COURSES);
+      } finally {
+        setLoadingCourses(false);
+      }
+    };
+
+    fetchCourses();
+  }, [studentDept]);
+
+  // Fetch materials uploaded to "resources" collection for this department
+  useEffect(() => {
+    const fetchResources = async () => {
+      try {
+        const q = query(collection(db, 'resources'), where('department', '==', studentDept));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ResourceItem[];
+          setDeptResources(list);
+        } else {
+          setDeptResources([]);
+        }
+      } catch (err) {
+        console.warn('Student resources fetch notice:', err);
+      }
+    };
+
+    fetchResources();
+  }, [studentDept]);
+
+  // Filtered courses for student's active level & semester
+  const studentFilteredCourses = courses.filter(c => {
+    const matchDept = c.department === studentDept;
+    const matchLevel = normalizeCourseLevel(c.level) === courseLevel;
+    const matchSem = normalizeCourseSemester(c.semester) === courseSemester;
+    if (!matchDept || !matchLevel || !matchSem) return false;
+    if (courseSearchQuery.trim()) {
+      const q = courseSearchQuery.toLowerCase();
+      return c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  // Filtered rep materials for student's active level & semester
+  const studentFilteredResources = deptResources.filter(r => {
+    const matchDept = r.department === studentDept;
+    const matchLevel = normalizeCourseLevel(r.level) === courseLevel;
+    const matchSem = normalizeCourseSemester(r.semester) === courseSemester;
+    if (!matchDept || !matchLevel || !matchSem) return false;
+    if (courseSearchQuery.trim()) {
+      const q = courseSearchQuery.toLowerCase();
+      return (
+        r.courseCode.toLowerCase().includes(q) ||
+        r.title.toLowerCase().includes(q) ||
+        r.category.toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
 
   // Fetch student's own messages
   const fetchMyMessages = async () => {
@@ -429,6 +539,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span>My Department</span>
             </button>
 
+            {/* Courses Tab */}
+            <button
+              onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'courses'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <BookOpen className="w-4 h-4 text-[#FFC700]" />
+                <span>Courses</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
+                {courses.length}
+              </span>
+            </button>
+
             {/* Timetables Tab (NEW) */}
             <button
               onClick={() => { setActiveTab('timetables'); setSidebarOpen(false); }}
@@ -529,6 +657,29 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span>Profile Settings</span>
             </button>
 
+            {/* Course Rep Desk Sidebar Navigation Link (Reps Only - reps NEVER see admin link) */}
+            {isRep && (
+              <button
+                onClick={() => {
+                  if (onNavigateRep) {
+                    onNavigateRep();
+                  } else {
+                    window.location.href = '/rep';
+                  }
+                  setSidebarOpen(false);
+                }}
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer bg-gradient-to-r from-[#2F52FF]/25 to-[#121C36] border border-[#FFC700]/50 text-[#FFC700] hover:bg-[#2F52FF]/35 hover:shadow-[0_0_15px_rgba(255,199,0,0.25)] group"
+              >
+                <div className="flex items-center gap-3">
+                  <Sparkles className="w-4 h-4 text-[#FFC700] group-hover:scale-110 transition-transform" />
+                  <span>Course Rep Desk</span>
+                </div>
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-[#FFC700] text-[#0A1224]">
+                  Rep
+                </span>
+              </button>
+            )}
+
             {/* Admin Dashboard Sidebar Navigation Link (Admins Only) */}
             {isAdmin && (
               <button
@@ -626,6 +777,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#E6ECFA] mt-1">
               {activeTab === 'overview' && 'Student Portal Overview'}
               {activeTab === 'department' && 'My Enrolled Department'}
+              {activeTab === 'courses' && 'Department Courses & Learning Materials'}
               {activeTab === 'timetables' && 'Department Timetables & Exam Schedules'}
               {activeTab === 'announcements' && 'Student Bulletins & Notices'}
               {activeTab === 'my-messages' && 'My Complaints & Message Tracking'}
@@ -733,7 +885,28 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             {/* Quick Actions Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+              
+              {/* Courses Card */}
+              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
+                <div className="space-y-2">
+                  <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
+                    <BookOpen className="w-5 h-5" />
+                  </div>
+                  <h3 className="font-display font-bold text-base text-[#E6ECFA]">
+                    Department Courses
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
+                    Check curriculum units, syllabus outlines, and access lecture notes and past questions for {studentDept}.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('courses')}
+                  className="py-2.5 px-4 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-all cursor-pointer"
+                >
+                  Explore Courses &rarr;
+                </button>
+              </div>
               
               {/* Timetables Card */}
               <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
@@ -872,6 +1045,362 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </div>
             </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: DEPARTMENT COURSES & MATERIALS                     */}
+        {/* ======================================================== */}
+        {activeTab === 'courses' && (
+          <div className="space-y-6">
+            
+            {/* Header and Controls */}
+            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#FFC700] mb-1">
+                    <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                    <span>Department Curriculum</span>
+                  </div>
+                  <h2 className="font-display font-bold text-xl sm:text-2xl text-[#E6ECFA]">
+                    {studentDept} Courses
+                  </h2>
+                  <p className="text-xs text-[#9AA8C7] mt-0.5">
+                    Curriculum outline and digital study materials exclusively for students of {studentDept}.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  {/* Level Picker (ND1, ND2, HND1, HND2) */}
+                  <div className="flex items-center gap-1 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
+                    {(['ND1', 'ND2', 'HND1', 'HND2'] as const).map(lvl => (
+                      <button
+                        key={lvl}
+                        onClick={() => { setCourseLevel(lvl); setExpandedCourseId(null); }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          courseLevel === lvl
+                            ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Semester Toggle (First / Second) */}
+                  <div className="flex items-center gap-1 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
+                    {(['First Semester', 'Second Semester'] as const).map(sem => (
+                      <button
+                        key={sem}
+                        onClick={() => { setCourseSemester(sem); setExpandedCourseId(null); }}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          courseSemester === sem
+                            ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_12px_rgba(255,199,0,0.3)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                        }`}
+                      >
+                        {sem === 'First Semester' ? 'First Semester' : 'Second Semester'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Search within filtered courses */}
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[#24315A]">
+                <div className="relative w-full sm:w-80">
+                  <input
+                    type="text"
+                    placeholder="Search courses by code or title..."
+                    value={courseSearchQuery}
+                    onChange={(e) => setCourseSearchQuery(e.target.value)}
+                    className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                  <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-2.5" />
+                </div>
+
+                <div className="text-xs text-[#9AA8C7] font-mono">
+                  Showing <strong className="text-[#FFC700]">{studentFilteredCourses.length}</strong> {studentFilteredCourses.length === 1 ? 'course' : 'courses'} for {courseLevel} • {courseSemester}
+                </div>
+              </div>
+            </div>
+
+            {/* Courses List */}
+            {loadingCourses ? (
+              <div className="p-12 text-center text-xs text-[#9AA8C7] bg-[#121C36] rounded-2xl border border-[#24315A]">
+                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-[#FFC700] mb-2" />
+                <span>Loading your department courses...</span>
+              </div>
+            ) : studentFilteredCourses.length === 0 ? (
+              <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] space-y-2">
+                <BookOpen className="w-10 h-10 text-[#FFC700] mx-auto opacity-70" />
+                <h3 className="font-display font-bold text-base text-[#E6ECFA]">No Courses Listed Yet</h3>
+                <p className="text-xs max-w-md mx-auto">
+                  No courses are currently published for {studentDept} ({courseLevel} - {courseSemester}). Check back shortly or contact your Course Representative.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {studentFilteredCourses.map(course => {
+                  const isExpanded = expandedCourseId === course.id;
+                  const materialsCount = course.materials ? course.materials.length : 0;
+
+                  return (
+                    <div
+                      key={course.id}
+                      className="rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF]/60 transition-all overflow-hidden"
+                    >
+                      {/* Course Row Header (Tappable) */}
+                      <button
+                        type="button"
+                        onClick={() => setExpandedCourseId(isExpanded ? null : course.id)}
+                        className="w-full p-5 sm:p-6 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer focus:outline-none group"
+                      >
+                        <div className="space-y-1.5 flex-1 pr-4">
+                          <div className="flex items-center gap-2.5 flex-wrap">
+                            <span className="font-mono text-xs font-extrabold px-2.5 py-1 rounded-lg bg-[#0A1224] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/60 transition-colors">
+                              {course.code}
+                            </span>
+                            <span className="text-xs font-mono font-bold text-[#9AA8C7]">
+                              {course.units} {course.units === 1 ? 'Unit' : 'Units'}
+                            </span>
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              course.type === 'Core'
+                                ? 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40'
+                                : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]'
+                            }`}>
+                              {course.type}
+                            </span>
+                            {materialsCount > 0 && (
+                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                                {materialsCount} {materialsCount === 1 ? 'resource' : 'resources'}
+                              </span>
+                            )}
+                          </div>
+
+                          <h3 className="font-display font-bold text-base sm:text-lg text-[#E6ECFA] group-hover:text-white transition-colors">
+                            {course.title}
+                          </h3>
+
+                          {course.description && !isExpanded && (
+                            <p className="text-xs text-[#9AA8C7] line-clamp-1">
+                              {course.description}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                          <span className="text-xs font-semibold text-[#2F52FF] group-hover:text-[#60A5FA] flex items-center gap-1">
+                            <span>{isExpanded ? 'Hide Details' : 'View Materials'}</span>
+                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                          </span>
+                        </div>
+                      </button>
+
+                      {/* Course Expanded Details & Learning Materials */}
+                      {isExpanded && (
+                        <div className="px-5 pb-5 sm:px-6 sm:pb-6 pt-1 border-t border-[#24315A]/60 space-y-4 bg-[#0A1224]/40">
+                          
+                          {/* Syllabus Description */}
+                          {course.description && (
+                            <div className="space-y-1">
+                              <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider block">
+                                Course Outline & Summary
+                              </span>
+                              <p className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                                {course.description}
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Learning Materials Section */}
+                          <div className="space-y-2.5">
+                            <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider block">
+                              Digital Learning Materials ({materialsCount})
+                            </span>
+
+                            {materialsCount === 0 ? (
+                              <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] italic">
+                                No lecture notes, past questions, or video tutorials uploaded yet for this course.
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {course.materials!.map((mat, idx) => (
+                                  <a
+                                    key={mat.id || idx}
+                                    href={mat.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] transition-all flex items-start justify-between gap-3 group/link cursor-pointer"
+                                  >
+                                    <div className="space-y-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
+                                          mat.category === 'Lecture Note'
+                                            ? 'bg-blue-950 text-blue-300 border border-blue-500/30'
+                                            : mat.category === 'Past Question'
+                                            ? 'bg-amber-950 text-amber-300 border border-amber-500/30'
+                                            : mat.category === 'Video'
+                                            ? 'bg-purple-950 text-purple-300 border border-purple-500/30'
+                                            : 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
+                                        }`}>
+                                          {mat.category}
+                                        </span>
+                                      </div>
+                                      <h4 className="font-semibold text-xs text-[#E6ECFA] group-hover/link:text-[#FFC700] transition-colors truncate">
+                                        {mat.title}
+                                      </h4>
+                                      <span className="text-[10px] text-[#9AA8C7] block truncate font-mono">
+                                        {mat.url}
+                                      </span>
+                                    </div>
+
+                                    <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover/link:text-[#FFC700] group-hover/link:border-[#FFC700]/50 shrink-0 mt-1">
+                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    </div>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Course Rep Uploaded Materials for this Course */}
+                          {(() => {
+                            const matchingRepResources = studentFilteredResources.filter(
+                              r => r.courseCode.toUpperCase() === course.code.toUpperCase()
+                            );
+                            if (matchingRepResources.length === 0) return null;
+                            return (
+                              <div className="space-y-2.5 pt-3 border-t border-[#24315A]/60">
+                                <div className="flex items-center justify-between">
+                                  <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider flex items-center gap-1.5">
+                                    <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
+                                    <span>Course Rep Uploads for {course.code} ({matchingRepResources.length})</span>
+                                  </span>
+                                  <span className="text-[10px] text-[#9AA8C7]">
+                                    Verified Department Materials
+                                  </span>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                  {matchingRepResources.map((res) => (
+                                    <a
+                                      key={res.id}
+                                      href={res.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="p-3.5 rounded-xl bg-[#0A1224] border border-[#2F52FF]/50 hover:border-[#FFC700] transition-all flex items-start justify-between gap-3 group/link cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.15)]"
+                                    >
+                                      <div className="space-y-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224]">
+                                            Course Rep
+                                          </span>
+                                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#121C36] text-[#60A5FA] border border-[#2F52FF]/30">
+                                            {res.category}
+                                          </span>
+                                          <span className="text-[10px] text-[#9AA8C7] font-mono">
+                                            {new Date(res.createdAt).toLocaleDateString()}
+                                          </span>
+                                        </div>
+                                        <h4 className="font-semibold text-xs text-[#E6ECFA] group-hover/link:text-[#FFC700] transition-colors truncate">
+                                          {res.title}
+                                        </h4>
+                                        {res.description && (
+                                          <p className="text-[11px] text-[#9AA8C7] line-clamp-1">
+                                            {res.description}
+                                          </p>
+                                        )}
+                                        <span className="text-[10px] text-[#2F52FF] block truncate font-mono">
+                                          {res.url}
+                                        </span>
+                                      </div>
+                                      <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#FFC700] shrink-0 mt-1">
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+
+                        </div>
+                      )}
+
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Course Rep Materials Card for this Level and Semester */}
+            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#24315A]">
+                <div>
+                  <h3 className="font-display font-bold text-base text-[#E6ECFA] flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-[#FFC700]" />
+                    <span>Course Rep Study Materials ({courseLevel} • {courseSemester})</span>
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] mt-0.5">
+                    Lecture notes, past questions, and assignment guides uploaded by your departmental Course Representative.
+                  </p>
+                </div>
+                <span className="text-xs font-mono text-[#FFC700] font-bold">
+                  {studentFilteredResources.length} {studentFilteredResources.length === 1 ? 'upload' : 'uploads'}
+                </span>
+              </div>
+
+              {studentFilteredResources.length === 0 ? (
+                <div className="py-6 text-center text-xs text-[#9AA8C7] italic">
+                  No materials uploaded yet by Course Reps for {courseLevel} - {courseSemester}.
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                  {studentFilteredResources.map(res => (
+                    <a
+                      key={res.id}
+                      href={res.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] transition-all flex items-start justify-between gap-3 group cursor-pointer"
+                    >
+                      <div className="space-y-1.5 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#121C36] text-[#FFC700] border border-[#FFC700]/30">
+                            {res.courseCode}
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224]">
+                            Course Rep
+                          </span>
+                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#121C36] text-[#60A5FA] border border-[#2F52FF]/30">
+                            {res.category}
+                          </span>
+                          <span className="text-[10px] text-[#9AA8C7] font-mono">
+                            {new Date(res.createdAt).toLocaleDateString()}
+                          </span>
+                        </div>
+                        <h4 className="font-semibold text-xs sm:text-sm text-[#E6ECFA] group-hover:text-[#FFC700] transition-colors truncate">
+                          {res.title}
+                        </h4>
+                        {res.description && (
+                          <p className="text-xs text-[#9AA8C7] line-clamp-1">
+                            {res.description}
+                          </p>
+                        )}
+                        <span className="text-[10px] text-[#2F52FF] hover:underline block truncate font-mono">
+                          {res.url}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover:text-[#FFC700] group-hover:border-[#FFC700]/50 shrink-0 mt-1">
+                        <ExternalLink className="w-3.5 h-3.5" />
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+
           </div>
         )}
 

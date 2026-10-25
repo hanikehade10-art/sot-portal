@@ -119,7 +119,7 @@ export const TermsPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigate
         <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5 text-sm text-[#9AA8C7] leading-relaxed">
           <h3 className="font-bold text-[#E6ECFA] text-base">1. Acceptance of Terms</h3>
           <p>
-            By accessing or registering on the School of Technology Student Portal, you agree to abide by these terms. This portal is a peer-operated utility meant to foster collaboration among students across our seven departments.
+            By accessing or registering on the School of Technology Student Portal, you agree to abide by these terms. This portal is a peer-operated utility meant to foster collaboration among students across our six departments.
           </p>
 
           <h3 className="font-bold text-[#E6ECFA] text-base">2. Accurate Matriculation Number</h3>

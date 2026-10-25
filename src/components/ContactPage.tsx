@@ -4,6 +4,8 @@ import { db } from '../lib/firebase';
 import { collection, addDoc } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { MessageType, ContactMessage } from '../types';
+import { useSiteSettings } from '../hooks/useSiteSettings';
+import { WhatsAppChannelButton } from './WhatsAppChannelButton';
 import {
   Send,
   CheckCircle2,
@@ -20,6 +22,7 @@ import {
 
 export const ContactPage: React.FC = () => {
   const { user, profile } = useAuth();
+  const { settings } = useSiteSettings();
 
   const [name, setName] = useState(profile?.fullName || '');
   const [email, setEmail] = useState(user?.email || '');
@@ -170,6 +173,16 @@ export const ContactPage: React.FC = () => {
                 <span className="text-[#FFC700] font-semibold block mb-1">Peer Support Note:</span>
                 Messages are routed to the student committee inbox and portal administrators. We aim to respond within 24–48 hours.
               </div>
+
+              {settings.whatsappChannelUrl && (
+                <div className="pt-1">
+                  <WhatsAppChannelButton
+                    url={settings.whatsappChannelUrl}
+                    variant="solid"
+                    className="w-full justify-center py-3"
+                  />
+                </div>
+              )}
 
             </div>
           </div>

@@ -30,7 +30,7 @@ const STUDY_QUICK_CHIPS = [
 
 const PORTAL_QUICK_CHIPS = [
   'How do I complete Step 2 registration?',
-  'What 7 departments are in the School of Technology?',
+  'What 6 departments are in the School of Technology?',
   'How do I reset my password?',
   'How do I submit an enquiry or complaint?'
 ];
@@ -170,7 +170,7 @@ export const AskAiView: React.FC = () => {
             <>
               <Building2 className="w-4 h-4 text-[#2F52FF] shrink-0" />
               <span>
-                <strong>Portal Help Mode:</strong> Answering questions about the 7 departments, account registration, announcements, and helpdesk support.
+                <strong>Portal Help Mode:</strong> Answering questions about the 6 departments, account registration, announcements, and helpdesk support.
               </span>
             </>
           )}

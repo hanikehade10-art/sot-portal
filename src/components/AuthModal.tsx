@@ -27,7 +27,7 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   initialMode: 'login' | 'signup' | 'step2' | 'forgot';
-  onSuccessRedirect: () => void;
+  onSuccessRedirect: (role?: string) => void;
   initialDepartment?: string;
 }
 
@@ -220,9 +220,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setSuccessMsg('Login successful. Please complete Step 2 (Department & Matric Number).');
         setMode('step2');
       } else {
-        setSuccessMsg('Welcome back! Directing straight to dashboard...');
+        const isUserRep = userProfile.role === 'rep';
+        setSuccessMsg(isUserRep ? 'Welcome Course Rep! Directing to Rep Dashboard...' : 'Welcome back! Directing straight to dashboard...');
         setTimeout(() => {
-          onSuccessRedirect();
+          onSuccessRedirect(userProfile.role);
           onClose();
         }, 800);
       }
@@ -519,7 +520,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               Select your department and enter your unique matriculation number. Once submitted, you will be taken straight to your student dashboard.
             </div>
 
-            {/* Department Dropdown (contains all 7 departments) */}
+            {/* Department Dropdown (contains all 6 departments) */}
             <div>
               <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
                 Enrolled SOT Department *
@@ -531,7 +532,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   onChange={(e) => setSelectedDept(e.target.value as SotDepartmentName)}
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] text-sm focus:outline-none focus:border-[#2F52FF] focus:ring-2 focus:ring-[#2F52FF]/40 focus:shadow-[0_0_15px_rgba(47,82,255,0.25)] transition-all"
                 >
-                  <option value="" disabled>-- Select one of the 7 Departments --</option>
+                  <option value="" disabled>-- Select one of the 6 Departments --</option>
                   {SOT_DEPARTMENTS_LIST.map((deptName) => (
                     <option key={deptName} value={deptName} className="bg-[#0A1224] text-[#E6ECFA]">
                       {deptName}

@@ -12,6 +12,7 @@ import { Footer } from './components/Footer';
 import { AuthModal } from './components/AuthModal';
 import { StudentDashboard } from './components/StudentDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
+import { RepDashboard } from './components/RepDashboard';
 import { ContactPage } from './components/ContactPage';
 import { DepartmentDetailPage } from './components/DepartmentDetailPage';
 import { FAQPage, PrivacyPolicyPage, TermsPage, NotFoundPage } from './components/InfoPages';
@@ -22,7 +23,7 @@ import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
 import { SITE_CONFIG } from './config/site';
 
 function AppContent() {
-  const { user, profile, loading, authReady, isAdmin, roleReadError, refreshProfile } = useAuth();
+  const { user, profile, loading, authReady, isAdmin, isRep, roleReadError, refreshProfile } = useAuth();
 
   // View router
   const [currentView, setCurrentView] = useState<string>('landing');
@@ -38,6 +39,8 @@ function AppContent() {
     const path = window.location.pathname;
     if (path === '/admin') {
       setCurrentView('admin');
+    } else if (path === '/rep') {
+      setCurrentView('rep');
     } else if (path === '/contact') {
       setCurrentView('contact');
     } else if (path === '/faq') {
@@ -52,7 +55,20 @@ function AppContent() {
   // Update browser history when view changes
   const navigateTo = (view: string) => {
     setCurrentView(view);
-    const targetPath = view === 'admin' ? '/admin' : view === 'contact' ? '/contact' : '/';
+    const targetPath =
+      view === 'admin'
+        ? '/admin'
+        : view === 'rep'
+        ? '/rep'
+        : view === 'contact'
+        ? '/contact'
+        : view === 'faq'
+        ? '/faq'
+        : view === 'privacy'
+        ? '/privacy'
+        : view === 'terms'
+        ? '/terms'
+        : '/';
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -62,7 +78,7 @@ function AppContent() {
   // Route Guard Enforcement: If student profile is incomplete and user is not admin, prompt step 2
   useEffect(() => {
     if (authReady && user) {
-      if (profile && !profile.profileComplete && !isAdmin && currentView !== 'admin') {
+      if (profile && !profile.profileComplete && !isAdmin && currentView !== 'admin' && currentView !== 'rep') {
         setAuthModalMode('step2');
         setAuthModalOpen(true);
         if (currentView === 'dashboard') {
@@ -72,15 +88,35 @@ function AppContent() {
     }
   }, [authReady, user, profile, isAdmin, currentView]);
 
-  // Admin route protection: Require login for /admin
+  // Admin route protection: Require login and strict admin role for /admin
+  // Reps and normal students must NEVER open /admin!
   useEffect(() => {
     if (currentView === 'admin' && authReady) {
       if (!user) {
         setAuthModalMode('login');
         setAuthModalOpen(true);
+      } else if (!isAdmin) {
+        // Eject non-admins immediately! Rep goes to /rep, student goes to /dashboard
+        if (isRep) {
+          navigateTo('rep');
+        } else {
+          navigateTo('dashboard');
+        }
       }
     }
-  }, [currentView, user, authReady]);
+  }, [currentView, user, authReady, isAdmin, isRep]);
+
+  // Rep route protection: Require login and rep or admin role for /rep
+  useEffect(() => {
+    if (currentView === 'rep' && authReady) {
+      if (!user) {
+        setAuthModalMode('login');
+        setAuthModalOpen(true);
+      } else if (!isRep && !isAdmin) {
+        navigateTo('dashboard');
+      }
+    }
+  }, [currentView, user, authReady, isRep, isAdmin]);
 
   const handleOpenLogin = () => {
     setAuthModalMode('login');
@@ -175,7 +211,7 @@ function AppContent() {
       )}
 
       {/* NAVIGATION BAR (Shown on public and content pages) */}
-      {currentView !== 'dashboard' && currentView !== 'admin' && (
+      {currentView !== 'dashboard' && currentView !== 'admin' && currentView !== 'rep' && (
         <Navbar
           currentView={currentView}
           onNavigate={(target) => {
@@ -183,6 +219,8 @@ function AppContent() {
               handleNavigateDashboard();
             } else if (target === 'admin') {
               navigateTo('admin');
+            } else if (target === 'rep') {
+              navigateTo('rep');
             } else if (target === 'departments') {
               navigateTo('landing');
               setTimeout(() => {
@@ -210,6 +248,7 @@ function AppContent() {
             onNavigateHome={() => navigateTo('landing')}
             onNavigateContact={() => navigateTo('contact')}
             onNavigateAdmin={() => navigateTo('admin')}
+            onNavigateRep={() => navigateTo('rep')}
           />
         ) : currentView === 'dashboard' ? (
           <div className="py-20 text-center space-y-4">
@@ -235,6 +274,14 @@ function AppContent() {
         {/* 2. ADMIN DASHBOARD (Protected, Admin Only) */}
         {currentView === 'admin' && (
           <AdminDashboard onNavigateHome={() => navigateTo('landing')} />
+        )}
+
+        {/* 2.5 COURSE REP DASHBOARD (Protected, Reps Only) */}
+        {currentView === 'rep' && user && (isRep || isAdmin) && (
+          <RepDashboard
+            onNavigateStudentPortal={() => navigateTo('dashboard')}
+            onNavigateHome={() => navigateTo('landing')}
+          />
         )}
 
         {/* 3. PUBLIC LANDING */}
@@ -275,7 +322,7 @@ function AppContent() {
       </main>
 
       {/* FOOTER (Shown on public pages) */}
-      {currentView !== 'dashboard' && currentView !== 'admin' && (
+      {currentView !== 'dashboard' && currentView !== 'admin' && currentView !== 'rep' && (
         <Footer
           onDepartmentClick={(deptId) => {
             const found = DEPARTMENTS.find(d => d.id === deptId);
@@ -299,8 +346,14 @@ function AppContent() {
         onClose={() => setAuthModalOpen(false)}
         initialMode={authModalMode}
         initialDepartment={initialDepartment}
-        onSuccessRedirect={() => {
-          navigateTo('dashboard');
+        onSuccessRedirect={(role) => {
+          if (role === 'rep' || isRep) {
+            navigateTo('rep');
+          } else if (role === 'admin' || isAdmin) {
+            navigateTo('admin');
+          } else {
+            navigateTo('dashboard');
+          }
         }}
       />
 

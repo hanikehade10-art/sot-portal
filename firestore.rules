@@ -8,13 +8,20 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Helper Primitives
     function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function signedIn() {
       return request.auth != null;
     }
 
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function myDept() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.department;
     }
 
     function isAdmin() {
@@ -182,6 +189,22 @@ service cloud.firestore {
       allow read, list: if true;
       // Only admins can create, edit, or delete FAQs
       allow create, update, delete: if isAdmin();
+    }
+
+    // Uploaded Materials (Resources)
+    match /resources/{id} {
+      allow read: if signedIn();
+      allow create: if isAdmin() || (isRep()
+        && request.resource.data.department == myDept()
+        && request.resource.data.uploadedBy == request.auth.uid);
+      allow update, delete: if isAdmin() || (isRep()
+        && resource.data.uploadedBy == request.auth.uid);
+    }
+
+    // Site Settings (WhatsApp Channel Link, etc.)
+    match /settings/{id} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

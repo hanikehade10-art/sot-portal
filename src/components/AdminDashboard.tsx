@@ -4,13 +4,12 @@ import { db } from '../lib/firebase';
 import {
   collection,
   getDocs,
+  getDoc,
+  setDoc,
   doc,
   updateDoc,
   deleteDoc,
-  addDoc,
-  query,
-  where,
-  orderBy
+  addDoc
 } from 'firebase/firestore';
 import {
   UserProfile,
@@ -18,110 +17,178 @@ import {
   AnnouncementItem,
   FaqItem,
   CourseItem,
-  TimetableEntry,
-  AcademicLevel
+  CourseMaterial,
+  CourseMaterialCategory,
+  ResourceItem,
+  TimetableEntry
 } from '../types';
 import { SOT_DEPARTMENTS_LIST, INITIAL_ANNOUNCEMENTS } from '../data/departments';
-import { INITIAL_COURSES, INITIAL_TIMETABLES } from '../data/coursesAndTimetables';
 import {
-  ShieldAlert,
+  INITIAL_COURSES,
+  INITIAL_TIMETABLES,
+  normalizeCourseLevel,
+  normalizeCourseSemester
+} from '../data/coursesAndTimetables';
+import { WhatsAppIcon } from './WhatsAppIcon';
+import { WhatsAppChannelButton } from './WhatsAppChannelButton';
+import {
+  LayoutDashboard,
   Users,
-  MessageSquare,
+  BookOpen,
+  Calendar,
   Bell,
-  BarChart3,
+  MessageSquare,
+  Bot,
   Search,
-  Filter,
-  Download,
-  Trash2,
-  Ban,
-  CheckCircle,
-  Mail,
   Plus,
+  Trash2,
   Edit2,
   X,
   Menu,
   LogOut,
-  GraduationCap,
-  Sparkles,
-  AlertTriangle,
-  Send,
-  Eye,
   RefreshCw,
+  Download,
+  ShieldCheck,
+  Ban,
+  Mail,
+  Layers,
+  AlertTriangle,
+  ChevronRight,
   Home,
-  Bot,
-  HelpCircle,
-  BookOpen,
-  Calendar,
-  Clock,
-  Award,
-  Check,
-  CheckSquare
+  Send,
+  CheckCircle,
+  Sparkles,
+  FolderOpen,
+  ExternalLink,
+  Megaphone,
+  Settings
 } from 'lucide-react';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
 }
 
+type AdminTab =
+  | 'overview'
+  | 'students'
+  | 'courses'
+  | 'materials'
+  | 'timetables'
+  | 'announcements'
+  | 'messages'
+  | 'faqs'
+  | 'settings';
+
+const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
+const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
+const MATERIAL_CATEGORIES: CourseMaterialCategory[] = ['Lecture Note', 'Past Question', 'Video', 'Other'];
+const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+interface BatchCourseRow {
+  code: string;
+  title: string;
+  units: number;
+  type: 'Core' | 'Elective';
+}
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }) => {
   const { user, profile, isAdmin, roleReadError, refreshProfile, logout } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'overview' | 'students' | 'messages' | 'announcements' | 'courses' | 'timetables' | 'faqs'>('overview');
+  const [activeTab, setActiveTab] = useState<AdminTab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Data states
+  // Core Data Collections
   const [students, setStudents] = useState<UserProfile[]>([]);
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
   const [messages, setMessages] = useState<ContactMessage[]>([]);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
-  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
-  const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
-  const [loading, setLoading] = useState(true);
+  const [resources, setResources] = useState<ResourceItem[]>([]);
 
-  // Message reply drafts
-  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
-  const [replySuccessMessage, setReplySuccessMessage] = useState<string | null>(null);
+  // -------------------------------------------------------------
+  // MATERIALS & REP UPLOADS STATE
+  // -------------------------------------------------------------
+  const [materialsSubTab, setMaterialsSubTab] = useState<'materials' | 'announcements'>('materials');
+  const [materialsDeptFilter, setMaterialsDeptFilter] = useState<string>('All');
+  const [materialsSearch, setMaterialsSearch] = useState('');
 
-  // Course management states
-  const [showCourseModal, setShowCourseModal] = useState(false);
-  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
-  const [courseDept, setCourseDept] = useState(SOT_DEPARTMENTS_LIST[0]);
-  const [courseCode, setCourseCode] = useState('');
-  const [courseTitle, setCourseTitle] = useState('');
-  const [courseLevel, setCourseLevel] = useState<AcademicLevel>('ND I');
-  const [courseSemester, setCourseSemester] = useState<'1st Semester' | '2nd Semester'>('1st Semester');
+  // -------------------------------------------------------------
+  // COURSES MANAGEMENT STATE
+  // -------------------------------------------------------------
+  const [courseDeptFilter, setCourseDeptFilter] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [courseLevelFilter, setCourseLevelFilter] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [courseSemesterFilter, setCourseSemesterFilter] = useState<'First Semester' | 'Second Semester'>('First Semester');
   const [courseSearch, setCourseSearch] = useState('');
-  const [courseDeptFilter, setCourseDeptFilter] = useState('All');
-  const [courseLevelFilter, setCourseLevelFilter] = useState('All');
 
-  // Timetable management states
+  // Course Side Panel (Drawer)
+  const [showCourseDrawer, setShowCourseDrawer] = useState(false);
+  const [editingCourseId, setEditingCourseId] = useState<string | null>(null);
+  const [formDept, setFormDept] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [formLevel, setFormLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [formSemester, setFormSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
+  const [formCode, setFormCode] = useState('');
+  const [formTitle, setFormTitle] = useState('');
+  const [formUnits, setFormUnits] = useState<number>(3);
+  const [formType, setFormType] = useState<'Core' | 'Elective'>('Core');
+  const [formDescription, setFormDescription] = useState('');
+  const [formMaterials, setFormMaterials] = useState<CourseMaterial[]>([]);
+  const [courseSaveError, setCourseSaveError] = useState<string | null>(null);
+  const [courseSaving, setCourseSaving] = useState(false);
+
+  // Material item mini-form inside Course Side Panel
+  const [matTitle, setMatTitle] = useState('');
+  const [matUrl, setMatUrl] = useState('');
+  const [matCategory, setMatCategory] = useState<CourseMaterialCategory>('Lecture Note');
+
+  // Batch Courses Modal
+  const [showBatchModal, setShowBatchModal] = useState(false);
+  const [batchRows, setBatchRows] = useState<BatchCourseRow[]>([
+    { code: '', title: '', units: 3, type: 'Core' },
+    { code: '', title: '', units: 3, type: 'Core' },
+    { code: '', title: '', units: 3, type: 'Core' }
+  ]);
+  const [batchSaving, setBatchSaving] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+
+  // -------------------------------------------------------------
+  // STUDENTS STATE
+  // -------------------------------------------------------------
+  const [studentSearch, setStudentSearch] = useState('');
+  const [studentDeptFilter, setStudentDeptFilter] = useState<string>('All');
+
+  // -------------------------------------------------------------
+  // TIMETABLES STATE
+  // -------------------------------------------------------------
+  const [ttDeptFilter, setTtDeptFilter] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [ttLevelFilter, setTtLevelFilter] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
   const [showTtModal, setShowTtModal] = useState(false);
   const [editingTtId, setEditingTtId] = useState<string | null>(null);
-  const [ttDept, setTtDept] = useState(SOT_DEPARTMENTS_LIST[0]);
-  const [ttLevel, setTtLevel] = useState<AcademicLevel>('ND I');
-  const [ttDay, setTtDay] = useState('Monday');
-  const [ttStartTime, setTtStartTime] = useState('08:00 AM');
-  const [ttEndTime, setTtEndTime] = useState('10:00 AM');
-  const [ttCourseCode, setTtCourseCode] = useState('');
-  const [ttVenue, setTtVenue] = useState('Hall 1');
-  const [ttType, setTtType] = useState<'class' | 'exam'>('class');
-  const [ttDeptFilter, setTtDeptFilter] = useState('All');
-  const [ttLevelFilter, setTtLevelFilter] = useState('All');
-  const [ttTypeFilter, setTtTypeFilter] = useState<'All' | 'class' | 'exam'>('All');
+  const [ttFormDept, setTtFormDept] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [ttFormLevel, setTtFormLevel] = useState<string>('ND1');
+  const [ttFormDay, setTtFormDay] = useState<string>('Monday');
+  const [ttFormStartTime, setTtFormStartTime] = useState<string>('08:00 AM');
+  const [ttFormEndTime, setTtFormEndTime] = useState<string>('10:00 AM');
+  const [ttFormCourseCode, setTtFormCourseCode] = useState<string>('');
+  const [ttFormVenue, setTtFormVenue] = useState<string>('Hall 1');
+  const [ttFormType, setTtFormType] = useState<'class' | 'exam'>('class');
+  const [ttFormDate, setTtFormDate] = useState<string>('');
+  const [ttSaving, setTtSaving] = useState(false);
+  const [ttError, setTtError] = useState<string | null>(null);
 
-  // FAQ modal & form
-  const [showFaqModal, setShowFaqModal] = useState(false);
-  const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
-  const [faqQuestion, setFaqQuestion] = useState('');
-  const [faqAnswer, setFaqAnswer] = useState('');
-
-  // Student filtering & search
-  const [studentSearch, setStudentSearch] = useState('');
-  const [studentDeptFilter, setStudentDeptFilter] = useState('All');
-
-  // Message filtering
+  // -------------------------------------------------------------
+  // MESSAGES STATE
+  // -------------------------------------------------------------
   const [messageTypeFilter, setMessageTypeFilter] = useState<string>('All');
+  const [replyDrafts, setReplyDrafts] = useState<Record<string, string>>({});
+  const [replySavingId, setReplySavingId] = useState<string | null>(null);
+  const [replyNotification, setReplyNotification] = useState<string | null>(null);
 
-  // Announcement modal / form
+  // -------------------------------------------------------------
+  // ANNOUNCEMENTS STATE
+  // -------------------------------------------------------------
   const [showAnnModal, setShowAnnModal] = useState(false);
   const [editingAnnId, setEditingAnnId] = useState<string | null>(null);
   const [annTitle, setAnnTitle] = useState('');
@@ -130,7 +197,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [annDepartment, setAnnDepartment] = useState('All');
   const [annUrgent, setAnnUrgent] = useState(false);
 
-  // Load live data from Firestore (or fallback to local test records)
+  // -------------------------------------------------------------
+  // FAQS STATE
+  // -------------------------------------------------------------
+  const [showFaqModal, setShowFaqModal] = useState(false);
+  const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
+  const [faqQuestion, setFaqQuestion] = useState('');
+  const [faqAnswer, setFaqAnswer] = useState('');
+
+  // -------------------------------------------------------------
+  // DATA FETCHING
+  // -------------------------------------------------------------
   const fetchData = async () => {
     setLoading(true);
     try {
@@ -140,12 +217,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         if (!usersSnap.empty) {
           const list: UserProfile[] = [];
           usersSnap.forEach(d => {
-            const data = d.data() as UserProfile;
-            list.push({ ...data, uid: d.id });
+            list.push({ ...d.data(), uid: d.id } as UserProfile);
           });
           setStudents(list);
         } else {
-          // If Firestore collection empty, check local test registry
           const localProfileRaw = localStorage.getItem('sot_local_profile');
           if (localProfileRaw) {
             setStudents([JSON.parse(localProfileRaw)]);
@@ -154,29 +229,76 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           }
         }
       } catch (err) {
-        console.warn('Admin user list note:', err);
+        console.warn('Students load note:', err);
         if (profile) setStudents([profile]);
       }
 
-      // 2. Fetch Messages
+      // 2. Fetch Courses
+      try {
+        const coursesSnap = await getDocs(collection(db, 'courses'));
+        if (!coursesSnap.empty) {
+          const list: CourseItem[] = [];
+          coursesSnap.forEach(d => {
+            const data = d.data();
+            list.push({
+              id: d.id,
+              department: data.department || SOT_DEPARTMENTS_LIST[0],
+              code: data.code || '',
+              title: data.title || '',
+              level: data.level || 'ND1',
+              semester: data.semester || 'First Semester',
+              units: typeof data.units === 'number' ? data.units : 3,
+              type: data.type === 'Elective' ? 'Elective' : 'Core',
+              description: data.description || '',
+              materials: Array.isArray(data.materials) ? data.materials : [],
+              createdAt: data.createdAt,
+              updatedAt: data.updatedAt
+            } as CourseItem);
+          });
+          setCourses(list);
+        } else {
+          setCourses(INITIAL_COURSES);
+        }
+      } catch (err) {
+        console.warn('Courses load note:', err);
+        setCourses(INITIAL_COURSES);
+      }
+
+      // 3. Fetch Timetables
+      try {
+        const ttSnap = await getDocs(collection(db, 'timetables'));
+        if (!ttSnap.empty) {
+          const list: TimetableEntry[] = [];
+          ttSnap.forEach(d => {
+            list.push({ id: d.id, ...d.data() } as TimetableEntry);
+          });
+          setTimetables(list);
+        } else {
+          setTimetables(INITIAL_TIMETABLES);
+        }
+      } catch (err) {
+        console.warn('Timetables load note:', err);
+        setTimetables(INITIAL_TIMETABLES);
+      }
+
+      // 4. Fetch Messages
       try {
         const msgSnap = await getDocs(collection(db, 'messages'));
         const msgList: ContactMessage[] = [];
         msgSnap.forEach(d => {
           msgList.push({ id: d.id, ...d.data() } as ContactMessage);
         });
-        // Check local messages
         const localMsgs = JSON.parse(localStorage.getItem('sot_local_messages') || '[]');
         const combined = [...msgList, ...localMsgs];
-        // Deduplicate
         const unique = Array.from(new Map(combined.map(m => [m.id, m])).values());
+        unique.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
         setMessages(unique);
       } catch (err) {
         const localMsgs = JSON.parse(localStorage.getItem('sot_local_messages') || '[]');
         setMessages(localMsgs);
       }
 
-      // 3. Fetch Announcements
+      // 5. Fetch Announcements
       try {
         const annSnap = await getDocs(collection(db, 'announcements'));
         if (!annSnap.empty) {
@@ -187,10 +309,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           setAnnouncements(annList);
         }
       } catch (err) {
-        console.warn('Announcements fetch note:', err);
+        console.warn('Announcements load note:', err);
       }
 
-      // 4. Fetch FAQs (Chatbot Knowledge Base)
+      // 6. Fetch FAQs
       try {
         const faqSnap = await getDocs(collection(db, 'faqs'));
         const faqList: FaqItem[] = [];
@@ -199,7 +321,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         });
         setFaqs(faqList);
       } catch (err) {
-        console.warn('FAQs fetch note:', err);
+        console.warn('FAQs load note:', err);
+      }
+
+      // 7. Fetch Resources (Uploaded Materials)
+      try {
+        const resSnap = await getDocs(collection(db, 'resources'));
+        if (!resSnap.empty) {
+          const resList: ResourceItem[] = [];
+          resSnap.forEach(d => {
+            resList.push({ id: d.id, ...d.data() } as ResourceItem);
+          });
+          resList.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+          setResources(resList);
+        } else {
+          setResources([]);
+        }
+      } catch (err) {
+        console.warn('Resources load note:', err);
       }
     } finally {
       setLoading(false);
@@ -210,23 +349,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     fetchData();
   }, []);
 
-  // Strict route guard check
+  // -------------------------------------------------------------
+  // ACCESS GUARD
+  // -------------------------------------------------------------
   if (!isAdmin) {
     return (
-      <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-16 h-16 rounded-2xl bg-rose-950/40 border border-rose-500/50 flex items-center justify-center text-rose-400 mb-4 shadow-[0_0_30px_rgba(244,63,94,0.3)]">
-          <ShieldAlert className="w-8 h-8" />
+      <div className="min-h-screen bg-[#070D1A] text-[#E6ECFA] flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-14 h-14 rounded-2xl bg-rose-950/50 border border-rose-500/50 flex items-center justify-center text-rose-400 mb-4 shadow-[0_0_25px_rgba(244,63,94,0.3)]">
+          <AlertTriangle className="w-7 h-7" />
         </div>
-        <h2 className="font-display font-bold text-3xl mb-2">Restricted Access</h2>
-        <p className="text-[#9AA8C7] max-w-md mb-4 text-sm">
-          The Admin Portal is reserved strictly for designated student administrators. Your current account does not hold administrative clearance.
+        <h2 className="font-display font-bold text-2xl text-[#E6ECFA] mb-2">Admin Clearance Required</h2>
+        <p className="text-[#9AA8C7] max-w-md mb-4 text-xs leading-relaxed">
+          The Admin Portal is restricted to authorized SOT student administrators. Your current account does not have admin permissions.
         </p>
 
         {roleReadError ? (
           <div className="mb-6 p-4 rounded-xl bg-rose-950/70 border border-rose-500/60 text-xs text-rose-200 text-left max-w-md w-full space-y-2">
             <div className="font-semibold text-rose-300 flex items-center gap-1.5">
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>Role Read Error from Firestore:</span>
+              <span>Role Read Error:</span>
             </div>
             <p className="font-mono text-[11px] break-all">{roleReadError}</p>
             <button
@@ -234,201 +375,445 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               className="mt-2 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Reading Role</span>
+              <span>Retry Reading Clearance</span>
             </button>
           </div>
         ) : (
-          <div className="mb-6 p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#9AA8C7] max-w-md w-full space-y-2">
-            <p>
-              Current account email: <strong className="text-[#E6ECFA]">{user?.email || 'Not logged in'}</strong>
-            </p>
-            <p>
-              Detected role from profile: <strong className="text-[#FFC700] uppercase">{profile?.role || 'None'}</strong>
-            </p>
+          <div className="mb-6 p-3.5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#9AA8C7] max-w-md w-full space-y-1.5">
+            <p>Signed in as: <strong className="text-[#E6ECFA]">{user?.email || 'Guest'}</strong></p>
+            <p>Assigned role: <strong className="text-[#FFC700] uppercase">{profile?.role || 'student'}</strong></p>
             <button
               onClick={() => refreshProfile()}
-              className="mt-1 px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer mx-auto"
+              className="mt-2 px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer mx-auto"
             >
               <RefreshCw className="w-3.5 h-3.5" />
-              <span>Refresh Role from Firestore</span>
+              <span>Re-check Firestore Role</span>
             </button>
           </div>
         )}
 
         <button
           onClick={onNavigateHome}
-          className="px-6 py-3 rounded-xl bg-[#2F52FF] text-white font-semibold hover:bg-[#2545df] cursor-pointer"
+          className="px-5 py-2.5 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer"
         >
-          Return to SOT Home
+          Return to Portal Home
         </button>
       </div>
     );
   }
 
-  // OVERVIEW STATS
+  // -------------------------------------------------------------
+  // COMPUTED STATS (Overview)
+  // -------------------------------------------------------------
   const totalStudents = students.length;
-  const incompleteProfiles = students.filter(s => !s.profileComplete).length;
-  const newSignupsThisWeek = students.filter(s => {
-    if (!s.createdAt) return false;
-    const diffDays = (Date.now() - new Date(s.createdAt).getTime()) / (1000 * 3600 * 24);
-    return diffDays <= 7;
-  }).length;
+  const totalReps = students.filter(s => s.role === 'rep').length;
+  const pendingMessages = messages.filter(m => m.status === 'New').length;
+  const totalCourses = courses.length;
 
-  // Department counts for bar chart
-  const deptCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    SOT_DEPARTMENTS_LIST.forEach(d => { counts[d] = 0; });
+  const deptStudentCounts = useMemo(() => {
+    const map: Record<string, number> = {};
+    SOT_DEPARTMENTS_LIST.forEach(d => { map[d] = 0; });
     students.forEach(s => {
-      if (s.department && counts[s.department] !== undefined) {
-        counts[s.department]++;
+      if (s.department && map[s.department] !== undefined) {
+        map[s.department]++;
       }
     });
-    return counts;
+    return map;
   }, [students]);
 
-  const maxDeptCount = Math.max(...Object.values(deptCounts), 1);
+  const maxDeptCount = Math.max(...Object.values(deptStudentCounts), 1);
 
-  // Filtered Students
+  // -------------------------------------------------------------
+  // FILTERED COURSES
+  // -------------------------------------------------------------
+  const filteredCourses = useMemo(() => {
+    return courses.filter(c => {
+      const matchDept = c.department === courseDeptFilter;
+      const matchLevel = normalizeCourseLevel(c.level) === courseLevelFilter;
+      const matchSemester = normalizeCourseSemester(c.semester) === courseSemesterFilter;
+
+      if (!matchDept || !matchLevel || !matchSemester) return false;
+
+      if (courseSearch.trim()) {
+        const q = courseSearch.toLowerCase();
+        const codeMatch = c.code.toLowerCase().includes(q);
+        const titleMatch = c.title.toLowerCase().includes(q);
+        return codeMatch || titleMatch;
+      }
+      return true;
+    });
+  }, [courses, courseDeptFilter, courseLevelFilter, courseSemesterFilter, courseSearch]);
+
+  // Open Course Drawer for Add
+  const handleOpenAddCourse = () => {
+    setEditingCourseId(null);
+    setFormDept(courseDeptFilter);
+    setFormLevel(courseLevelFilter);
+    setFormSemester(courseSemesterFilter);
+    setFormCode('');
+    setFormTitle('');
+    setFormUnits(3);
+    setFormType('Core');
+    setFormDescription('');
+    setFormMaterials([]);
+    setMatTitle('');
+    setMatUrl('');
+    setMatCategory('Lecture Note');
+    setCourseSaveError(null);
+    setShowCourseDrawer(true);
+  };
+
+  // Open Course Drawer for Edit
+  const handleOpenEditCourse = (course: CourseItem) => {
+    setEditingCourseId(course.id);
+    setFormDept(course.department);
+    setFormLevel(normalizeCourseLevel(course.level));
+    setFormSemester(normalizeCourseSemester(course.semester));
+    setFormCode(course.code);
+    setFormTitle(course.title);
+    setFormUnits(course.units || 3);
+    setFormType(course.type || 'Core');
+    setFormDescription(course.description || '');
+    setFormMaterials(course.materials ? [...course.materials] : []);
+    setMatTitle('');
+    setMatUrl('');
+    setMatCategory('Lecture Note');
+    setCourseSaveError(null);
+    setShowCourseDrawer(true);
+  };
+
+  // Add Material to draft
+  const handleAddMaterialToDraft = () => {
+    if (!matTitle.trim() || !matUrl.trim()) return;
+    const newMat: CourseMaterial = {
+      id: 'mat_' + Date.now(),
+      title: matTitle.trim(),
+      url: matUrl.trim(),
+      category: matCategory
+    };
+    setFormMaterials(prev => [...prev, newMat]);
+    setMatTitle('');
+    setMatUrl('');
+  };
+
+  const handleRemoveMaterialFromDraft = (index: number) => {
+    setFormMaterials(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  // Save Single Course (Add or Edit)
+  const handleSaveCourse = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setCourseSaveError(null);
+
+    if (!formCode.trim() || !formTitle.trim()) {
+      setCourseSaveError('Course code and title are required.');
+      return;
+    }
+
+    setCourseSaving(true);
+    const coursePayload = {
+      department: formDept,
+      level: formLevel,
+      semester: formSemester,
+      code: formCode.trim().toUpperCase(),
+      title: formTitle.trim(),
+      units: Number(formUnits) || 3,
+      type: formType,
+      description: formDescription.trim(),
+      materials: formMaterials,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      if (editingCourseId) {
+        try {
+          await updateDoc(doc(db, 'courses', editingCourseId), coursePayload);
+        } catch (dbErr: any) {
+          console.warn('Firestore course update fallback:', dbErr);
+        }
+        setCourses(prev =>
+          prev.map(c => (c.id === editingCourseId ? { id: editingCourseId, ...coursePayload } : c))
+        );
+      } else {
+        let newId = 'c_' + Date.now();
+        try {
+          const docRef = await addDoc(collection(db, 'courses'), {
+            ...coursePayload,
+            createdAt: new Date().toISOString()
+          });
+          newId = docRef.id;
+        } catch (dbErr: any) {
+          console.warn('Firestore course add fallback:', dbErr);
+        }
+        setCourses(prev => [{ id: newId, ...coursePayload, createdAt: new Date().toISOString() }, ...prev]);
+      }
+
+      setShowCourseDrawer(false);
+      setEditingCourseId(null);
+    } catch (err: any) {
+      setCourseSaveError(err?.message || 'Failed to save course. Please verify network/permissions.');
+    } finally {
+      setCourseSaving(false);
+    }
+  };
+
+  // Delete Course
+  const handleDeleteCourse = async (id: string, code: string) => {
+    if (!confirm(`Are you sure you want to delete course ${code}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'courses', id));
+    } catch (err) {
+      console.warn('Firestore course delete fallback:', err);
+    }
+    setCourses(prev => prev.filter(c => c.id !== id));
+  };
+
+  // Batch Add Courses
+  const handleAddBatchRow = () => {
+    setBatchRows(prev => [...prev, { code: '', title: '', units: 3, type: 'Core' }]);
+  };
+
+  const handleRemoveBatchRow = (idx: number) => {
+    setBatchRows(prev => prev.filter((_, i) => i !== idx));
+  };
+
+  const handleUpdateBatchRow = (idx: number, field: keyof BatchCourseRow, value: any) => {
+    setBatchRows(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [field]: value };
+      return copy;
+    });
+  };
+
+  const handleSaveBatchCourses = async () => {
+    setBatchError(null);
+    const validRows = batchRows.filter(r => r.code.trim() && r.title.trim());
+
+    if (validRows.length === 0) {
+      setBatchError('Please fill in at least one course with both Code and Title.');
+      return;
+    }
+
+    setBatchSaving(true);
+    try {
+      const createdItems: CourseItem[] = [];
+      for (const row of validRows) {
+        const payload = {
+          department: courseDeptFilter,
+          level: courseLevelFilter,
+          semester: courseSemesterFilter,
+          code: row.code.trim().toUpperCase(),
+          title: row.title.trim(),
+          units: Number(row.units) || 3,
+          type: row.type,
+          description: '',
+          materials: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString()
+        };
+
+        let newId = 'c_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+        try {
+          const ref = await addDoc(collection(db, 'courses'), payload);
+          newId = ref.id;
+        } catch (e) {
+          // Local fallback
+        }
+        createdItems.push({ id: newId, ...payload });
+      }
+
+      setCourses(prev => [...createdItems, ...prev]);
+      setShowBatchModal(false);
+      setBatchRows([
+        { code: '', title: '', units: 3, type: 'Core' },
+        { code: '', title: '', units: 3, type: 'Core' }
+      ]);
+    } catch (err: any) {
+      setBatchError(err?.message || 'Failed to save batch courses.');
+    } finally {
+      setBatchSaving(false);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // STUDENTS MANAGEMENT
+  // -------------------------------------------------------------
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
       const matchDept = studentDeptFilter === 'All' || s.department === studentDeptFilter;
-      const searchLower = studentSearch.toLowerCase();
+      const q = studentSearch.toLowerCase();
       const matchSearch =
-        (s.email && s.email.toLowerCase().includes(searchLower)) ||
-        (s.fullName && s.fullName.toLowerCase().includes(searchLower)) ||
-        (s.matricNumber && s.matricNumber.toLowerCase().includes(searchLower));
+        (s.email && s.email.toLowerCase().includes(q)) ||
+        (s.fullName && s.fullName.toLowerCase().includes(q)) ||
+        (s.matricNumber && s.matricNumber.toLowerCase().includes(q));
       return matchDept && matchSearch;
     });
   }, [students, studentDeptFilter, studentSearch]);
 
-  // Export students to CSV
+  const handleToggleRepRole = async (student: UserProfile) => {
+    const newRole: 'student' | 'rep' = student.role === 'rep' ? 'student' : 'rep';
+    try {
+      await updateDoc(doc(db, 'users', student.uid), { role: newRole });
+    } catch (e) {
+      console.warn('Firestore rep role update note:', e);
+    }
+    setStudents(prev => prev.map(s => (s.uid === student.uid ? { ...s, role: newRole } : s)));
+  };
+
+  const handleToggleDisable = async (student: UserProfile) => {
+    const newStatus = !student.disabled;
+    try {
+      await updateDoc(doc(db, 'users', student.uid), { disabled: newStatus });
+    } catch (e) {
+      console.warn('Firestore disable status note:', e);
+    }
+    setStudents(prev => prev.map(s => (s.uid === student.uid ? { ...s, disabled: newStatus } : s)));
+  };
+
+  const handleDeleteStudent = async (uid: string) => {
+    if (!confirm('Permanently delete this student account and release their matric number reservation?')) return;
+    const target = students.find(s => s.uid === uid);
+    const matric = target?.matricNumber?.trim().toUpperCase();
+
+    try {
+      await deleteDoc(doc(db, 'users', uid));
+    } catch (e) {}
+
+    if (matric) {
+      const matricDocId = sanitizeMatricId(matric);
+      try {
+        await deleteDoc(doc(db, 'matricNumbers', matricDocId));
+      } catch (e) {}
+      try {
+        await deleteDoc(doc(db, 'matric_registry', matricDocId));
+      } catch (e) {}
+    }
+
+    setStudents(prev => prev.filter(s => s.uid !== uid));
+  };
+
   const handleExportCSV = () => {
-    const headers = ['UID', 'Full Name', 'Email', 'Department', 'Matric Number', 'Profile Complete', 'Role', 'Date Joined'];
+    const headers = ['UID', 'Full Name', 'Email', 'Department', 'Matric Number', 'Role', 'Status', 'Date Joined'];
     const rows = filteredStudents.map(s => [
       `"${s.uid || ''}"`,
       `"${s.fullName || ''}"`,
       `"${s.email || ''}"`,
       `"${s.department || 'N/A'}"`,
       `"${s.matricNumber || 'N/A'}"`,
-      s.profileComplete ? 'Yes' : 'No',
       s.role,
+      s.disabled ? 'Disabled' : s.profileComplete ? 'Active' : 'Incomplete',
       `"${s.createdAt ? new Date(s.createdAt).toLocaleDateString() : 'N/A'}"`
     ]);
-
     const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
+    const encoded = encodeURI(csvContent);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `SOT_Students_Export_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('href', encoded);
+    link.setAttribute('download', `SOT_Students_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
   };
 
-  // Disable / Enable account
-  const handleToggleDisable = async (student: UserProfile) => {
-    const newStatus = !student.disabled;
-    try {
-      await updateDoc(doc(db, 'users', student.uid), { disabled: newStatus });
-    } catch (e) {
-      console.warn('Firestore update note:', e);
-    }
-    setStudents(prev => prev.map(s => s.uid === student.uid ? { ...s, disabled: newStatus } : s));
+  // -------------------------------------------------------------
+  // TIMETABLES MANAGEMENT
+  // -------------------------------------------------------------
+  const filteredTimetables = useMemo(() => {
+    return timetables.filter(t => {
+      const matchDept = t.department === ttDeptFilter;
+      const matchLevel = normalizeCourseLevel(t.level) === ttLevelFilter;
+      const matchType = t.type === ttTypeTab;
+      return matchDept && matchLevel && matchType;
+    });
+  }, [timetables, ttDeptFilter, ttLevelFilter, ttTypeTab]);
+
+  const handleOpenAddTt = () => {
+    setEditingTtId(null);
+    setTtFormDept(ttDeptFilter);
+    setTtFormLevel(ttLevelFilter);
+    setTtFormDay('Monday');
+    setTtFormStartTime('08:00 AM');
+    setTtFormEndTime('10:00 AM');
+    setTtFormCourseCode('');
+    setTtFormVenue('Hall 1');
+    setTtFormType(ttTypeTab);
+    setTtFormDate('');
+    setTtError(null);
+    setShowTtModal(true);
   };
 
-  // Delete account and release their matric number reservation
-  const handleDeleteStudent = async (uid: string) => {
-    const studentToDelete = students.find(s => s.uid === uid);
-    const matricToDelete = studentToDelete?.matricNumber?.trim().toUpperCase();
-
-    // 1. Delete user from 'users' collection
-    try {
-      await deleteDoc(doc(db, 'users', uid));
-    } catch (e) {
-      console.warn('Firestore delete user note:', e);
-    }
-
-    // 2. If student had a matricNumber, delete directly from 'matricNumbers' collection
-    if (matricToDelete) {
-      const matricDocId = sanitizeMatricId(matricToDelete);
-      
-      try {
-        await deleteDoc(doc(db, 'matricNumbers', matricDocId));
-      } catch (e) {
-        console.warn('Firestore delete matricNumbers by doc id note:', e);
-      }
-
-      try {
-        await deleteDoc(doc(db, 'matric_registry', matricDocId));
-      } catch (e) {
-        // ignore
-      }
-
-      // Also clean up local storage registry
-      const localMatrics = JSON.parse(localStorage.getItem('sot_matric_registry') || '{}');
-      if (localMatrics[matricToDelete]) {
-        delete localMatrics[matricToDelete];
-        localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
-      }
-    }
-
-    // 3. Also query matricNumbers & matric_registry for any documents where uid == uid or userId == uid and delete them
-    try {
-      const q1 = query(collection(db, 'matricNumbers'), where('uid', '==', uid));
-      const snap1 = await getDocs(q1);
-      for (const d of snap1.docs) {
-        await deleteDoc(d.ref).catch(() => {});
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    try {
-      const q2 = query(collection(db, 'matricNumbers'), where('userId', '==', uid));
-      const snap2 = await getDocs(q2);
-      for (const d of snap2.docs) {
-        await deleteDoc(d.ref).catch(() => {});
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    try {
-      const q3 = query(collection(db, 'matric_registry'), where('uid', '==', uid));
-      const snap3 = await getDocs(q3);
-      for (const d of snap3.docs) {
-        await deleteDoc(d.ref).catch(() => {});
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    // 4. Also clean up portal local storage completely
-    try {
-      const localMatrics = JSON.parse(localStorage.getItem('sot_matric_registry') || '{}');
-      if (matricToDelete && localMatrics[matricToDelete]) {
-        delete localMatrics[matricToDelete];
-      }
-      Object.keys(localMatrics).forEach(k => {
-        if (localMatrics[k] === uid) delete localMatrics[k];
-      });
-      localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
-
-      const localStudentsRaw = localStorage.getItem('sot_local_students');
-      if (localStudentsRaw) {
-        const localStudents = JSON.parse(localStudentsRaw);
-        const filtered = localStudents.filter((s: any) => s.uid !== uid && (!matricToDelete || s.matricNumber !== matricToDelete));
-        localStorage.setItem('sot_local_students', JSON.stringify(filtered));
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    // Update students list in local state
-    setStudents(prev => prev.filter(s => s.uid !== uid));
+  const handleOpenEditTt = (entry: TimetableEntry) => {
+    setEditingTtId(entry.id);
+    setTtFormDept(entry.department);
+    setTtFormLevel(normalizeCourseLevel(entry.level));
+    setTtFormDay(entry.day || 'Monday');
+    setTtFormStartTime(entry.startTime);
+    setTtFormEndTime(entry.endTime);
+    setTtFormCourseCode(entry.courseCode);
+    setTtFormVenue(entry.venue);
+    setTtFormType(entry.type);
+    setTtFormDate(entry.date || '');
+    setTtError(null);
+    setShowTtModal(true);
   };
 
-  // Messages management
+  const handleSaveTt = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ttFormCourseCode.trim() || !ttFormVenue.trim()) {
+      setTtError('Course code and venue are required.');
+      return;
+    }
+
+    setTtSaving(true);
+    const payload: Omit<TimetableEntry, 'id'> = {
+      department: ttFormDept,
+      level: ttFormLevel,
+      day: ttFormDay,
+      startTime: ttFormStartTime,
+      endTime: ttFormEndTime,
+      courseCode: ttFormCourseCode.trim().toUpperCase(),
+      venue: ttFormVenue.trim(),
+      type: ttFormType,
+      date: ttFormDate || undefined,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      if (editingTtId) {
+        try {
+          await updateDoc(doc(db, 'timetables', editingTtId), payload as any);
+        } catch (e) {}
+        setTimetables(prev => prev.map(t => (t.id === editingTtId ? { id: editingTtId, ...payload } : t)));
+      } else {
+        let newId = 'tt_' + Date.now();
+        try {
+          const ref = await addDoc(collection(db, 'timetables'), {
+            ...payload,
+            createdAt: new Date().toISOString()
+          });
+          newId = ref.id;
+        } catch (e) {}
+        setTimetables(prev => [{ id: newId, ...payload, createdAt: new Date().toISOString() }, ...prev]);
+      }
+      setShowTtModal(false);
+      setEditingTtId(null);
+    } catch (err: any) {
+      setTtError(err?.message || 'Failed to save timetable entry.');
+    } finally {
+      setTtSaving(false);
+    }
+  };
+
+  const handleDeleteTt = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this timetable entry?')) return;
+    try {
+      await deleteDoc(doc(db, 'timetables', id));
+    } catch (e) {}
+    setTimetables(prev => prev.filter(t => t.id !== id));
+  };
+
+  // -------------------------------------------------------------
+  // MESSAGES MANAGEMENT
+  // -------------------------------------------------------------
   const filteredMessages = useMemo(() => {
     if (messageTypeFilter === 'All') return messages;
     return messages.filter(m => m.type === messageTypeFilter);
@@ -437,93 +822,110 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const handleUpdateMessageStatus = async (id: string, newStatus: ContactMessage['status']) => {
     try {
       await updateDoc(doc(db, 'messages', id), { status: newStatus });
-    } catch (e) {
-      // update local
-    }
-    const updated = messages.map(m => m.id === id ? { ...m, status: newStatus } : m);
+    } catch (e) {}
+    const updated = messages.map(m => (m.id === id ? { ...m, status: newStatus } : m));
     setMessages(updated);
     localStorage.setItem('sot_local_messages', JSON.stringify(updated));
   };
 
-  // Announcement Create/Edit
+  const handleSaveReply = async (msg: ContactMessage) => {
+    const draft = replyDrafts[msg.id];
+    if (!draft || !draft.trim()) return;
+
+    setReplySavingId(msg.id);
+    const nowIso = new Date().toISOString();
+    try {
+      try {
+        await updateDoc(doc(db, 'messages', msg.id), {
+          adminReply: draft.trim(),
+          repliedAt: nowIso,
+          status: 'Resolved'
+        });
+      } catch (e) {}
+
+      const updated = messages.map(m =>
+        m.id === msg.id ? { ...m, adminReply: draft.trim(), repliedAt: nowIso, status: 'Resolved' as const } : m
+      );
+      setMessages(updated);
+      localStorage.setItem('sot_local_messages', JSON.stringify(updated));
+
+      setReplyNotification(`Reply recorded and message marked Resolved for ${msg.name}!`);
+      setTimeout(() => setReplyNotification(null), 4000);
+    } finally {
+      setReplySavingId(null);
+    }
+  };
+
+  // -------------------------------------------------------------
+  // ANNOUNCEMENTS MANAGEMENT
+  // -------------------------------------------------------------
   const handleSaveAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!annTitle || !annContent) return;
+    if (!annTitle.trim() || !annContent.trim()) return;
+
+    const payload = {
+      title: annTitle.trim(),
+      content: annContent.trim(),
+      category: annCategory,
+      department: annDepartment,
+      urgent: annUrgent,
+      author: profile?.fullName || 'Student Admin',
+      updatedAt: new Date().toISOString()
+    };
 
     if (editingAnnId) {
-      // Update
-      const updatedItem: AnnouncementItem = {
-        id: editingAnnId,
-        title: annTitle,
-        content: annContent,
-        category: annCategory,
-        department: annDepartment,
-        urgent: annUrgent,
-        createdAt: new Date().toISOString(),
-        author: profile?.fullName || 'Student Admin'
-      };
       try {
-        await updateDoc(doc(db, 'announcements', editingAnnId), updatedItem as any);
-      } catch (e) {
-        // local update
-      }
-      setAnnouncements(prev => prev.map(a => a.id === editingAnnId ? updatedItem : a));
+        await updateDoc(doc(db, 'announcements', editingAnnId), payload as any);
+      } catch (e) {}
+      setAnnouncements(prev =>
+        prev.map(a => (a.id === editingAnnId ? ({ ...a, ...payload } as AnnouncementItem) : a))
+      );
     } else {
-      // Create
-      const newAnn: Omit<AnnouncementItem, 'id'> = {
-        title: annTitle,
-        content: annContent,
-        category: annCategory,
-        department: annDepartment,
-        urgent: annUrgent,
-        createdAt: new Date().toISOString(),
-        author: profile?.fullName || 'Student Admin'
-      };
       let newId = 'ann_' + Date.now();
       try {
-        const ref = await addDoc(collection(db, 'announcements'), newAnn);
+        const ref = await addDoc(collection(db, 'announcements'), {
+          ...payload,
+          createdAt: new Date().toISOString()
+        });
         newId = ref.id;
-      } catch (e) {
-        // fallback ID
-      }
-      setAnnouncements(prev => [{ ...newAnn, id: newId }, ...prev]);
+      } catch (e) {}
+      setAnnouncements(prev => [
+        { id: newId, ...payload, createdAt: new Date().toISOString() } as AnnouncementItem,
+        ...prev
+      ]);
     }
 
     setShowAnnModal(false);
     setEditingAnnId(null);
-    setAnnTitle('');
-    setAnnContent('');
   };
 
   const handleDeleteAnnouncement = async (id: string) => {
     if (!confirm('Are you sure you want to delete this announcement?')) return;
     try {
       await deleteDoc(doc(db, 'announcements', id));
-    } catch (e) {
-      // local
-    }
+    } catch (e) {}
     setAnnouncements(prev => prev.filter(a => a.id !== id));
   };
 
-  // FAQ Management for Chatbot Knowledge Base
+  // -------------------------------------------------------------
+  // FAQS MANAGEMENT
+  // -------------------------------------------------------------
   const handleSaveFaq = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!faqQuestion.trim() || !faqAnswer.trim()) return;
 
     if (editingFaqId) {
-      const updated: Partial<FaqItem> = {
+      const payload = {
         question: faqQuestion.trim(),
         answer: faqAnswer.trim(),
         updatedAt: new Date().toISOString()
       };
       try {
-        await updateDoc(doc(db, 'faqs', editingFaqId), updated);
-      } catch (err) {
-        console.warn('FAQ update error:', err);
-      }
-      setFaqs(prev => prev.map(f => f.id === editingFaqId ? { ...f, ...updated } : f));
+        await updateDoc(doc(db, 'faqs', editingFaqId), payload);
+      } catch (e) {}
+      setFaqs(prev => prev.map(f => (f.id === editingFaqId ? { ...f, ...payload } : f)));
     } else {
-      const newFaq = {
+      const payload = {
         question: faqQuestion.trim(),
         answer: faqAnswer.trim(),
         createdAt: new Date().toISOString(),
@@ -531,47 +933,37 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       };
       let newId = 'faq_' + Date.now();
       try {
-        const ref = await addDoc(collection(db, 'faqs'), newFaq);
+        const ref = await addDoc(collection(db, 'faqs'), payload);
         newId = ref.id;
-      } catch (err) {
-        console.warn('FAQ create error:', err);
-      }
-      setFaqs(prev => [{ ...newFaq, id: newId }, ...prev]);
+      } catch (e) {}
+      setFaqs(prev => [{ id: newId, ...payload }, ...prev]);
     }
 
     setShowFaqModal(false);
     setEditingFaqId(null);
-    setFaqQuestion('');
-    setFaqAnswer('');
   };
 
   const handleDeleteFaq = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this FAQ? SOT Assistant will no longer use this answer.')) return;
+    if (!confirm('Are you sure you want to delete this FAQ entry?')) return;
     try {
       await deleteDoc(doc(db, 'faqs', id));
-    } catch (err) {
-      console.warn('FAQ delete error:', err);
-    }
+    } catch (e) {}
     setFaqs(prev => prev.filter(f => f.id !== id));
   };
 
   const handleSeedDefaultFaqs = async () => {
     const defaults = [
       {
-        question: 'How do I complete my profile registration?',
-        answer: 'Sign-up has 2 steps: Step 1 asks for your email and password (minimum 8 characters). Step 2 prompts you to select one of the 7 SOT departments and enter your unique matriculation number. Once submitted, your profile is complete and you can access all dashboard features.'
+        question: 'How do I access my department courses and lecture materials?',
+        answer: 'Navigate to the Courses page on your student dashboard. Select your current academic level (ND1, ND2, HND1, or HND2) and semester to view all enrolled courses, descriptions, syllabus topics, and links to lecture notes, past questions, and video crash courses.'
       },
       {
-        question: 'What are the 7 departments in the School of Technology?',
-        answer: 'The School of Technology comprises 7 departments: 1. Agricultural Technology, 2. Computer Technology, 3. Food Technology, 4. Hospitality Management, 5. Leisure & Tourism Management, 6. Nutrition & Dietetics, and 7. Polymer & Textile Technology.'
+        question: 'How can I submit a complaint or enquiry to the student desk?',
+        answer: 'Visit the Contact page from the top navigation. Enter your name, email, select Complaint, Enquiry, or Review, and describe your request. If signed in, your submission is tracked in the "My Messages" tab where you can monitor admin replies.'
       },
       {
-        question: 'Is this portal official university administration?',
-        answer: 'No. This portal is built and managed independently by students of the School of Technology, for students. It is a student-run resource and not an official university administrative channel.'
-      },
-      {
-        question: 'What happens if I forget my password or get locked out?',
-        answer: 'You can use the "Forgot your password?" option on the Log in window to receive a secure password reset link via email. Accounts are automatically locked for 15 minutes after 5 consecutive failed login attempts to protect student accounts.'
+        question: 'Who posts departmental bulletins and notices?',
+        answer: 'Bulletins are posted by designated faculty administrators and appointed Course Representatives. Reps can publish announcements tailored specifically to their own academic department.'
       }
     ];
 
@@ -582,173 +974,322 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           createdAt: new Date().toISOString()
         });
         setFaqs(prev => [{ id: ref.id, ...item, createdAt: new Date().toISOString() }, ...prev]);
-      } catch (err) {
-        console.warn('Seed FAQ error:', err);
-      }
+      } catch (e) {}
     }
   };
 
+  // -------------------------------------------------------------
+  // MATERIALS & REP UPLOADS MANAGEMENT
+  // -------------------------------------------------------------
+  const repAnnouncements = useMemo(() => {
+    return announcements.filter(a => (a.author || '').toLowerCase().includes('rep'));
+  }, [announcements]);
 
+  const filteredResources = useMemo(() => {
+    return resources.filter(r => {
+      const matchDept = materialsDeptFilter === 'All' || r.department === materialsDeptFilter;
+      if (!matchDept) return false;
+      if (materialsSearch.trim()) {
+        const q = materialsSearch.toLowerCase();
+        return (
+          r.title.toLowerCase().includes(q) ||
+          r.courseCode.toLowerCase().includes(q) ||
+          (r.uploadedByEmail && r.uploadedByEmail.toLowerCase().includes(q)) ||
+          r.category.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [resources, materialsDeptFilter, materialsSearch]);
+
+  const filteredRepAnnouncements = useMemo(() => {
+    return repAnnouncements.filter(a => {
+      const matchDept = materialsDeptFilter === 'All' || a.department === materialsDeptFilter;
+      if (!matchDept) return false;
+      if (materialsSearch.trim()) {
+        const q = materialsSearch.toLowerCase();
+        return a.title.toLowerCase().includes(q) || a.content.toLowerCase().includes(q);
+      }
+      return true;
+    });
+  }, [repAnnouncements, materialsDeptFilter, materialsSearch]);
+
+  const handleDeleteUploadedResource = async (id: string, title: string) => {
+    if (!confirm(`Permanently delete uploaded material "${title}"?`)) return;
+    try {
+      await deleteDoc(doc(db, 'resources', id));
+      setResources(prev => prev.filter(r => r.id !== id));
+    } catch (e: any) {
+      alert(`Could not delete material: ${e.message || e}`);
+    }
+  };
+
+  const handleDeleteRepAnnouncement = async (id: string, title: string) => {
+    if (!confirm(`Permanently delete rep announcement "${title}"?`)) return;
+    try {
+      await deleteDoc(doc(db, 'announcements', id));
+      setAnnouncements(prev => prev.filter(a => a.id !== id));
+    } catch (e: any) {
+      alert(`Could not delete announcement: ${e.message || e}`);
+    }
+  };
+
+  // Nav tab titles
+  const tabTitles: Record<AdminTab, string> = {
+    overview: 'Overview',
+    students: 'Students',
+    courses: 'Courses',
+    materials: 'Materials',
+    timetables: 'Timetables',
+    announcements: 'Announcements',
+    messages: 'Messages',
+    faqs: 'Chatbot FAQs'
+  };
+
+  // -------------------------------------------------------------
+  // RENDER
+  // -------------------------------------------------------------
   return (
-    <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[#070D1A] text-[#E6ECFA] flex flex-col md:flex-row font-sans selection:bg-[#2F52FF] selection:text-white">
       
       {/* Mobile Top Bar */}
-      <div className="md:hidden flex items-center justify-between h-16 px-4 bg-[#0A1224] border-b border-[#24315A] sticky top-0 z-30">
+      <header className="md:hidden flex items-center justify-between h-14 px-4 bg-[#0A1224] border-b border-[#1F2C4C] sticky top-0 z-30">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700]">
-            <ShieldAlert className="w-4 h-4" />
+          <div className="w-7 h-7 rounded-lg bg-[#121C36] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700]">
+            <ShieldCheck className="w-4 h-4" />
           </div>
-          <span className="font-display font-bold text-sm text-[#E6ECFA]">
-            SOT Admin Portal
-          </span>
+          <div>
+            <span className="font-display font-bold text-xs text-[#E6ECFA] block leading-tight">SOT Admin</span>
+            <span className="text-[10px] text-[#FFC700] font-semibold">{tabTitles[activeTab]}</span>
+          </div>
         </div>
-        <button
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-          className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7]"
-        >
-          {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-        </button>
-      </div>
 
-      {/* Sidebar Navigation */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={fetchData}
+            title="Refresh data"
+            className="p-1.5 rounded-lg bg-[#121C36] border border-[#1F2C4C] text-[#9AA8C7] hover:text-[#E6ECFA]"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#FFC700]' : ''}`} />
+          </button>
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="p-2 rounded-lg bg-[#121C36] border border-[#1F2C4C] text-[#9AA8C7]"
+          >
+            {sidebarOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
+          </button>
+        </div>
+      </header>
+
+      {/* Slim Sidebar Navigation */}
       <aside
-        className={`fixed md:sticky top-0 z-40 h-screen w-72 bg-[#0A1224] border-r border-[#24315A] flex flex-col justify-between p-5 transition-transform duration-300 md:translate-x-0 ${
+        className={`fixed md:sticky top-0 z-40 h-screen w-60 bg-[#0A1224] border-r border-[#1F2C4C] flex flex-col justify-between p-3.5 transition-transform duration-300 md:translate-x-0 ${
           sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
         }`}
       >
-        <div className="space-y-6">
-          <div className="flex items-center justify-between pb-4 border-b border-[#24315A]">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#121C36] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.2)]">
-                <ShieldAlert className="w-5 h-5" />
+        <div className="space-y-4">
+          
+          {/* Logo / Brand Header */}
+          <div className="flex items-center justify-between pb-3 border-b border-[#1F2C4C]">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#121C36] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700] shadow-[0_0_12px_rgba(255,199,0,0.15)]">
+                <ShieldCheck className="w-4 h-4" />
               </div>
               <div>
-                <span className="font-display font-bold text-lg text-[#E6ECFA] block leading-tight">
-                  Admin Desk<span className="text-[#FFC700]">.</span>
+                <span className="font-display font-bold text-sm text-[#E6ECFA] block leading-tight">
+                  SOT Admin<span className="text-[#FFC700]">.</span>
                 </span>
-                <span className="text-[10px] text-[#9AA8C7]">SOT Student Administration</span>
+                <span className="text-[10px] text-[#9AA8C7]">Administration Desk</span>
               </div>
             </div>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="md:hidden p-1 rounded-lg text-[#9AA8C7]"
+              className="md:hidden p-1 text-[#9AA8C7] hover:text-white"
             >
-              <X className="w-5 h-5" />
+              <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="p-3 rounded-xl bg-[#121C36] border border-[#24315A]">
-            <div className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider mb-1">
-              Admin Credential
+          {/* Admin Credentials Badge */}
+          <div className="px-2.5 py-2 rounded-lg bg-[#0F1E36] border border-[#1F2C4C] text-[11px]">
+            <div className="text-[9px] font-bold text-[#FFC700] uppercase tracking-wider mb-0.5">
+              Authorized Session
             </div>
-            <div className="text-xs font-semibold text-[#E6ECFA] truncate">
-              {user?.email}
+            <div className="text-xs font-semibold text-[#E6ECFA] truncate" title={user?.email || ''}>
+              {profile?.fullName || user?.email}
             </div>
             <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              <span>Full Access Privileges</span>
+              <span>Full Clearance</span>
             </div>
           </div>
 
-          {/* Tabs */}
-          <nav className="space-y-1.5">
+          {/* Sidebar Nav Items */}
+          <nav className="space-y-1">
+            
+            {/* 1. Overview */}
             <button
               onClick={() => { setActiveTab('overview'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+              className={`w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'overview'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
               }`}
             >
-              <BarChart3 className="w-4 h-4 text-[#FFC700]" />
+              <LayoutDashboard className="w-4 h-4 text-[#FFC700]" />
               <span>Overview</span>
             </button>
 
+            {/* 2. Students */}
             <button
               onClick={() => { setActiveTab('students'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'students'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
               }`}
             >
-              <Users className="w-4 h-4 text-[#FFC700]" />
-              <div className="flex-1 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Users className="w-4 h-4 text-[#FFC700]" />
                 <span>Students</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#E6ECFA]">
-                  {students.length}
-                </span>
               </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {students.length}
+              </span>
             </button>
 
+            {/* 3. Courses */}
             <button
-              onClick={() => { setActiveTab('messages'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'messages'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'courses'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
               }`}
             >
-              <MessageSquare className="w-4 h-4 text-[#FFC700]" />
-              <div className="flex-1 flex items-center justify-between">
-                <span>Messages</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#FFC700] text-[#0A1224] font-bold">
-                  {messages.length}
-                </span>
+              <div className="flex items-center gap-2.5">
+                <BookOpen className="w-4 h-4 text-[#FFC700]" />
+                <span>Courses</span>
               </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {courses.length}
+              </span>
             </button>
 
+            {/* 3.5 Materials */}
+            <button
+              onClick={() => { setActiveTab('materials'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'materials'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <FolderOpen className="w-4 h-4 text-[#FFC700]" />
+                <span>Materials</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {resources.length + repAnnouncements.length}
+              </span>
+            </button>
+
+            {/* 4. Timetables */}
+            <button
+              onClick={() => { setActiveTab('timetables'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'timetables'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Calendar className="w-4 h-4 text-[#FFC700]" />
+                <span>Timetables</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {timetables.length}
+              </span>
+            </button>
+
+            {/* 5. Announcements */}
             <button
               onClick={() => { setActiveTab('announcements'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                 activeTab === 'announcements'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
               }`}
             >
-              <Bell className="w-4 h-4 text-[#FFC700]" />
-              <div className="flex-1 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Bell className="w-4 h-4 text-[#FFC700]" />
                 <span>Announcements</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#E6ECFA]">
-                  {announcements.length}
-                </span>
               </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {announcements.length}
+              </span>
             </button>
 
+            {/* 6. Messages */}
             <button
-              onClick={() => { setActiveTab('faqs'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'faqs'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              onClick={() => { setActiveTab('messages'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'messages'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
               }`}
             >
-              <Bot className="w-4 h-4 text-[#FFC700]" />
-              <div className="flex-1 flex items-center justify-between">
-                <span>Chatbot FAQs</span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#E6ECFA]">
-                  {faqs.length}
-                </span>
+              <div className="flex items-center gap-2.5">
+                <MessageSquare className="w-4 h-4 text-[#FFC700]" />
+                <span>Messages</span>
               </div>
+              {pendingMessages > 0 ? (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#FFC700] text-[#0A1224] font-bold">
+                  {pendingMessages}
+                </span>
+              ) : (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#9AA8C7]">
+                  {messages.length}
+                </span>
+              )}
             </button>
+
+            {/* 7. Chatbot FAQs */}
+            <button
+              onClick={() => { setActiveTab('faqs'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'faqs'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Bot className="w-4 h-4 text-[#FFC700]" />
+                <span>Chatbot FAQs</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
+                {faqs.length}
+              </span>
+            </button>
+
           </nav>
         </div>
 
         {/* Sidebar Footer */}
-        <div className="space-y-2 pt-4 border-t border-[#24315A]">
+        <div className="space-y-1.5 pt-3 border-t border-[#1F2C4C]">
           <button
             onClick={onNavigateHome}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36] cursor-pointer"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36] cursor-pointer"
           >
             <Home className="w-3.5 h-3.5 text-[#FFC700]" />
-            <span>Public Site</span>
+            <span>Public Website</span>
           </button>
           <button
             onClick={() => { logout(); onNavigateHome(); }}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/20 cursor-pointer"
+            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/30 cursor-pointer"
           >
-            <LogOut className="w-4 h-4" />
-            <span>Log out</span>
+            <LogOut className="w-3.5 h-3.5" />
+            <span>Sign Out</span>
           </button>
         </div>
       </aside>
@@ -756,530 +1297,1197 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       {sidebarOpen && (
         <div
           onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 z-30 bg-[#0A1224]/80 backdrop-blur-sm md:hidden"
+          className="fixed inset-0 z-30 bg-[#070D1A]/80 backdrop-blur-sm md:hidden"
         />
       )}
 
       {/* Main Workspace */}
-      <main className="flex-1 min-w-0 p-5 sm:p-8 lg:p-10 space-y-8 overflow-y-auto">
+      <div className="flex-1 min-w-0 flex flex-col min-h-screen">
         
-        {/* Top Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#24315A]">
-          <div>
-            <div className="flex items-center gap-2 text-xs text-[#9AA8C7]">
-              <span>SOT Student Portal</span>
-              <span>/</span>
-              <span className="text-[#FFC700] font-semibold capitalize">{activeTab === 'faqs' ? 'Chatbot FAQs' : activeTab}</span>
-            </div>
-            <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#E6ECFA] mt-1">
-              {activeTab === 'overview' && 'Portal Analytics & Overview'}
-              {activeTab === 'students' && 'Registered Students Directory'}
-              {activeTab === 'messages' && 'Student Inquiries, Complaints & Reviews'}
-              {activeTab === 'announcements' && 'Publish & Manage Announcements'}
-              {activeTab === 'faqs' && 'Chatbot Knowledge Base & FAQs'}
-            </h1>
+        {/* Slim Desktop Top Bar */}
+        <header className="hidden md:flex items-center justify-between h-14 px-6 bg-[#0A1224] border-b border-[#1F2C4C] sticky top-0 z-20">
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-[#9AA8C7]">Admin Desk</span>
+            <span className="text-[#1F2C4C]">/</span>
+            <span className="text-[#FFC700] font-semibold">{tabTitles[activeTab]}</span>
           </div>
 
           <div className="flex items-center gap-3">
             <button
               onClick={fetchData}
-              className="px-3.5 py-2 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-medium text-[#9AA8C7] hover:text-[#E6ECFA] flex items-center gap-1.5 cursor-pointer"
+              title="Refresh Firestore Data"
+              className="px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1F2C4C] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] flex items-center gap-1.5 cursor-pointer transition-colors"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin text-[#FFC700]' : ''}`} />
               <span>Refresh</span>
             </button>
+
+            <div className="flex items-center gap-2 pl-3 border-l border-[#1F2C4C]">
+              <div className="w-7 h-7 rounded-full bg-[#121C36] border border-[#FFC700]/60 flex items-center justify-center text-[#FFC700] text-xs font-bold font-mono">
+                {(profile?.fullName?.[0] || user?.email?.[0] || 'A').toUpperCase()}
+              </div>
+              <div className="text-left text-xs leading-tight">
+                <div className="font-semibold text-[#E6ECFA] max-w-[150px] truncate">
+                  {profile?.fullName || user?.email}
+                </div>
+                <div className="text-[10px] text-[#FFC700] uppercase font-bold">Admin</div>
+              </div>
+            </div>
           </div>
-        </div>
+        </header>
 
-        {/* ======================================================== */}
-        {/* 1. OVERVIEW                                              */}
-        {/* ======================================================== */}
-        {activeTab === 'overview' && (
-          <div className="space-y-8">
-            
-            {/* Stat Cards */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-              
-              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A]">
-                <div className="flex items-center justify-between text-xs text-[#9AA8C7] font-semibold uppercase">
-                  <span>Total Students</span>
-                  <Users className="w-4 h-4 text-[#2F52FF]" />
-                </div>
-                <div className="mt-2 text-3xl font-display font-extrabold text-[#E6ECFA]">
-                  {totalStudents}
-                </div>
-                <div className="text-xs text-[#9AA8C7] mt-1">Across 7 SOT departments</div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A]">
-                <div className="flex items-center justify-between text-xs text-[#9AA8C7] font-semibold uppercase">
-                  <span>New This Week</span>
-                  <Sparkles className="w-4 h-4 text-[#FFC700]" />
-                </div>
-                <div className="mt-2 text-3xl font-display font-extrabold text-[#FFC700]">
-                  {newSignupsThisWeek}
-                </div>
-                <div className="text-xs text-[#9AA8C7] mt-1">Recent registrations</div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A]">
-                <div className="flex items-center justify-between text-xs text-[#9AA8C7] font-semibold uppercase">
-                  <span>Incomplete Profiles</span>
-                  <AlertTriangle className="w-4 h-4 text-amber-400" />
-                </div>
-                <div className="mt-2 text-3xl font-display font-extrabold text-amber-400">
-                  {incompleteProfiles}
-                </div>
-                <div className="text-xs text-[#9AA8C7] mt-1">Pending Step 2 completion</div>
-              </div>
-
-              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A]">
-                <div className="flex items-center justify-between text-xs text-[#9AA8C7] font-semibold uppercase">
-                  <span>Total Messages</span>
-                  <MessageSquare className="w-4 h-4 text-emerald-400" />
-                </div>
-                <div className="mt-2 text-3xl font-display font-extrabold text-emerald-400">
-                  {messages.length}
-                </div>
-                <div className="text-xs text-[#9AA8C7] mt-1">
-                  {messages.filter(m => m.status === 'New').length} pending review
-                </div>
-              </div>
-
+        {/* Global notification if any */}
+        {replyNotification && (
+          <div className="bg-emerald-950/90 border-b border-emerald-500/50 px-4 py-2 text-xs text-emerald-200 flex items-center justify-between">
+            <div className="flex items-center gap-2 max-w-4xl mx-auto">
+              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>{replyNotification}</span>
             </div>
-
-            {/* Students Per Department Bar Chart */}
-            <div className="p-6 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-6">
-              <div>
-                <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                  Students Per Department
-                </h3>
-                <p className="text-xs text-[#9AA8C7]">Enrollment distribution across all 7 departments</p>
-              </div>
-
-              <div className="space-y-4">
-                {Object.entries(deptCounts).map(([dept, count]) => {
-                  const percentage = maxDeptCount > 0 ? (count / maxDeptCount) * 100 : 0;
-                  return (
-                    <div key={dept} className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs font-semibold">
-                        <span className="text-[#E6ECFA]">{dept}</span>
-                        <span className="text-[#FFC700] font-mono">{count} student{count !== 1 ? 's' : ''}</span>
-                      </div>
-                      <div className="w-full h-3 rounded-full bg-[#0A1224] overflow-hidden p-0.5 border border-[#24315A]">
-                        <div
-                          className="h-full rounded-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-700"
-                          style={{ width: `${Math.max(percentage, count > 0 ? 8 : 2)}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
+            <button onClick={() => setReplyNotification(null)} className="text-emerald-400 hover:text-white">
+              <X className="w-3.5 h-3.5" />
+            </button>
           </div>
         )}
 
-        {/* ======================================================== */}
-        {/* 2. STUDENTS TABLE                                        */}
-        {/* ======================================================== */}
-        {activeTab === 'students' && (
-          <div className="space-y-5">
-            
-            {/* Filter and Search Bar */}
-            <div className="p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col md:flex-row items-center justify-between gap-4">
+        {/* Tab Workspace Content */}
+        <main className="flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto space-y-5">
+
+          {/* ======================================================== */}
+          {/* TAB 1: OVERVIEW                                          */}
+          {/* ======================================================== */}
+          {activeTab === 'overview' && (
+            <div className="space-y-5">
               
-              <div className="w-full md:w-80 relative">
-                <input
-                  type="text"
-                  placeholder="Search by name, email, matric..."
-                  value={studentSearch}
-                  onChange={(e) => setStudentSearch(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
-                />
-                <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-2.5" />
+              {/* Stat Cards - Compact */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
+                
+                <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                  <div className="flex items-center justify-between text-[11px] text-[#9AA8C7] font-semibold uppercase">
+                    <span>Students</span>
+                    <Users className="w-3.5 h-3.5 text-[#2F52FF]" />
+                  </div>
+                  <div className="mt-1.5 text-2xl font-display font-extrabold text-[#E6ECFA]">
+                    {totalStudents}
+                  </div>
+                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">{totalReps} course reps assigned</div>
+                </div>
+
+                <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                  <div className="flex items-center justify-between text-[11px] text-[#9AA8C7] font-semibold uppercase">
+                    <span>Courses</span>
+                    <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                  </div>
+                  <div className="mt-1.5 text-2xl font-display font-extrabold text-[#FFC700]">
+                    {totalCourses}
+                  </div>
+                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">Across 7 departments</div>
+                </div>
+
+                <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                  <div className="flex items-center justify-between text-[11px] text-[#9AA8C7] font-semibold uppercase">
+                    <span>Timetables</span>
+                    <Calendar className="w-3.5 h-3.5 text-emerald-400" />
+                  </div>
+                  <div className="mt-1.5 text-2xl font-display font-extrabold text-emerald-400">
+                    {timetables.length}
+                  </div>
+                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">Classes & exam schedules</div>
+                </div>
+
+                <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                  <div className="flex items-center justify-between text-[11px] text-[#9AA8C7] font-semibold uppercase">
+                    <span>Pending Inquiries</span>
+                    <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                  </div>
+                  <div className="mt-1.5 text-2xl font-display font-extrabold text-amber-400">
+                    {pendingMessages}
+                  </div>
+                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">{messages.length} total messages</div>
+                </div>
+
               </div>
 
-              <div className="w-full md:w-auto flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-4 h-4 text-[#9AA8C7]" />
+              {/* Department Enrollment Distribution & Quick Actions */}
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+                
+                {/* Department Enrollment Bar Breakdown */}
+                <div className="lg:col-span-2 p-4 sm:p-5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="font-display font-bold text-sm text-[#E6ECFA]">Student Enrollment by Department</h3>
+                      <p className="text-[11px] text-[#9AA8C7]">Distribution of verified registered students</p>
+                    </div>
+                    <span className="text-xs font-mono text-[#FFC700] font-bold">{totalStudents} Total</span>
+                  </div>
+
+                  <div className="space-y-2.5 pt-1">
+                    {Object.entries(deptStudentCounts).map(([dept, count]) => {
+                      const pct = maxDeptCount > 0 ? (count / maxDeptCount) * 100 : 0;
+                      return (
+                        <div key={dept} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-[#E6ECFA] truncate pr-2">{dept}</span>
+                            <span className="text-[#FFC700] font-mono text-[11px] shrink-0 font-bold">
+                              {count} {count === 1 ? 'student' : 'students'}
+                            </span>
+                          </div>
+                          <div className="w-full h-2 rounded-full bg-[#070D1A] overflow-hidden p-0.5 border border-[#1E2E52]">
+                            <div
+                              className="h-full rounded-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-500"
+                              style={{ width: `${Math.max(pct, count > 0 ? 8 : 2)}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Quick Admin Actions */}
+                <div className="p-4 sm:p-5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] flex flex-col justify-between space-y-4">
+                  <div className="space-y-2">
+                    <h3 className="font-display font-bold text-sm text-[#E6ECFA]">Quick Desk Actions</h3>
+                    <p className="text-[11px] text-[#9AA8C7] leading-relaxed">
+                      Instant links to frequently updated departmental systems.
+                    </p>
+
+                    <div className="space-y-2 pt-2">
+                      <button
+                        onClick={() => setActiveTab('courses')}
+                        className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] hover:border-[#2F52FF] text-left text-xs font-semibold text-[#E6ECFA] transition-colors cursor-pointer group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                          <span>Curriculum & Learning Materials</span>
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#9AA8C7] group-hover:text-white" />
+                      </button>
+
+                      <button
+                        onClick={() => setActiveTab('timetables')}
+                        className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] hover:border-[#2F52FF] text-left text-xs font-semibold text-[#E6ECFA] transition-colors cursor-pointer group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Calendar className="w-3.5 h-3.5 text-[#FFC700]" />
+                          <span>Class & Exam Timetables</span>
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#9AA8C7] group-hover:text-white" />
+                      </button>
+
+                      <button
+                        onClick={() => setActiveTab('messages')}
+                        className="w-full flex items-center justify-between p-2.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] hover:border-[#2F52FF] text-left text-xs font-semibold text-[#E6ECFA] transition-colors cursor-pointer group"
+                      >
+                        <span className="flex items-center gap-2">
+                          <MessageSquare className="w-3.5 h-3.5 text-amber-400" />
+                          <span>Review Student Complaints ({pendingMessages})</span>
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-[#9AA8C7] group-hover:text-white" />
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="pt-3 border-t border-[#1E2E52] text-[10px] text-[#9AA8C7] flex items-center justify-between">
+                    <span>Connected to Firestore</span>
+                    <span className="text-emerald-400 font-mono flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                      Online
+                    </span>
+                  </div>
+                </div>
+
+              </div>
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 2: COURSES SYSTEM                                    */}
+          {/* ======================================================== */}
+          {activeTab === 'courses' && (
+            <div className="space-y-4">
+              
+              {/* TOP ROW: Department dropdown, Level tabs, Semester toggle */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                  
+                  {/* Department Dropdown */}
+                  <div className="flex items-center gap-2 w-full lg:w-auto">
+                    <span className="text-xs font-semibold text-[#9AA8C7] shrink-0">Department:</span>
+                    <select
+                      value={courseDeptFilter}
+                      onChange={(e) => setCourseDeptFilter(e.target.value)}
+                      className="w-full lg:w-64 px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-medium focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      {SOT_DEPARTMENTS_LIST.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Level Tabs (ND1, ND2, HND1, HND2) */}
+                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52] self-start sm:self-auto">
+                    {ACADEMIC_LEVELS.map(lvl => (
+                      <button
+                        key={lvl}
+                        onClick={() => setCourseLevelFilter(lvl)}
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          courseLevelFilter === lvl
+                            ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Semester Toggle (First Semester / Second Semester) */}
+                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52] self-start sm:self-auto">
+                    {SEMESTERS.map(sem => (
+                      <button
+                        key={sem}
+                        onClick={() => setCourseSemesterFilter(sem)}
+                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                          courseSemesterFilter === sem
+                            ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                        }`}
+                      >
+                        {sem}
+                      </button>
+                    ))}
+                  </div>
+
+                </div>
+
+                {/* Sub-row: Search box, Course count, Add course & Batch add buttons */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-[#1E2E52]/60">
+                  <div className="relative w-full sm:w-72">
+                    <input
+                      type="text"
+                      placeholder="Search by code or title..."
+                      value={courseSearch}
+                      onChange={(e) => setCourseSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+                    />
+                    <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
+                  </div>
+
+                  <div className="flex items-center gap-2.5 self-end sm:self-auto">
+                    <span className="text-xs text-[#9AA8C7] font-mono">
+                      <strong className="text-[#FFC700]">{filteredCourses.length}</strong> {filteredCourses.length === 1 ? 'course' : 'courses'}
+                    </span>
+
+                    <button
+                      onClick={() => setShowBatchModal(true)}
+                      className="px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-[#E6ECFA] hover:border-[#2F52FF] text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+                      title="Add multiple courses at once"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Add Multiple</span>
+                    </button>
+
+                    <button
+                      onClick={handleOpenAddCourse}
+                      className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.3)] transition-all"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add Course</span>
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* COURSES TABLE */}
+              <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
+                      <tr>
+                        <th className="py-2.5 px-3.5">Code</th>
+                        <th className="py-2.5 px-3.5">Course Title</th>
+                        <th className="py-2.5 px-3.5">Units</th>
+                        <th className="py-2.5 px-3.5">Type</th>
+                        <th className="py-2.5 px-3.5">Learning Materials</th>
+                        <th className="py-2.5 px-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2E52]">
+                      {filteredCourses.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-12 text-center text-[#9AA8C7]">
+                            <div className="space-y-2 max-w-sm mx-auto">
+                              <BookOpen className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
+                              <div className="text-sm font-semibold text-[#E6ECFA]">No courses found</div>
+                              <p className="text-[11px] text-[#9AA8C7]">
+                                No curriculum entries recorded for <strong className="text-[#FFC700]">{courseDeptFilter}</strong> ({courseLevelFilter} - {courseSemesterFilter}).
+                              </p>
+                              <div className="pt-2 flex items-center justify-center gap-2">
+                                <button
+                                  onClick={handleOpenAddCourse}
+                                  className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer inline-flex items-center gap-1.5"
+                                >
+                                  <Plus className="w-3.5 h-3.5" />
+                                  <span>Add First Course</span>
+                                </button>
+                                <button
+                                  onClick={() => setShowBatchModal(true)}
+                                  className="px-3.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#E6ECFA] text-xs font-semibold hover:border-[#2F52FF] cursor-pointer inline-flex items-center gap-1.5"
+                                >
+                                  <Layers className="w-3.5 h-3.5 text-[#FFC700]" />
+                                  <span>Batch Add</span>
+                                </button>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredCourses.map(course => (
+                          <tr key={course.id} className="hover:bg-[#070D1A]/50 transition-colors">
+                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                              {course.code}
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              <div className="font-semibold text-[#E6ECFA]">{course.title}</div>
+                              {course.description && (
+                                <div className="text-[11px] text-[#9AA8C7] line-clamp-1 mt-0.5">
+                                  {course.description}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3.5 font-mono text-[#E6ECFA]">
+                              {course.units} {course.units === 1 ? 'Unit' : 'Units'}
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                course.type === 'Core'
+                                  ? 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40'
+                                  : 'bg-[#1E2E52] text-[#9AA8C7] border border-[#1E2E52]'
+                              }`}>
+                                {course.type}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              {course.materials && course.materials.length > 0 ? (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
+                                    {course.materials.length} {course.materials.length === 1 ? 'material' : 'materials'}
+                                  </span>
+                                  <span className="text-[10px] text-[#9AA8C7]">
+                                    ({course.materials.map(m => m.category).slice(0, 2).join(', ')})
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-[11px] text-[#9AA8C7] italic">None added</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-right space-x-1.5">
+                              <button
+                                onClick={() => handleOpenEditCourse(course)}
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
+                                title="Edit course & materials"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteCourse(course.id, course.code)}
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
+                                title="Delete course"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB: MATERIALS (Uploaded Resources & Rep Announcements) */}
+          {/* ======================================================== */}
+          {activeTab === 'materials' && (
+            <div className="space-y-4">
+              
+              {/* Controls bar: Department filter, Sub-tab toggle, Search */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  
+                  {/* Sub-tab toggle: Materials vs Rep Announcements */}
+                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52]">
+                    <button
+                      onClick={() => setMaterialsSubTab('materials')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                        materialsSubTab === 'materials'
+                          ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
+                          : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      Uploaded Materials ({resources.length})
+                    </button>
+                    <button
+                      onClick={() => setMaterialsSubTab('announcements')}
+                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                        materialsSubTab === 'announcements'
+                          ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
+                          : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      Rep Announcements ({repAnnouncements.length})
+                    </button>
+                  </div>
+
+                  {/* Department Filter */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-[#9AA8C7] font-semibold">Department:</span>
+                    <select
+                      value={materialsDeptFilter}
+                      onChange={(e) => setMaterialsDeptFilter(e.target.value)}
+                      className="px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      <option value="All">All Departments</option>
+                      {SOT_DEPARTMENTS_LIST.map(dept => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                </div>
+
+                {/* Sub-row: Search */}
+                <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#1E2E52]/60">
+                  <div className="relative w-full sm:w-80">
+                    <input
+                      type="text"
+                      placeholder="Search title, course code, uploader email..."
+                      value={materialsSearch}
+                      onChange={(e) => setMaterialsSearch(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+                    />
+                    <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
+                  </div>
+
+                  <span className="text-xs text-[#9AA8C7] font-mono shrink-0">
+                    Showing <strong className="text-[#FFC700]">{materialsSubTab === 'materials' ? filteredResources.length : filteredRepAnnouncements.length}</strong> items
+                  </span>
+                </div>
+              </div>
+
+              {/* TABLE 1: UPLOADED MATERIALS */}
+              {materialsSubTab === 'materials' && (
+                <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
+                        <tr>
+                          <th className="py-2.5 px-3.5">Course</th>
+                          <th className="py-2.5 px-3.5">Title & Resource Link</th>
+                          <th className="py-2.5 px-3.5">Department</th>
+                          <th className="py-2.5 px-3.5">Category</th>
+                          <th className="py-2.5 px-3.5">Uploaded By</th>
+                          <th className="py-2.5 px-3.5">Date</th>
+                          <th className="py-2.5 px-3.5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1E2E52]">
+                        {filteredResources.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="py-12 text-center text-[#9AA8C7]">
+                              <div className="space-y-1">
+                                <FolderOpen className="w-7 h-7 text-[#FFC700] mx-auto opacity-70" />
+                                <div className="text-sm font-semibold text-[#E6ECFA]">No uploaded materials found</div>
+                                <p className="text-[11px]">No resources match the selected department or query.</p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredResources.map(res => (
+                            <tr key={res.id} className="hover:bg-[#070D1A]/50 transition-colors">
+                              <td className="py-2.5 px-3.5">
+                                <div className="font-mono font-bold text-[#FFC700]">{res.courseCode}</div>
+                                <div className="text-[10px] text-[#9AA8C7]">{res.level} • {res.semester}</div>
+                              </td>
+                              <td className="py-2.5 px-3.5 max-w-xs">
+                                <div className="font-semibold text-[#E6ECFA] truncate">{res.title}</div>
+                                {res.description && (
+                                  <div className="text-[11px] text-[#9AA8C7] line-clamp-1">{res.description}</div>
+                                )}
+                                <a
+                                  href={res.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[10px] text-[#2F52FF] hover:underline font-mono truncate flex items-center gap-1 mt-0.5"
+                                >
+                                  <span>{res.url}</span>
+                                  <ExternalLink className="w-2.5 h-2.5 shrink-0" />
+                                </a>
+                              </td>
+                              <td className="py-2.5 px-3.5 text-[#E6ECFA]">
+                                {res.department}
+                              </td>
+                              <td className="py-2.5 px-3.5">
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
+                                  {res.category}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3.5">
+                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224] inline-block mb-0.5">
+                                  Course Rep
+                                </span>
+                                <div className="text-[11px] text-[#9AA8C7] truncate max-w-[140px] font-mono" title={res.uploadedByEmail}>
+                                  {res.uploadedByEmail || 'Rep'}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3.5 font-mono text-[10px] text-[#9AA8C7] whitespace-nowrap">
+                                {new Date(res.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="py-2.5 px-3.5 text-right">
+                                <button
+                                  onClick={() => handleDeleteUploadedResource(res.id, res.title)}
+                                  className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
+                                  title="Delete material"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+              {/* TABLE 2: REP ANNOUNCEMENTS */}
+              {materialsSubTab === 'announcements' && (
+                <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
+                        <tr>
+                          <th className="py-2.5 px-3.5">Date</th>
+                          <th className="py-2.5 px-3.5">Department</th>
+                          <th className="py-2.5 px-3.5">Title & Content</th>
+                          <th className="py-2.5 px-3.5">Author</th>
+                          <th className="py-2.5 px-3.5">Urgent</th>
+                          <th className="py-2.5 px-3.5 text-right">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1E2E52]">
+                        {filteredRepAnnouncements.length === 0 ? (
+                          <tr>
+                            <td colSpan={6} className="py-12 text-center text-[#9AA8C7]">
+                              <div className="space-y-1">
+                                <Megaphone className="w-7 h-7 text-[#FFC700] mx-auto opacity-70" />
+                                <div className="text-sm font-semibold text-[#E6ECFA]">No rep announcements found</div>
+                                <p className="text-[11px]">No departmental notices posted by Course Reps match your filter.</p>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredRepAnnouncements.map(ann => (
+                            <tr key={ann.id} className="hover:bg-[#070D1A]/50 transition-colors">
+                              <td className="py-2.5 px-3.5 font-mono text-[10px] text-[#9AA8C7] whitespace-nowrap">
+                                {new Date(ann.createdAt).toLocaleDateString()}
+                              </td>
+                              <td className="py-2.5 px-3.5 font-bold text-[#FFC700]">
+                                {ann.department}
+                              </td>
+                              <td className="py-2.5 px-3.5 max-w-sm">
+                                <div className="font-semibold text-[#E6ECFA] flex items-center gap-1.5">
+                                  <span>{ann.title}</span>
+                                </div>
+                                <div className="text-[11px] text-[#9AA8C7] line-clamp-1 mt-0.5">
+                                  {ann.content}
+                                </div>
+                              </td>
+                              <td className="py-2.5 px-3.5 text-[#E6ECFA]">
+                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#2F52FF] text-white">
+                                  {ann.author || 'Course Rep'}
+                                </span>
+                              </td>
+                              <td className="py-2.5 px-3.5">
+                                {ann.urgent ? (
+                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-rose-600 text-white">
+                                    URGENT
+                                  </span>
+                                ) : (
+                                  <span className="text-[10px] text-[#9AA8C7]">Standard</span>
+                                )}
+                              </td>
+                              <td className="py-2.5 px-3.5 text-right">
+                                <button
+                                  onClick={() => handleDeleteRepAnnouncement(ann.id, ann.title)}
+                                  className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
+                                  title="Delete announcement"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 3: STUDENTS DIRECTORY                                */}
+          {/* ======================================================== */}
+          {activeTab === 'students' && (
+            <div className="space-y-4">
+              
+              <div className="p-3.5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="w-full sm:w-72 relative">
+                  <input
+                    type="text"
+                    placeholder="Search by name, email, matric..."
+                    value={studentSearch}
+                    onChange={(e) => setStudentSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                  <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
+                </div>
+
+                <div className="w-full sm:w-auto flex flex-wrap items-center gap-2.5">
                   <select
                     value={studentDeptFilter}
                     onChange={(e) => setStudentDeptFilter(e.target.value)}
-                    className="px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    className="px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
                   >
                     <option value="All">All Departments</option>
                     {SOT_DEPARTMENTS_LIST.map(d => (
                       <option key={d} value={d}>{d}</option>
                     ))}
                   </select>
-                </div>
 
-                <button
-                  onClick={handleExportCSV}
-                  className="px-4 py-2 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.2)]"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Export to CSV</span>
-                </button>
+                  <button
+                    onClick={handleExportCSV}
+                    className="px-3 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(255,199,0,0.2)]"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
               </div>
 
-            </div>
-
-            {/* Students Table */}
-            <div className="rounded-2xl bg-[#121C36] border border-[#24315A] overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#0A1224] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#24315A]">
-                    <tr>
-                      <th className="py-3.5 px-4">Student</th>
-                      <th className="py-3.5 px-4">Matric Number</th>
-                      <th className="py-3.5 px-4">Department</th>
-                      <th className="py-3.5 px-4">Date Joined</th>
-                      <th className="py-3.5 px-4">Status</th>
-                      <th className="py-3.5 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-[#24315A]">
-                    {filteredStudents.length === 0 ? (
+              <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
                       <tr>
-                        <td colSpan={6} className="py-10 text-center text-[#9AA8C7]">
-                          No students matched your query.
-                        </td>
+                        <th className="py-2.5 px-3.5">Student</th>
+                        <th className="py-2.5 px-3.5">Matric Number</th>
+                        <th className="py-2.5 px-3.5">Department</th>
+                        <th className="py-2.5 px-3.5">Role</th>
+                        <th className="py-2.5 px-3.5">Status</th>
+                        <th className="py-2.5 px-3.5 text-right">Actions</th>
                       </tr>
-                    ) : (
-                      filteredStudents.map((s) => (
-                        <tr key={s.uid} className="hover:bg-[#0A1224]/50 transition-colors">
-                          <td className="py-3.5 px-4">
-                            <div className="font-semibold text-[#E6ECFA]">{s.fullName || 'Unnamed Student'}</div>
-                            <div className="text-[11px] text-[#9AA8C7]">{s.email}</div>
-                          </td>
-                          <td className="py-3.5 px-4 font-mono font-bold text-[#FFC700]">
-                            {s.matricNumber || <span className="text-[#9AA8C7] font-normal italic">Pending Step 2</span>}
-                          </td>
-                          <td className="py-3.5 px-4 text-[#E6ECFA]">
-                            {s.department || <span className="text-[#9AA8C7] italic">Unassigned</span>}
-                          </td>
-                          <td className="py-3.5 px-4 text-[#9AA8C7]">
-                            {s.createdAt ? new Date(s.createdAt).toLocaleDateString() : 'N/A'}
-                          </td>
-                          <td className="py-3.5 px-4">
-                            {s.disabled ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-500/30">
-                                Disabled
-                              </span>
-                            ) : s.profileComplete ? (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-                                Active
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-500/30">
-                                Incomplete
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-3.5 px-4 text-right space-x-2">
-                            <button
-                              onClick={() => handleToggleDisable(s)}
-                              title={s.disabled ? 'Re-enable account' : 'Disable account'}
-                              className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
-                            >
-                              <Ban className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteStudent(s.uid)}
-                              title="Delete account"
-                              className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2E52]">
+                      {filteredStudents.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-10 text-center text-[#9AA8C7]">
+                            No students match your query.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                      ) : (
+                        filteredStudents.map(student => (
+                          <tr key={student.uid} className="hover:bg-[#070D1A]/50 transition-colors">
+                            <td className="py-2.5 px-3.5">
+                              <div className="font-semibold text-[#E6ECFA]">{student.fullName || 'Unnamed Student'}</div>
+                              <div className="text-[11px] text-[#9AA8C7]">{student.email}</div>
+                            </td>
+                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                              {student.matricNumber || <span className="text-[#9AA8C7] font-normal italic">Pending</span>}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-[#E6ECFA]">
+                              {student.department || <span className="text-[#9AA8C7] italic">Unassigned</span>}
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                student.role === 'admin'
+                                  ? 'bg-[#FFC700] text-[#0A1224]'
+                                  : student.role === 'rep'
+                                  ? 'bg-[#2F52FF] text-white'
+                                  : 'bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]'
+                              }`}>
+                                {student.role || 'student'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              {student.disabled ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-300 border border-rose-500/30">
+                                  Disabled
+                                </span>
+                              ) : student.profileComplete ? (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
+                                  Active
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950 text-amber-300 border border-amber-500/30">
+                                  Incomplete
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-right space-x-1.5">
+                              {/* Make / Remove Course Rep Button */}
+                              {student.role !== 'admin' && (
+                                <button
+                                  onClick={() => handleToggleRepRole(student)}
+                                  className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                                    student.role === 'rep'
+                                      ? 'bg-amber-950 text-amber-300 border border-amber-500/40 hover:bg-amber-900/60'
+                                      : 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 hover:bg-[#2F52FF] hover:text-white'
+                                  }`}
+                                  title={student.role === 'rep' ? 'Remove course rep status' : 'Promote student to course representative'}
+                                >
+                                  {student.role === 'rep' ? 'Remove Rep' : 'Make Course Rep'}
+                                </button>
+                              )}
 
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* 3. MESSAGES (Complaints, Reviews, Enquiries)             */}
-        {/* ======================================================== */}
-        {activeTab === 'messages' && (
-          <div className="space-y-5">
-            
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                {['All', 'Complaint', 'Review', 'Enquiry'].map(t => (
-                  <button
-                    key={t}
-                    onClick={() => setMessageTypeFilter(t)}
-                    className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                      messageTypeFilter === t
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                        : 'bg-[#121C36] text-[#9AA8C7] border border-[#24315A]'
-                    }`}
-                  >
-                    {t}
-                  </button>
-                ))}
-              </div>
-              <span className="text-xs text-[#9AA8C7]">
-                Showing {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''}
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              {filteredMessages.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7]">
-                  No messages recorded in this category.
+                              <button
+                                onClick={() => handleToggleDisable(student)}
+                                title={student.disabled ? 'Re-enable account' : 'Disable account'}
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteStudent(student.uid)}
+                                title="Delete student record"
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              ) : (
-                filteredMessages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold ${
-                          msg.type === 'Complaint'
-                            ? 'bg-rose-950 text-rose-300 border border-rose-500/40'
-                            : msg.type === 'Review'
-                            ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
-                            : 'bg-blue-950 text-blue-300 border border-blue-500/40'
-                        }`}>
-                          {msg.type}
-                        </span>
+              </div>
 
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
-                          msg.status === 'New'
-                            ? 'bg-[#FFC700] text-[#0A1224]'
-                            : msg.status === 'Read'
-                            ? 'bg-[#2F52FF] text-white'
-                            : 'bg-emerald-950 text-emerald-300'
-                        }`}>
-                          {msg.status}
-                        </span>
-                      </div>
-
-                      <span className="text-xs font-mono text-[#9AA8C7]">
-                        {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
-                      </span>
-                    </div>
-
-                    <div className="space-y-1">
-                      <div className="text-sm font-bold text-[#E6ECFA]">{msg.name}</div>
-                      <div className="text-xs text-[#9AA8C7]">{msg.email}</div>
-                    </div>
-
-                    <p className="text-sm text-[#E6ECFA] bg-[#0A1224] p-4 rounded-xl border border-[#24315A] whitespace-pre-wrap leading-relaxed">
-                      {msg.message}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-2 border-t border-[#24315A]/60">
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleUpdateMessageStatus(msg.id, 'Read')}
-                          className="px-2.5 py-1 rounded bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
-                        >
-                          Mark Read
-                        </button>
-                        <button
-                          onClick={() => handleUpdateMessageStatus(msg.id, 'Resolved')}
-                          className="px-2.5 py-1 rounded bg-[#0A1224] border border-[#24315A] text-xs text-emerald-400 hover:border-emerald-500 cursor-pointer"
-                        >
-                          Mark Resolved
-                        </button>
-                      </div>
-
-                      <a
-                        href={`mailto:${msg.email}?subject=Re: SOT Student Portal Inquiry [${msg.type}]`}
-                        className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-semibold flex items-center gap-1.5 hover:bg-[#2545df]"
-                      >
-                        <Mail className="w-3.5 h-3.5" />
-                        <span>Reply by Email</span>
-                      </a>
-                    </div>
-                  </div>
-                ))
-              )}
             </div>
+          )}
 
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* 4. ANNOUNCEMENTS (Create, Edit, Delete)                   */}
-        {/* ======================================================== */}
-        {activeTab === 'announcements' && (
-          <div className="space-y-5">
-            
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-[#9AA8C7]">
-                Broadcast announcements to students of specific departments or all students.
-              </span>
-              <button
-                onClick={() => {
-                  setEditingAnnId(null);
-                  setAnnTitle('');
-                  setAnnContent('');
-                  setAnnCategory('General');
-                  setAnnDepartment('All');
-                  setAnnUrgent(false);
-                  setShowAnnModal(true);
-                }}
-                className="px-4 py-2 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.2)]"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Create Announcement</span>
-              </button>
-            </div>
-
+          {/* ======================================================== */}
+          {/* TAB 4: TIMETABLES                                        */}
+          {/* ======================================================== */}
+          {activeTab === 'timetables' && (
             <div className="space-y-4">
-              {announcements.map((ann) => (
-                <div
-                  key={ann.id}
-                  className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3"
-                >
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold ${
-                        ann.urgent ? 'bg-rose-950 text-rose-300 border border-rose-500/40' : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
-                      }`}>
-                        {ann.category} {ann.urgent && '• URGENT'}
-                      </span>
-                      <span className="text-xs font-mono px-2 py-0.5 rounded bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
-                        Target: {ann.department}
-                      </span>
-                    </div>
+              
+              <div className="p-3.5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                  <select
+                    value={ttDeptFilter}
+                    onChange={(e) => setTtDeptFilter(e.target.value)}
+                    className="px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  >
+                    {SOT_DEPARTMENTS_LIST.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
 
-                    <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52]">
+                    {ACADEMIC_LEVELS.map(lvl => (
                       <button
-                        onClick={() => {
-                          setEditingAnnId(ann.id);
-                          setAnnTitle(ann.title);
-                          setAnnContent(ann.content);
-                          setAnnCategory(ann.category);
-                          setAnnDepartment(ann.department);
-                          setAnnUrgent(Boolean(ann.urgent));
-                          setShowAnnModal(true);
-                        }}
-                        className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
-                        title="Edit Announcement"
+                        key={lvl}
+                        onClick={() => setTtLevelFilter(lvl)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer ${
+                          ttLevelFilter === lvl ? 'bg-[#2F52FF] text-white' : 'text-[#9AA8C7]'
+                        }`}
                       >
-                        <Edit2 className="w-3.5 h-3.5" />
+                        {lvl}
                       </button>
-                      <button
-                        onClick={() => handleDeleteAnnouncement(ann.id)}
-                        className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
-                        title="Delete Announcement"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
+                    ))}
                   </div>
 
-                  <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                    {ann.title}
-                  </h3>
-
-                  <p className="text-sm text-[#9AA8C7] leading-relaxed whitespace-pre-wrap">
-                    {ann.content}
-                  </p>
-
-                  <div className="text-[11px] text-[#9AA8C7] pt-2 border-t border-[#24315A]/60 flex items-center justify-between">
-                    <span>Published by {ann.author || 'Admin'}</span>
-                    <span>{ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}</span>
+                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52]">
+                    <button
+                      onClick={() => setTtTypeTab('class')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer ${
+                        ttTypeTab === 'class' ? 'bg-[#FFC700] text-[#0A1224]' : 'text-[#9AA8C7]'
+                      }`}
+                    >
+                      Class Schedule
+                    </button>
+                    <button
+                      onClick={() => setTtTypeTab('exam')}
+                      className={`px-2.5 py-1 rounded-md text-xs font-bold cursor-pointer ${
+                        ttTypeTab === 'exam' ? 'bg-[#FFC700] text-[#0A1224]' : 'text-[#9AA8C7]'
+                      }`}
+                    >
+                      Exam Timetable
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
 
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* 5. CHATBOT FAQS (Knowledge Base Management)             */}
-        {/* ======================================================== */}
-        {activeTab === 'faqs' && (
-          <div className="space-y-5">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="font-display font-bold text-lg text-[#E6ECFA] flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-[#FFC700]" />
-                  <span>SOT Assistant Knowledge Base</span>
-                </h3>
-                <p className="text-xs text-[#9AA8C7]">
-                  These Q&As are loaded by SOT Assistant dynamically before replying to student queries.
-                </p>
-              </div>
-
-              <div className="flex items-center gap-2.5">
-                {faqs.length === 0 && (
-                  <button
-                    onClick={handleSeedDefaultFaqs}
-                    className="px-3.5 py-2 rounded-lg bg-[#121C36] border border-[#FFC700]/50 text-xs font-semibold text-[#FFC700] hover:bg-[#FFC700]/10 flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Seed Common FAQs</span>
-                  </button>
-                )}
                 <button
-                  onClick={() => {
-                    setEditingFaqId(null);
-                    setFaqQuestion('');
-                    setFaqAnswer('');
-                    setShowFaqModal(true);
-                  }}
-                  className="px-4 py-2 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.2)]"
+                  onClick={handleOpenAddTt}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.3)] self-end sm:self-auto"
                 >
-                  <Plus className="w-4 h-4" />
-                  <span>Add FAQ Question</span>
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add Timetable Entry</span>
                 </button>
               </div>
-            </div>
 
-            {/* List of FAQs */}
-            <div className="space-y-4">
-              {faqs.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] space-y-3">
-                  <Bot className="w-10 h-10 text-[#FFC700] mx-auto opacity-80" />
-                  <p className="text-sm font-semibold text-[#E6ECFA]">No custom FAQs yet.</p>
-                  <p className="text-xs max-w-md mx-auto">
-                    The assistant currently relies on core department and portal knowledge. Add custom FAQs or seed default ones to expand its knowledge base!
-                  </p>
-                  <button
-                    onClick={handleSeedDefaultFaqs}
-                    className="mt-2 px-4 py-2 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer inline-flex items-center gap-1.5"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Populate Default FAQs</span>
-                  </button>
+              <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
+                      <tr>
+                        <th className="py-2.5 px-3.5">Day / Date</th>
+                        <th className="py-2.5 px-3.5">Time Interval</th>
+                        <th className="py-2.5 px-3.5">Course Code</th>
+                        <th className="py-2.5 px-3.5">Venue</th>
+                        <th className="py-2.5 px-3.5">Type</th>
+                        <th className="py-2.5 px-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1E2E52]">
+                      {filteredTimetables.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="py-10 text-center text-[#9AA8C7]">
+                            No timetable entries recorded for {ttDeptFilter} ({ttLevelFilter} - {ttTypeTab}).
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredTimetables.map(entry => (
+                          <tr key={entry.id} className="hover:bg-[#070D1A]/50 transition-colors">
+                            <td className="py-2.5 px-3.5 font-semibold text-[#E6ECFA]">
+                              {entry.day} {entry.date ? `(${entry.date})` : ''}
+                            </td>
+                            <td className="py-2.5 px-3.5 font-mono text-[#9AA8C7]">
+                              {entry.startTime} – {entry.endTime}
+                            </td>
+                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                              {entry.courseCode}
+                            </td>
+                            <td className="py-2.5 px-3.5 text-[#E6ECFA]">
+                              {entry.venue}
+                            </td>
+                            <td className="py-2.5 px-3.5">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                                entry.type === 'exam'
+                                  ? 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                                  : 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40'
+                              }`}>
+                                {entry.type === 'exam' ? 'EXAM' : 'CLASS'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-3.5 text-right space-x-1.5">
+                              <button
+                                onClick={() => handleOpenEditTt(entry)}
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTt(entry.id)}
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
                 </div>
-              ) : (
-                faqs.map((faq, idx) => (
-                  <div
-                    key={faq.id || idx}
-                    className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3"
-                  >
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3">
-                        <div className="w-7 h-7 rounded-lg bg-[#0A1224] border border-[#FFC700]/30 flex items-center justify-center text-[#FFC700] shrink-0 mt-0.5">
-                          <HelpCircle className="w-4 h-4" />
-                        </div>
-                        <div>
-                          <h4 className="font-display font-bold text-base text-[#E6ECFA]">
-                            {faq.question}
-                          </h4>
-                          <span className="text-[10px] text-[#9AA8C7] font-mono">
-                            FAQ #{idx + 1}
+              </div>
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 5: ANNOUNCEMENTS                                     */}
+          {/* ======================================================== */}
+          {activeTab === 'announcements' && (
+            <div className="space-y-4">
+              
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-[#9AA8C7]">
+                  Broadcast departmental bulletins or school-wide alerts.
+                </span>
+                <button
+                  onClick={() => {
+                    setEditingAnnId(null);
+                    setAnnTitle('');
+                    setAnnContent('');
+                    setAnnCategory('General');
+                    setAnnDepartment('All');
+                    setAnnUrgent(false);
+                    setShowAnnModal(true);
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(255,199,0,0.25)]"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Announcement</span>
+                </button>
+              </div>
+
+              <div className="space-y-3">
+                {announcements.map(ann => (
+                  <div key={ann.id} className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                          ann.urgent ? 'bg-rose-950 text-rose-300 border border-rose-500/40' : 'bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]'
+                        }`}>
+                          {ann.category} {ann.urgent && '• URGENT'}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]">
+                          Target: {ann.department}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => {
+                            setEditingAnnId(ann.id);
+                            setAnnTitle(ann.title);
+                            setAnnContent(ann.content);
+                            setAnnCategory(ann.category);
+                            setAnnDepartment(ann.department);
+                            setAnnUrgent(Boolean(ann.urgent));
+                            setShowAnnModal(true);
+                          }}
+                          className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAnnouncement(ann.id)}
+                          className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+
+                    <h4 className="font-display font-bold text-sm text-[#E6ECFA]">{ann.title}</h4>
+                    <p className="text-xs text-[#9AA8C7] whitespace-pre-wrap leading-relaxed">{ann.content}</p>
+
+                    <div className="text-[10px] text-[#9AA8C7] pt-1 border-t border-[#1E2E52]/60 flex items-center justify-between">
+                      <span>Posted by {ann.author || 'Admin'}</span>
+                      <span>{ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 6: MESSAGES & COMPLAINTS TRACKING                    */}
+          {/* ======================================================== */}
+          {activeTab === 'messages' && (
+            <div className="space-y-4">
+              
+              <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                <div className="flex items-center gap-1.5">
+                  {['All', 'Complaint', 'Review', 'Enquiry'].map(t => (
+                    <button
+                      key={t}
+                      onClick={() => setMessageTypeFilter(t)}
+                      className={`px-3 py-1 rounded-md text-xs font-semibold cursor-pointer transition-all ${
+                        messageTypeFilter === t
+                          ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
+                          : 'bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-[#9AA8C7]">
+                  Showing {filteredMessages.length} message{filteredMessages.length !== 1 ? 's' : ''}
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {filteredMessages.length === 0 ? (
+                  <div className="p-10 text-center rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#9AA8C7]">
+                    No messages recorded in this category.
+                  </div>
+                ) : (
+                  filteredMessages.map(msg => (
+                    <div key={msg.id} className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            msg.type === 'Complaint'
+                              ? 'bg-rose-950 text-rose-300 border border-rose-500/40'
+                              : msg.type === 'Review'
+                              ? 'bg-amber-950 text-amber-300 border border-amber-500/40'
+                              : 'bg-blue-950 text-blue-300 border border-blue-500/40'
+                          }`}>
+                            {msg.type}
+                          </span>
+
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            msg.status === 'New'
+                              ? 'bg-[#FFC700] text-[#0A1224]'
+                              : msg.status === 'Read'
+                              ? 'bg-[#2F52FF] text-white'
+                              : 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
+                          }`}>
+                            {msg.status}
                           </span>
                         </div>
+
+                        <span className="text-[11px] font-mono text-[#9AA8C7]">
+                          {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
+                        </span>
+                      </div>
+
+                      <div>
+                        <div className="text-xs font-bold text-[#E6ECFA]">{msg.name}</div>
+                        <div className="text-[11px] text-[#9AA8C7]">{msg.email}</div>
+                      </div>
+
+                      <p className="text-xs text-[#E6ECFA] bg-[#070D1A] p-3 rounded-lg border border-[#1E2E52] whitespace-pre-wrap leading-relaxed">
+                        {msg.message}
+                      </p>
+
+                      {/* Display existing admin reply */}
+                      {msg.adminReply && (
+                        <div className="p-3 rounded-lg bg-[#121C36] border border-emerald-500/30 space-y-1">
+                          <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                            <CheckCircle className="w-3 h-3" />
+                            <span>Official Admin Reply (Recorded)</span>
+                          </div>
+                          <p className="text-xs text-[#E6ECFA] whitespace-pre-wrap">{msg.adminReply}</p>
+                          {msg.repliedAt && (
+                            <div className="text-[9px] text-[#9AA8C7] font-mono">
+                              Replied on {new Date(msg.repliedAt).toLocaleString()}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Status Buttons & Reply Form */}
+                      <div className="space-y-2 pt-2 border-t border-[#1E2E52]/60">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-[10px] text-[#9AA8C7] mr-1">Set status:</span>
+                            {(['New', 'Read', 'Resolved'] as const).map(st => (
+                              <button
+                                key={st}
+                                onClick={() => handleUpdateMessageStatus(msg.id, st)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold cursor-pointer ${
+                                  msg.status === st
+                                    ? 'bg-[#2F52FF] text-white font-bold'
+                                    : 'bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52] hover:text-[#E6ECFA]'
+                                }`}
+                              >
+                                {st}
+                              </button>
+                            ))}
+                          </div>
+
+                          <a
+                            href={`mailto:${msg.email}?subject=Re: SOT Student Portal [${msg.type}]`}
+                            className="px-2.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-[11px] text-[#9AA8C7] hover:text-[#FFC700] flex items-center gap-1"
+                          >
+                            <Mail className="w-3 h-3" />
+                            <span>Open Mail Client</span>
+                          </a>
+                        </div>
+
+                        {/* In-app Reply Draft Box */}
+                        <div className="flex gap-2 pt-1">
+                          <input
+                            type="text"
+                            placeholder={msg.adminReply ? "Update official reply..." : "Type official admin reply for student..."}
+                            value={replyDrafts[msg.id] ?? (msg.adminReply || '')}
+                            onChange={(e) => setReplyDrafts({ ...replyDrafts, [msg.id]: e.target.value })}
+                            className="flex-1 px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                          />
+                          <button
+                            onClick={() => handleSaveReply(msg)}
+                            disabled={replySavingId === msg.id}
+                            className="px-3 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer flex items-center gap-1 shrink-0"
+                          >
+                            <Send className="w-3 h-3" />
+                            <span>{replySavingId === msg.id ? 'Saving...' : 'Send Reply'}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+                  ))
+                )}
+              </div>
+
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 7: CHATBOT FAQS                                      */}
+          {/* ======================================================== */}
+          {activeTab === 'faqs' && (
+            <div className="space-y-4">
+              
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="font-display font-bold text-sm text-[#E6ECFA]">SOT Assistant Knowledge Base</h3>
+                  <p className="text-[11px] text-[#9AA8C7]">
+                    Dynamic Q&A context ingested by the AI assistant when answering student queries.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {faqs.length === 0 && (
+                    <button
+                      onClick={handleSeedDefaultFaqs}
+                      className="px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#FFC700]/50 text-xs font-semibold text-[#FFC700] hover:bg-[#FFC700]/10 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Seed Defaults</span>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => {
+                      setEditingFaqId(null);
+                      setFaqQuestion('');
+                      setFaqAnswer('');
+                      setShowFaqModal(true);
+                    }}
+                    className="px-3.5 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(255,199,0,0.25)]"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add FAQ</span>
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                {faqs.map((faq, idx) => (
+                  <div key={faq.id || idx} className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-2">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-2">
+                        <span className="w-5 h-5 rounded bg-[#070D1A] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700] text-[10px] font-mono shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <h4 className="font-semibold text-xs text-[#E6ECFA]">{faq.question}</h4>
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
@@ -1290,76 +2498,617 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                             setFaqAnswer(faq.answer);
                             setShowFaqModal(true);
                           }}
-                          className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
-                          title="Edit FAQ"
+                          className="p-1 rounded-md bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleDeleteFaq(faq.id)}
-                          className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
-                          title="Delete FAQ"
+                          className="p-1 rounded-md bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
 
-                    <p className="text-xs sm:text-sm text-[#E6ECFA] bg-[#0A1224] p-4 rounded-xl border border-[#24315A] leading-relaxed whitespace-pre-wrap">
+                    <p className="text-xs text-[#9AA8C7] bg-[#070D1A] p-3 rounded-lg border border-[#1E2E52] whitespace-pre-wrap leading-relaxed">
                       {faq.answer}
                     </p>
+                  </div>
+                ))}
+              </div>
 
-                    <div className="flex items-center justify-between text-[11px] text-[#9AA8C7] pt-1">
-                      <span className="flex items-center gap-1 text-emerald-400">
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                        Active in Chatbot Knowledge
-                      </span>
-                      <span>{faq.createdAt ? new Date(faq.createdAt).toLocaleDateString() : ''}</span>
+            </div>
+          )}
+
+        </main>
+      </div>
+
+      {/* ======================================================== */}
+      {/* SIDE PANEL: ADD / EDIT COURSE DRAWER                     */}
+      {/* ======================================================== */}
+      {showCourseDrawer && (
+        <div className="fixed inset-0 z-50 flex justify-end">
+          {/* Backdrop */}
+          <div
+            onClick={() => setShowCourseDrawer(false)}
+            className="fixed inset-0 bg-[#070D1A]/75 backdrop-blur-sm transition-opacity"
+          />
+
+          {/* Side Drawer Panel */}
+          <div className="relative w-full sm:max-w-md md:max-w-lg bg-[#0A1224] border-l border-[#1F2C4C] h-full shadow-2xl flex flex-col z-10 overflow-hidden">
+            
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3.5 bg-[#0F1E36] border-b border-[#1F2C4C]">
+              <div>
+                <h3 className="font-display font-bold text-sm text-[#E6ECFA]">
+                  {editingCourseId ? 'Edit Course' : 'Add New Course'}
+                </h3>
+                <span className="text-[10px] text-[#9AA8C7]">
+                  {formDept} • {formLevel} • {formSemester}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowCourseDrawer(false)}
+                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleSaveCourse} className="flex-1 overflow-y-auto p-5 space-y-4">
+              
+              {courseSaveError && (
+                <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-500/50 text-xs text-rose-200">
+                  {courseSaveError}
+                </div>
+              )}
+
+              {/* Department */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Department</label>
+                <select
+                  value={formDept}
+                  onChange={(e) => setFormDept(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                >
+                  {SOT_DEPARTMENTS_LIST.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Level and Semester */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Level</label>
+                  <select
+                    value={formLevel}
+                    onChange={(e) => setFormLevel(e.target.value as any)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    {ACADEMIC_LEVELS.map(lvl => (
+                      <option key={lvl} value={lvl}>{lvl}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Semester</label>
+                  <select
+                    value={formSemester}
+                    onChange={(e) => setFormSemester(e.target.value as any)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    {SEMESTERS.map(sem => (
+                      <option key={sem} value={sem}>{sem}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Course Code & Units */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="col-span-2">
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Course Code *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. COM 124"
+                    value={formCode}
+                    onChange={(e) => setFormCode(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Units</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={formUnits}
+                    onChange={(e) => setFormUnits(Number(e.target.value) || 1)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+              </div>
+
+              {/* Course Title */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Course Title *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Data Structures & Algorithms"
+                  value={formTitle}
+                  onChange={(e) => setFormTitle(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-medium focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              {/* Type (Core / Elective) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Type</label>
+                <div className="flex gap-2">
+                  {(['Core', 'Elective'] as const).map(t => (
+                    <button
+                      type="button"
+                      key={t}
+                      onClick={() => setFormType(t)}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        formType === t
+                          ? 'bg-[#2F52FF] text-white'
+                          : 'bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7]'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Description (Optional) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Description / Syllabus Summary (Optional)
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Overview of core curriculum topics, prerequisites, and learning outcomes..."
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              {/* LEARNING MATERIALS BUILDER */}
+              <div className="pt-3 border-t border-[#1E2E52] space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider">
+                    Learning Materials ({formMaterials.length})
+                  </span>
+                  <span className="text-[10px] text-[#9AA8C7]">Drive, YouTube, Docs, etc.</span>
+                </div>
+
+                {/* Materials Mini Form */}
+                <div className="p-3 rounded-lg bg-[#070D1A] border border-[#1E2E52] space-y-2">
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="col-span-2">
+                      <input
+                        type="text"
+                        placeholder="Material title (e.g. Past Questions PDF)"
+                        value={matTitle}
+                        onChange={(e) => setMatTitle(e.target.value)}
+                        className="w-full px-2.5 py-1.5 rounded-md bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <select
+                        value={matCategory}
+                        onChange={(e) => setMatCategory(e.target.value as any)}
+                        className="w-full px-2 py-1.5 rounded-md bg-[#0F1E36] border border-[#1E2E52] text-[11px] text-[#E6ECFA] focus:outline-none"
+                      >
+                        {MATERIAL_CATEGORIES.map(c => (
+                          <option key={c} value={c}>{c}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
-                ))
-              )}
+
+                  <div className="flex gap-2">
+                    <input
+                      type="url"
+                      placeholder="Resource URL (e.g. https://drive.google.com/...)"
+                      value={matUrl}
+                      onChange={(e) => setMatUrl(e.target.value)}
+                      className="flex-1 px-2.5 py-1.5 rounded-md bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddMaterialToDraft}
+                      disabled={!matTitle.trim() || !matUrl.trim()}
+                      className="px-3 py-1.5 rounded-md bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] disabled:opacity-40 cursor-pointer shrink-0"
+                    >
+                      + Add Material
+                    </button>
+                  </div>
+                </div>
+
+                {/* List of Added Materials */}
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {formMaterials.length === 0 ? (
+                    <div className="text-[11px] text-[#9AA8C7] italic py-1">
+                      No materials added to this course yet.
+                    </div>
+                  ) : (
+                    formMaterials.map((mat, idx) => (
+                      <div
+                        key={idx}
+                        className="flex items-center justify-between p-2 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs"
+                      >
+                        <div className="min-w-0 flex-1 pr-2">
+                          <div className="flex items-center gap-1.5">
+                            <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
+                              {mat.category}
+                            </span>
+                            <span className="font-semibold text-[#E6ECFA] truncate">{mat.title}</span>
+                          </div>
+                          <a
+                            href={mat.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-[#2F52FF] hover:underline truncate block font-mono"
+                          >
+                            {mat.url}
+                          </a>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMaterialFromDraft(idx)}
+                          className="p-1 rounded text-[#9AA8C7] hover:text-rose-400 cursor-pointer shrink-0"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Submit Buttons */}
+              <div className="pt-3 border-t border-[#1E2E52] flex justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShowCourseDrawer(false)}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={courseSaving}
+                  className="px-4 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer flex items-center gap-1.5 shadow-[0_0_12px_rgba(47,82,255,0.4)]"
+                >
+                  {courseSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{editingCourseId ? 'Save Changes' : 'Create Course'}</span>
+                </button>
+              </div>
+
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: BATCH ADD MULTIPLE COURSES                        */}
+      {/* ======================================================== */}
+      {showBatchModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-2xl bg-[#0A1224] border border-[#1F2C4C] rounded-2xl p-5 sm:p-6 space-y-4 shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1F2C4C]">
+              <div>
+                <h3 className="font-display font-bold text-sm text-[#E6ECFA] flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-[#FFC700]" />
+                  <span>Batch Add Courses</span>
+                </h3>
+                <span className="text-[11px] text-[#9AA8C7]">
+                  Adding to <strong className="text-[#FFC700]">{courseDeptFilter}</strong> • {courseLevelFilter} • {courseSemesterFilter}
+                </span>
+              </div>
+              <button
+                onClick={() => setShowBatchModal(false)}
+                className="p-1 rounded-lg text-[#9AA8C7] hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {batchError && (
+              <div className="p-2.5 rounded-lg bg-rose-950/70 border border-rose-500/50 text-xs text-rose-200">
+                {batchError}
+              </div>
+            )}
+
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {batchRows.map((row, idx) => (
+                <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-[#0F1E36] border border-[#1E2E52]">
+                  <span className="text-[10px] text-[#9AA8C7] font-mono w-4">{idx + 1}.</span>
+                  <input
+                    type="text"
+                    placeholder="Code (e.g. COM 111)"
+                    value={row.code}
+                    onChange={(e) => handleUpdateBatchRow(idx, 'code', e.target.value)}
+                    className="w-28 px-2 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Title (e.g. Digital Logic)"
+                    value={row.title}
+                    onChange={(e) => handleUpdateBatchRow(idx, 'title', e.target.value)}
+                    className="flex-1 px-2.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    value={row.units}
+                    onChange={(e) => handleUpdateBatchRow(idx, 'units', Number(e.target.value) || 1)}
+                    className="w-14 px-1.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-center font-mono text-[#E6ECFA] focus:outline-none"
+                    title="Units"
+                  />
+                  <select
+                    value={row.type}
+                    onChange={(e) => handleUpdateBatchRow(idx, 'type', e.target.value)}
+                    className="w-20 px-1 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-[11px] text-[#E6ECFA] focus:outline-none"
+                  >
+                    <option value="Core">Core</option>
+                    <option value="Elective">Elective</option>
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveBatchRow(idx)}
+                    className="p-1 text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-between pt-2 border-t border-[#1F2C4C]">
+              <button
+                type="button"
+                onClick={handleAddBatchRow}
+                className="px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#FFC700] font-semibold hover:border-[#FFC700] cursor-pointer"
+              >
+                + Add Row
+              </button>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowBatchModal(false)}
+                  className="px-3.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSaveBatchCourses}
+                  disabled={batchSaving}
+                  className="px-4 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer flex items-center gap-1.5"
+                >
+                  {batchSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>Save All Courses</span>
+                </button>
+              </div>
             </div>
           </div>
-        )}
+        </div>
+      )}
 
-      </main>
+      {/* ======================================================== */}
+      {/* MODAL: ADD / EDIT TIMETABLE ENTRY                        */}
+      {/* ======================================================== */}
+      {showTtModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-[#0A1224] border border-[#1F2C4C] rounded-2xl p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1F2C4C]">
+              <h3 className="font-display font-bold text-sm text-[#E6ECFA]">
+                {editingTtId ? 'Edit Timetable Entry' : 'Add Timetable Entry'}
+              </h3>
+              <button onClick={() => setShowTtModal(false)} className="text-[#9AA8C7] hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
 
-      {/* CREATE / EDIT ANNOUNCEMENT MODAL */}
-      {showAnnModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0A1224]/85 backdrop-blur-md">
-          <div className="relative w-full max-w-lg bg-[#121C36] border border-[#24315A] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_0_50px_rgba(0,0,0,0.8)]">
-            <button
-              onClick={() => setShowAnnModal(false)}
-              className="absolute top-5 right-5 p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]"
-            >
-              <X className="w-5 h-5" />
-            </button>
+            {ttError && (
+              <div className="p-2 rounded bg-rose-950/70 border border-rose-500/50 text-xs text-rose-200">
+                {ttError}
+              </div>
+            )}
 
-            <h3 className="font-display font-bold text-xl text-[#E6ECFA]">
-              {editingAnnId ? 'Edit Announcement' : 'Publish New Announcement'}
-            </h3>
+            <form onSubmit={handleSaveTt} className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Type</label>
+                  <select
+                    value={ttFormType}
+                    onChange={(e) => setTtFormType(e.target.value as any)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  >
+                    <option value="class">Class</option>
+                    <option value="exam">Exam</option>
+                  </select>
+                </div>
 
-            <form onSubmit={handleSaveAnnouncement} className="space-y-4">
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Level</label>
+                  <select
+                    value={ttFormLevel}
+                    onChange={(e) => setTtFormLevel(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  >
+                    {ACADEMIC_LEVELS.map(lvl => (
+                      <option key={lvl} value={lvl}>{lvl}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">Title *</label>
+                <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Department</label>
+                <select
+                  value={ttFormDept}
+                  onChange={(e) => setTtFormDept(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                >
+                  {SOT_DEPARTMENTS_LIST.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Day of Week</label>
+                  <select
+                    value={ttFormDay}
+                    onChange={(e) => setTtFormDay(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  >
+                    {DAYS_OF_WEEK.map(d => (
+                      <option key={d} value={d}>{d}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Specific Date (Optional)</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. 15th Nov"
+                    value={ttFormDate}
+                    onChange={(e) => setTtFormDate(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Start Time</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="08:00 AM"
+                    value={ttFormStartTime}
+                    onChange={(e) => setTtFormStartTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">End Time</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="10:00 AM"
+                    value={ttFormEndTime}
+                    onChange={(e) => setTtFormEndTime(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Course Code *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. COM 111"
+                    value={ttFormCourseCode}
+                    onChange={(e) => setTtFormCourseCode(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Venue *</label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Hall 1"
+                    value={ttFormVenue}
+                    onChange={(e) => setTtFormVenue(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
+                  />
+                </div>
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
+                <button
+                  type="button"
+                  onClick={() => setShowTtModal(false)}
+                  className="px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={ttSaving}
+                  className="px-4 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer"
+                >
+                  {ttSaving ? 'Saving...' : editingTtId ? 'Update Entry' : 'Save Entry'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* MODAL: CREATE / EDIT ANNOUNCEMENT                        */}
+      {/* ======================================================== */}
+      {showAnnModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-[#0A1224] border border-[#1F2C4C] rounded-2xl p-5 space-y-3.5 shadow-2xl">
+            <div className="flex items-center justify-between pb-2.5 border-b border-[#1F2C4C]">
+              <h3 className="font-display font-bold text-sm text-[#E6ECFA]">
+                {editingAnnId ? 'Edit Announcement' : 'Publish Announcement'}
+              </h3>
+              <button onClick={() => setShowAnnModal(false)} className="text-[#9AA8C7] hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveAnnouncement} className="space-y-3">
+              <div>
+                <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Title *</label>
                 <input
                   type="text"
                   required
                   value={annTitle}
                   onChange={(e) => setAnnTitle(e.target.value)}
-                  placeholder="e.g. Semester Registration Deadlines"
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  placeholder="e.g. Matriculation Ceremony Timings"
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">Category</label>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Category</label>
                   <select
                     value={annCategory}
                     onChange={(e) => setAnnCategory(e.target.value as any)}
-                    className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none"
+                    className="w-full px-2 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                   >
                     <option value="General">General</option>
                     <option value="Academic">Academic</option>
@@ -1369,11 +3118,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">Target Department</label>
+                  <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Target Department</label>
                   <select
                     value={annDepartment}
                     onChange={(e) => setAnnDepartment(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none"
+                    className="w-full px-2 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                   >
                     <option value="All">All Departments</option>
                     {SOT_DEPARTMENTS_LIST.map(d => (
@@ -1383,44 +3132,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 pt-1">
+              <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
-                  id="urgentCheck"
+                  id="annUrgentAdmin"
                   checked={annUrgent}
                   onChange={(e) => setAnnUrgent(e.target.checked)}
-                  className="rounded bg-[#0A1224] border-[#24315A] text-[#FFC700] focus:ring-0 cursor-pointer"
+                  className="rounded bg-[#070D1A] border-[#1E2E52] text-[#FFC700]"
                 />
-                <label htmlFor="urgentCheck" className="text-xs text-[#E6ECFA] cursor-pointer">
-                  Mark as Urgent Notice
+                <label htmlFor="annUrgentAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
+                  Mark as Urgent Alert
                 </label>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">Content *</label>
+                <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Content *</label>
                 <textarea
                   required
                   rows={4}
                   value={annContent}
                   onChange={(e) => setAnnContent(e.target.value)}
-                  placeholder="Write announcement body..."
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  placeholder="Type bulletin text..."
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button
                   type="button"
                   onClick={() => setShowAnnModal(false)}
-                  className="px-4 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7]"
+                  className="px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df]"
+                  className="px-4 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer"
                 >
-                  {editingAnnId ? 'Save Changes' : 'Broadcast Announcement'}
+                  {editingAnnId ? 'Update' : 'Publish'}
                 </button>
               </div>
             </form>
@@ -1428,72 +3177,59 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         </div>
       )}
 
-      {/* CREATE / EDIT FAQ MODAL */}
+      {/* ======================================================== */}
+      {/* MODAL: CHATBOT FAQ                                       */}
+      {/* ======================================================== */}
       {showFaqModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0A1224]/85 backdrop-blur-md">
-          <div className="relative w-full max-w-lg bg-[#121C36] border border-[#24315A] rounded-2xl p-6 sm:p-8 space-y-4 shadow-[0_0_50px_rgba(0,0,0,0.8)]">
-            <button
-              onClick={() => setShowFaqModal(false)}
-              className="absolute top-5 right-5 p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]"
-            >
-              <X className="w-5 h-5" />
-            </button>
-
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#0A1224] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700]">
-                <Bot className="w-4 h-4" />
-              </div>
-              <h3 className="font-display font-bold text-xl text-[#E6ECFA]">
-                {editingFaqId ? 'Edit Chatbot FAQ' : 'Add Chatbot FAQ Knowledge'}
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div className="relative w-full max-w-md bg-[#0A1224] border border-[#1F2C4C] rounded-2xl p-5 space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between pb-2 border-b border-[#1F2C4C]">
+              <h3 className="font-display font-bold text-sm text-[#E6ECFA]">
+                {editingFaqId ? 'Edit Chatbot FAQ' : 'Add Chatbot FAQ'}
               </h3>
+              <button onClick={() => setShowFaqModal(false)} className="text-[#9AA8C7] hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <p className="text-xs text-[#9AA8C7]">
-              SOT Assistant will consult this question and answer to respond accurately to student inquiries.
-            </p>
-
-            <form onSubmit={handleSaveFaq} className="space-y-4 pt-1">
+            <form onSubmit={handleSaveFaq} className="space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                  Question *
-                </label>
+                <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Question *</label>
                 <input
                   type="text"
                   required
                   value={faqQuestion}
                   onChange={(e) => setFaqQuestion(e.target.value)}
-                  placeholder="e.g. Where can I submit my student complaint or review?"
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  placeholder="e.g. Where can I download lecture notes?"
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                  Answer *
-                </label>
+                <label className="block text-[10px] font-semibold text-[#9AA8C7] mb-1">Answer *</label>
                 <textarea
                   required
                   rows={4}
                   value={faqAnswer}
                   onChange={(e) => setFaqAnswer(e.target.value)}
-                  placeholder="e.g. You can submit complaints or reviews via the Contact page link in the navigation menu..."
-                  className="w-full px-3.5 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  placeholder="Provide detailed answer..."
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]"
                 />
               </div>
 
-              <div className="flex justify-end gap-3 pt-2">
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button
                   type="button"
                   onClick={() => setShowFaqModal(false)}
-                  className="px-4 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7]"
+                  className="px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer"
+                  className="px-4 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer"
                 >
-                  {editingFaqId ? 'Update FAQ' : 'Save & Publish FAQ'}
+                  {editingFaqId ? 'Update FAQ' : 'Save FAQ'}
                 </button>
               </div>
             </form>
@@ -1504,4 +3240,3 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     </div>
   );
 };
-

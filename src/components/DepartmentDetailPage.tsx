@@ -3,7 +3,7 @@ import { DepartmentItem, CourseItem } from '../types';
 import { DepartmentIcon } from './PublicLanding';
 import { db } from '../lib/firebase';
 import { collection, getDocs, query, where } from 'firebase/firestore';
-import { INITIAL_COURSES } from '../data/coursesAndTimetables';
+import { INITIAL_COURSES, normalizeCourseLevel } from '../data/coursesAndTimetables';
 import {
   ArrowLeft,
   BookOpen,
@@ -22,7 +22,7 @@ interface DepartmentDetailPageProps {
   onJoinDepartment: (deptName: string) => void;
 }
 
-const ACADEMIC_LEVELS = ['ND I', 'ND II', 'HND I', 'HND II'];
+const ACADEMIC_LEVELS = ['ND1', 'ND2', 'HND1', 'HND2'];
 
 export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
   department,
@@ -64,7 +64,7 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
 
   // Group courses by level
   const coursesByLevel = ACADEMIC_LEVELS.reduce((acc, lvl) => {
-    acc[lvl] = courses.filter(c => c.level === lvl);
+    acc[lvl] = courses.filter(c => normalizeCourseLevel(c.level) === lvl);
     return acc;
   }, {} as Record<string, CourseItem[]>);
 

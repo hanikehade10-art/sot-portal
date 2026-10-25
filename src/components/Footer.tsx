@@ -2,6 +2,8 @@ import React from 'react';
 import { GraduationCap, Mail, Phone, MapPin, ShieldAlert, Heart } from 'lucide-react';
 import { DEPARTMENTS } from '../data/departments';
 import { SITE_CONFIG } from '../config/site';
+import { useSiteSettings } from '../hooks/useSiteSettings';
+import { WhatsAppChannelButton } from './WhatsAppChannelButton';
 
 interface FooterProps {
   onDepartmentClick: (deptId: string) => void;
@@ -20,6 +22,8 @@ export const Footer: React.FC<FooterProps> = ({
   onNavigatePrivacy,
   onNavigateTerms
 }) => {
+  const { settings } = useSiteSettings();
+
   return (
     <footer className="bg-[#0A1224] border-t border-[#24315A] text-[#9AA8C7] pt-16 pb-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -56,6 +60,16 @@ export const Footer: React.FC<FooterProps> = ({
               <Heart className="w-4 h-4 text-[#FFC700]" />
               <span>{SITE_CONFIG.tagline}</span>
             </div>
+
+            {/* WhatsApp channel button in footer if configured */}
+            {settings.whatsappChannelUrl && (
+              <div className="pt-2">
+                <WhatsAppChannelButton
+                  url={settings.whatsappChannelUrl}
+                  variant="outline"
+                />
+              </div>
+            )}
           </div>
 
           {/* Departments Col */}
@@ -64,7 +78,7 @@ export const Footer: React.FC<FooterProps> = ({
               Departments
             </h4>
             <ul className="space-y-2 text-xs">
-              {DEPARTMENTS.slice(0, 4).map((d) => (
+              {DEPARTMENTS.slice(0, 3).map((d) => (
                 <li key={d.id}>
                   <button
                     onClick={() => onDepartmentClick(d.id)}
@@ -83,7 +97,7 @@ export const Footer: React.FC<FooterProps> = ({
               Specializations
             </h4>
             <ul className="space-y-2 text-xs">
-              {DEPARTMENTS.slice(4).map((d) => (
+              {DEPARTMENTS.slice(3, 6).map((d) => (
                 <li key={d.id}>
                   <button
                     onClick={() => onDepartmentClick(d.id)}
