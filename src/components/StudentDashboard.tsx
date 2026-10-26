@@ -4,9 +4,13 @@ import { DEPARTMENTS, INITIAL_ANNOUNCEMENTS } from '../data/departments';
 import { DepartmentIcon } from './PublicLanding';
 import { auth, db } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, addDoc, query, where } from 'firebase/firestore';
-import { AnnouncementItem, ContactMessage, TimetableEntry, CourseItem, CourseMaterial, ResourceItem } from '../types';
+import { AnnouncementItem, ContactMessage, TimetableEntry, CourseItem, CourseMaterial, ResourceItem, BookmarkItem } from '../types';
 import { INITIAL_COURSES, INITIAL_TIMETABLES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
 import { AskAiView } from './AskAiView';
+import { DailyStreakCard } from './DailyStreakCard';
+import { StudentBookmarksView } from './StudentBookmarksView';
+import { WhatsAppChannelButton } from './WhatsAppChannelButton';
+import { useSiteSettings } from '../hooks/useSiteSettings';
 import {
   LayoutDashboard,
   Building2,
@@ -40,7 +44,11 @@ import {
   Search,
   ChevronDown,
   ChevronUp,
-  FolderOpen
+  FolderOpen,
+  Bookmark,
+  BookmarkCheck,
+  Flame,
+  Trash2
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -57,6 +65,7 @@ type TabType =
   | 'courses'
   | 'timetables'
   | 'announcements'
+  | 'bookmarks'
   | 'my-messages'
   | 'rep-announcement'
   | 'ask-ai'
@@ -65,6 +74,20 @@ type TabType =
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const ACADEMIC_LEVELS = ['ND I', 'ND II', 'HND I', 'HND II'];
 
+export function getLagosDateString(d: Date = new Date()): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Lagos',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).format(d);
+}
+
+export function getLagosYesterdayString(d: Date = new Date()): string {
+  const yesterday = new Date(d.getTime() - 86400000);
+  return getLagosDateString(yesterday);
+}
+
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateHome,
   onNavigateContact,
@@ -72,8 +95,86 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateRep
 }) => {
   const { user, profile, isAdmin, roleReadError, refreshProfile, logout, updateStudentProfile } = useAuth();
+  const { settings } = useSiteSettings();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  // Bookmarks toast
+  const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
+
+  // Daily Streak check in Africa/Lagos timezone
+  useEffect(() => {
+    if (!user?.uid || !profile) return;
+    const todayLagos = getLagosDateString();
+    const yesterdayLagos = getLagosYesterdayString();
+
+    if (profile.lastActiveDate === todayLagos) {
+      return; // Already recorded activity today
+    }
+
+    let nextStreak = 1;
+    if (profile.lastActiveDate === yesterdayLagos) {
+      nextStreak = (profile.streakCount || 0) + 1;
+    } else {
+      nextStreak = 1;
+    }
+
+    const nextLongest = Math.max(profile.longestStreak || 0, nextStreak);
+
+    updateDoc(doc(db, 'users', user.uid), {
+      streakCount: nextStreak,
+      longestStreak: nextLongest,
+      lastActiveDate: todayLagos
+    }).then(() => {
+      refreshProfile();
+    }).catch(err => {
+      console.warn('Streak update note:', err);
+    });
+  }, [user?.uid, profile?.lastActiveDate]);
+
+  // Bookmarks helper functions
+  const isBookmarked = (type: 'course' | 'material' | 'announcement', id: string): boolean => {
+    return (profile?.bookmarks || []).some(b => b.type === type && b.id === id);
+  };
+
+  const toggleBookmark = async (item: Omit<BookmarkItem, 'createdAt'> & { createdAt?: string }) => {
+    if (!user?.uid) return;
+    const current = profile?.bookmarks || [];
+    const exists = current.some(b => b.type === item.type && b.id === item.id);
+    let updatedList: BookmarkItem[];
+
+    if (exists) {
+      updatedList = current.filter(b => !(b.type === item.type && b.id === item.id));
+      setBookmarkToast(`Removed "${item.title}" from bookmarks.`);
+    } else {
+      if (current.length >= 100) {
+        setBookmarkToast('Bookmark limit reached (100 items max). Remove older bookmarks to add new ones.');
+        return;
+      }
+      const newItem: BookmarkItem = {
+        ...item,
+        createdAt: item.createdAt || new Date().toISOString()
+      };
+      updatedList = [newItem, ...current];
+      setBookmarkToast(`Saved "${item.title}" to your bookmarks!`);
+    }
+
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        bookmarks: updatedList
+      });
+      await refreshProfile();
+    } catch (err) {
+      console.warn('Bookmarks save error:', err);
+    }
+  };
+
+  useEffect(() => {
+    if (bookmarkToast) {
+      const timer = setTimeout(() => setBookmarkToast(null), 3200);
+      return () => clearTimeout(timer);
+    }
+  }, [bookmarkToast]);
 
   // Department uploaded resources from Course Reps
   const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
@@ -382,13 +483,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
 
     setRepPosting(true);
-    const newAnn: Omit<AnnouncementItem, 'id'> = {
+    const newAnn = {
       title: repTitle.trim(),
       content: repContent.trim(),
       category: repCategory,
       department: studentDept, // STRICTLY LOCKED to own department
       urgent: repUrgent,
       author: `${profile?.fullName || 'Student'} (Course Rep)`,
+      uploadedBy: user?.uid || '',
+      uploadedByEmail: user?.email || '',
       createdAt: new Date().toISOString()
     };
 
@@ -594,6 +697,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
             </button>
 
+            {/* Bookmarks Tab */}
+            <button
+              onClick={() => { setActiveTab('bookmarks'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'bookmarks'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Bookmark className="w-4 h-4 text-[#FFC700]" />
+                <span>Bookmarks</span>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A] font-mono font-bold">
+                {(profile?.bookmarks || []).length}
+              </span>
+            </button>
+
             {/* Complaint Tracking / My Messages Tab (NEW) */}
             <button
               onClick={() => { setActiveTab('my-messages'); setSidebarOpen(false); }}
@@ -657,8 +778,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span>Profile Settings</span>
             </button>
 
-            {/* Course Rep Desk Sidebar Navigation Link (Reps Only - reps NEVER see admin link) */}
-            {isRep && (
+            {/* Course Rep Desk Sidebar Navigation Link (Reps and Admins) */}
+            {(isRep || isAdmin) && (
               <button
                 onClick={() => {
                   if (onNavigateRep) {
@@ -780,6 +901,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {activeTab === 'courses' && 'Department Courses & Learning Materials'}
               {activeTab === 'timetables' && 'Department Timetables & Exam Schedules'}
               {activeTab === 'announcements' && 'Student Bulletins & Notices'}
+              {activeTab === 'bookmarks' && 'My Bookmarked Items'}
               {activeTab === 'my-messages' && 'My Complaints & Message Tracking'}
               {activeTab === 'rep-announcement' && 'Course Representative Bulletin Desk'}
               {activeTab === 'ask-ai' && 'Ask AI: Academic Tutor & Portal Assistant'}
@@ -809,11 +931,42 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         </div>
 
+        {/* Global Bookmarks Toast Alert */}
+        {bookmarkToast && (
+          <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#2F52FF]/20 via-[#121C36] to-[#0A1224] border border-[#FFC700]/50 text-xs text-[#E6ECFA] flex items-center justify-between shadow-[0_4px_20px_rgba(255,199,0,0.2)]">
+            <div className="flex items-center gap-2.5">
+              <BookmarkCheck className="w-4 h-4 text-[#FFC700] shrink-0" />
+              <span>{bookmarkToast}</span>
+            </div>
+            <button
+              onClick={() => setActiveTab('bookmarks')}
+              className="text-[#FFC700] font-bold hover:underline ml-3 shrink-0 cursor-pointer"
+            >
+              View Bookmarks &rarr;
+            </button>
+          </div>
+        )}
+
         {/* ======================================================== */}
         {/* VIEW 1: OVERVIEW                                         */}
         {/* ======================================================== */}
         {activeTab === 'overview' && (
-          <div className="space-y-8">
+          <div className="space-y-6">
+
+            {/* WhatsApp Broadcast Banner if enabled by Admin */}
+            {settings.whatsappChannelUrl && (
+              <WhatsAppChannelButton
+                url={settings.whatsappChannelUrl}
+                variant="banner"
+              />
+            )}
+
+            {/* Daily Streak Activity Card */}
+            <DailyStreakCard
+              streakCount={profile?.streakCount || 1}
+              longestStreak={profile?.longestStreak || profile?.streakCount || 1}
+              lastActiveDate={profile?.lastActiveDate}
+            />
             
             {/* Student Profile Welcome Card */}
             <div className="relative p-6 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-[0_0_30px_rgba(47,82,255,0.1)] overflow-hidden">
@@ -1190,7 +1343,30 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           )}
                         </div>
 
-                        <div className="flex items-center gap-2 self-start sm:self-auto shrink-0">
+                        <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleBookmark({
+                                id: course.id,
+                                type: 'course',
+                                title: `${course.code}: ${course.title}`,
+                                code: course.code,
+                                department: course.department,
+                                category: course.type
+                              });
+                            }}
+                            title={isBookmarked('course', course.id) ? 'Remove Bookmark' : 'Bookmark Course'}
+                            className={`p-2 rounded-xl border transition-all cursor-pointer ${
+                              isBookmarked('course', course.id)
+                                ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
+                                : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] hover:border-[#FFC700]/50'
+                            }`}
+                          >
+                            <Bookmark className={`w-4 h-4 ${isBookmarked('course', course.id) ? 'fill-[#FFC700]' : ''}`} />
+                          </button>
+
                           <span className="text-xs font-semibold text-[#2F52FF] group-hover:text-[#60A5FA] flex items-center gap-1">
                             <span>{isExpanded ? 'Hide Details' : 'View Materials'}</span>
                             {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
@@ -1256,8 +1432,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                       </span>
                                     </div>
 
-                                    <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover/link:text-[#FFC700] group-hover/link:border-[#FFC700]/50 shrink-0 mt-1">
-                                      <ExternalLink className="w-3.5 h-3.5" />
+                                    <div className="flex items-center gap-1.5 shrink-0 mt-1">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          toggleBookmark({
+                                            id: mat.id || `${course.code}-${mat.title}`,
+                                            type: 'material',
+                                            title: mat.title,
+                                            link: mat.url,
+                                            code: course.code,
+                                            category: mat.category,
+                                            department: course.department
+                                          });
+                                        }}
+                                        title={isBookmarked('material', mat.id || `${course.code}-${mat.title}`) ? 'Remove Bookmark' : 'Bookmark Material'}
+                                        className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                          isBookmarked('material', mat.id || `${course.code}-${mat.title}`)
+                                            ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
+                                            : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
+                                        }`}
+                                      >
+                                        <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', mat.id || `${course.code}-${mat.title}`) ? 'fill-[#FFC700]' : ''}`} />
+                                      </button>
+                                      <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover/link:text-[#FFC700] group-hover/link:border-[#FFC700]/50">
+                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      </div>
                                     </div>
                                   </a>
                                 ))}
@@ -1315,8 +1517,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                           {res.url}
                                         </span>
                                       </div>
-                                      <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#FFC700] shrink-0 mt-1">
-                                        <ExternalLink className="w-3.5 h-3.5" />
+                                      <div className="flex items-center gap-1.5 shrink-0 mt-1">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.preventDefault();
+                                            e.stopPropagation();
+                                            toggleBookmark({
+                                              id: res.id,
+                                              type: 'material',
+                                              title: res.title,
+                                              link: res.url,
+                                              code: res.courseCode,
+                                              category: res.category,
+                                              department: res.department
+                                            });
+                                          }}
+                                          title={isBookmarked('material', res.id) ? 'Remove Bookmark' : 'Bookmark Material'}
+                                          className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                            isBookmarked('material', res.id)
+                                              ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
+                                              : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
+                                          }`}
+                                        >
+                                          <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', res.id) ? 'fill-[#FFC700]' : ''}`} />
+                                        </button>
+                                        <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#FFC700] shrink-0">
+                                          <ExternalLink className="w-3.5 h-3.5" />
+                                        </div>
                                       </div>
                                     </a>
                                   ))}
@@ -1392,8 +1620,34 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           {res.url}
                         </span>
                       </div>
-                      <div className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover:text-[#FFC700] group-hover:border-[#FFC700]/50 shrink-0 mt-1">
-                        <ExternalLink className="w-3.5 h-3.5" />
+                      <div className="flex items-center gap-1.5 shrink-0 mt-1">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            toggleBookmark({
+                              id: res.id,
+                              type: 'material',
+                              title: res.title,
+                              link: res.url,
+                              code: res.courseCode,
+                              category: res.category,
+                              department: res.department
+                            });
+                          }}
+                          title={isBookmarked('material', res.id) ? 'Remove Bookmark' : 'Bookmark Material'}
+                          className={`p-2 rounded-lg border transition-all cursor-pointer ${
+                            isBookmarked('material', res.id)
+                              ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
+                              : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
+                          }`}
+                        >
+                          <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', res.id) ? 'fill-[#FFC700]' : ''}`} />
+                        </button>
+                        <div className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover:text-[#FFC700] group-hover:border-[#FFC700]/50">
+                          <ExternalLink className="w-3.5 h-3.5" />
+                        </div>
                       </div>
                     </a>
                   ))}
@@ -1633,9 +1887,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             </span>
                           )}
                         </div>
-                        <span className="text-xs font-mono text-[#9AA8C7]">
-                          {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}
-                        </span>
+                        <div className="flex items-center gap-3">
+                          <span className="text-xs font-mono text-[#9AA8C7]">
+                            {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              toggleBookmark({
+                                id: ann.id,
+                                type: 'announcement',
+                                title: ann.title,
+                                category: ann.category,
+                                department: ann.department
+                              });
+                            }}
+                            title={isBookmarked('announcement', ann.id) ? 'Remove Bookmark' : 'Bookmark Announcement'}
+                            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                              isBookmarked('announcement', ann.id)
+                                ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
+                                : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
+                            }`}
+                          >
+                            <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('announcement', ann.id) ? 'fill-[#FFC700]' : ''}`} />
+                          </button>
+                        </div>
                       </div>
 
                       <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
@@ -1657,6 +1933,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
           </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: BOOKMARKS                                          */}
+        {/* ======================================================== */}
+        {activeTab === 'bookmarks' && (
+          <StudentBookmarksView
+            bookmarks={profile?.bookmarks || []}
+            onRemove={(item) => toggleBookmark(item)}
+            onNavigateCourses={() => setActiveTab('courses')}
+            onNavigateAnnouncements={() => setActiveTab('announcements')}
+          />
         )}
 
         {/* ======================================================== */}

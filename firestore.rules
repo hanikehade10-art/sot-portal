@@ -27,20 +27,26 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         exists(/databases/$(database)/documents/admins/$(request.auth.uid)) ||
-        (request.auth.token.email != null && request.auth.token.email == 'kemibuhari8@gmail.com') ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Admin' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'ADMIN'))
+        (request.auth.token.email != null && (
+          request.auth.token.email == 'kemibuhari8@gmail.com' ||
+          request.auth.token.email.matches('(?i)^kemibuhari8@gmail\\.com$')
+        )) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role is string &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.matches('(?i)^\\s*admin\\s*$')) ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'Admin', 'ADMIN', ' admin', 'admin '] ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.isAdmin == true
+        ))
       );
     }
 
     function isRep() {
       return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'rep' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'Rep' ||
-         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'REP');
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
+          (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role is string &&
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role.matches('(?i)^\\s*rep\\s*$')) ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['rep', 'Rep', 'REP', ' rep', 'rep ']
+        );
     }
 
     function incoming() {
@@ -61,8 +67,8 @@ service cloud.firestore {
 
     // User Profiles Collection
     match /users/{userId} {
-      // Authenticated users can get a user document to check profile/existence; admins can read and list all users
-      allow get: if (isSignedIn() && isValidId(userId)) || isAdmin();
+      // Authenticated users can get their own user doc without restriction, check profiles, or admin can read/list all
+      allow get: if (isSignedIn() && (request.auth.uid == userId || isValidId(userId))) || isAdmin();
       allow list: if isAdmin(); // Only admins can list users for the admin table
 
       // Create profile: own UID, defaults role to student unless admin

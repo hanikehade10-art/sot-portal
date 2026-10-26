@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useAuth, checkIsAdminRole, checkIsRepRole } from '../context/AuthContext';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import { SotDepartmentName } from '../types';
 import { SITE_CONFIG } from '../config/site';
@@ -107,8 +107,10 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     return { score: 3, text: 'Strong', color: 'bg-emerald-500' };
   }, [password]);
 
-  // Forced step 2 mode if logged in without complete profile
-  const isForcedStep2 = Boolean(user && (!profile || !profile.profileComplete));
+  // Forced step 2 mode if logged in without complete profile (admins are exempt)
+  const isUserAdminCurrent = checkIsAdminRole(profile?.role) ||
+    (user?.email && user.email.toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase());
+  const isForcedStep2 = Boolean(user && !isUserAdminCurrent && (!profile || !profile.profileComplete));
 
   if (!isOpen) return null;
 
@@ -214,18 +216,27 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setLoading(true);
     try {
       const userProfile = await login(email, password);
+      const isUserAdmin = checkIsAdminRole(userProfile?.role) ||
+        (userProfile?.email && userProfile.email.toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase()) ||
+        (userProfile as any)?.isAdmin === true;
+      const isUserRep = !isUserAdmin && checkIsRepRole(userProfile?.role);
 
-      // If profile is incomplete, send to Step 2
-      if (!userProfile || !userProfile.profileComplete) {
+      // If user is not admin and profile is incomplete, send to Step 2
+      if (!isUserAdmin && (!userProfile || !userProfile.profileComplete)) {
         setSuccessMsg('Login successful. Please complete Step 2 (Department & Matric Number).');
         setMode('step2');
       } else {
-        const isUserRep = userProfile.role === 'rep';
-        setSuccessMsg(isUserRep ? 'Welcome Course Rep! Directing to Rep Dashboard...' : 'Welcome back! Directing straight to dashboard...');
+        setSuccessMsg(
+          isUserAdmin
+            ? 'Welcome Administrator! Directing to Admin Dashboard...'
+            : isUserRep
+            ? 'Welcome Course Rep! Directing to Rep Dashboard...'
+            : 'Welcome back! Directing straight to dashboard...'
+        );
         setTimeout(() => {
-          onSuccessRedirect(userProfile.role);
+          onSuccessRedirect(isUserAdmin ? 'admin' : (userProfile?.role || 'student'));
           onClose();
-        }, 800);
+        }, 500);
       }
     } catch (err: any) {
       console.warn('Login attempt notice:', err?.message || err);

@@ -328,11 +328,11 @@ function generateFallbackResponse(
   }
 
   if (lower.includes('sign up') || lower.includes('register') || lower.includes('create account')) {
-    return "To sign up, click 'Sign up' on the top right. Step 1: enter your email and password (minimum 8 characters). Step 2: select your department from the 7 SOT departments and enter your unique matriculation number (e.g. F/ND/25/3210001). Once completed, you will be taken directly to your student dashboard.";
+    return "To sign up, click 'Sign up' on the top right. Step 1: enter your email and password (minimum 8 characters). Step 2: select your department from the 6 SOT departments and enter your unique matriculation number (e.g. F/ND/25/3210001). Once completed, you will be taken directly to your student dashboard.";
   }
 
   if (lower.includes('department') || lower.includes('departments') || lower.includes('course')) {
-    return "The School of Technology has 7 departments: 1. Agricultural Technology, 2. Computer Technology, 3. Food Technology, 4. Hospitality Management, 5. Leisure & Tourism Management, 6. Nutrition & Dietetics, and 7. Polymer & Textile Technology.";
+    return "The School of Technology has 6 departments: 1. Computer Technology, 2. Food Science and Technology, 3. Hospitality Management, 4. Tourism Management, 5. Polymer and Textile Management, and 6. Nutrition and Dietetics.";
   }
 
   if (lower.includes('forgot password') || lower.includes('reset password') || lower.includes('password')) {

@@ -61,8 +61,10 @@ import {
   FolderOpen,
   ExternalLink,
   Megaphone,
-  Settings
+  Settings,
+  Activity
 } from 'lucide-react';
+import { AdminRepActivityView } from './AdminRepActivityView';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
@@ -71,6 +73,7 @@ interface AdminDashboardProps {
 type AdminTab =
   | 'overview'
   | 'students'
+  | 'rep-activity'
   | 'courses'
   | 'materials'
   | 'timetables'
@@ -204,6 +207,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [editingFaqId, setEditingFaqId] = useState<string | null>(null);
   const [faqQuestion, setFaqQuestion] = useState('');
   const [faqAnswer, setFaqAnswer] = useState('');
+
+  // -------------------------------------------------------------
+  // SETTINGS STATE (WhatsApp Channel Link)
+  // -------------------------------------------------------------
+  const [whatsappLink, setWhatsappLink] = useState('');
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
+  const [settingsError, setSettingsError] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // DATA FETCHING
@@ -340,8 +351,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       } catch (err) {
         console.warn('Resources load note:', err);
       }
+
+      // 8. Fetch Site Settings (WhatsApp Channel URL)
+      try {
+        const settingsSnap = await getDoc(doc(db, 'settings', 'site'));
+        if (settingsSnap.exists()) {
+          const sData = settingsSnap.data();
+          if (sData.whatsappChannelUrl) {
+            setWhatsappLink(sData.whatsappChannelUrl);
+          }
+        }
+      } catch (err) {
+        console.warn('Settings fetch note:', err);
+      }
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingSettings(true);
+    setSettingsSuccess(null);
+    setSettingsError(null);
+    try {
+      const cleanUrl = whatsappLink.trim();
+      await setDoc(doc(db, 'settings', 'site'), {
+        whatsappChannelUrl: cleanUrl,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setSettingsSuccess(cleanUrl ? 'WhatsApp channel link saved! The button is now visible across all student pages.' : 'Settings saved. WhatsApp button is now hidden.');
+    } catch (err: any) {
+      console.error('Settings save error:', err);
+      setSettingsError(err.message || 'Failed to save settings.');
+    } finally {
+      setSavingSettings(false);
     }
   };
 
@@ -1038,12 +1082,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const tabTitles: Record<AdminTab, string> = {
     overview: 'Overview',
     students: 'Students',
+    'rep-activity': 'Rep Activity',
     courses: 'Courses',
     materials: 'Materials',
     timetables: 'Timetables',
     announcements: 'Announcements',
     messages: 'Messages',
-    faqs: 'Chatbot FAQs'
+    faqs: 'Chatbot FAQs',
+    settings: 'Settings'
   };
 
   // -------------------------------------------------------------
@@ -1155,6 +1201,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </div>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
                 {students.length}
+              </span>
+            </button>
+
+            {/* 2.5 Rep Activity */}
+            <button
+              onClick={() => { setActiveTab('rep-activity'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'rep-activity'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Activity className="w-4 h-4 text-[#FFC700]" />
+                <span>Rep Activity</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#FFC700] font-bold">
+                {totalReps}
               </span>
             </button>
 
@@ -1272,6 +1336,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </span>
             </button>
 
+            {/* 8. Settings */}
+            <button
+              onClick={() => { setActiveTab('settings'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'settings'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Settings className="w-4 h-4 text-[#FFC700]" />
+                <span>Settings</span>
+              </div>
+              {whatsappLink.trim() && (
+                <span className="w-2 h-2 rounded-full bg-[#25D366]" />
+              )}
+            </button>
+
           </nav>
         </div>
 
@@ -1380,7 +1462,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   <div className="mt-1.5 text-2xl font-display font-extrabold text-[#FFC700]">
                     {totalCourses}
                   </div>
-                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">Across 7 departments</div>
+                  <div className="text-[10px] text-[#9AA8C7] mt-0.5">Across 6 departments</div>
                 </div>
 
                 <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
@@ -2086,6 +2168,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           )}
 
           {/* ======================================================== */}
+          {/* TAB: REP ACTIVITY (Reps directory & Combined feed)       */}
+          {/* ======================================================== */}
+          {activeTab === 'rep-activity' && (
+            <AdminRepActivityView
+              students={students}
+              resources={resources}
+              announcements={announcements}
+              onRefresh={fetchData}
+              onStudentUpdated={(updated) => {
+                setStudents(prev => prev.map(s => s.uid === updated.uid ? updated : s));
+              }}
+            />
+          )}
+
+          {/* ======================================================== */}
           {/* TAB 4: TIMETABLES                                        */}
           {/* ======================================================== */}
           {activeTab === 'timetables' && (
@@ -2518,6 +2615,108 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 ))}
               </div>
 
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 8: SETTINGS (WHATSAPP CHANNEL LINK)                  */}
+          {/* ======================================================== */}
+          {activeTab === 'settings' && (
+            <div className="space-y-6 max-w-3xl">
+              <div>
+                <h3 className="font-display font-bold text-base text-[#E6ECFA]">Portal Settings</h3>
+                <p className="text-xs text-[#9AA8C7] mt-0.5">
+                  Configure portal-wide communication channels, social links, and external services.
+                </p>
+              </div>
+
+              {settingsSuccess && (
+                <div className="p-3.5 rounded-xl bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 text-xs flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{settingsSuccess}</span>
+                </div>
+              )}
+
+              {settingsError && (
+                <div className="p-3.5 rounded-xl bg-rose-500/15 border border-rose-500/40 text-rose-300 text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{settingsError}</span>
+                </div>
+              )}
+
+              <div className="p-6 rounded-2xl bg-[#0F1E36] border border-[#1E2E52] space-y-5">
+                <div className="flex items-center gap-3 border-b border-[#1E2E52] pb-4">
+                  <div className="w-10 h-10 rounded-xl bg-[#25D366] text-white flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(37,211,102,0.3)]">
+                    <WhatsAppIcon className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-sm text-[#E6ECFA]">WhatsApp Channel Link</h4>
+                    <p className="text-xs text-[#9AA8C7]">
+                      Broadcast link for real-time timetable changes, exam alerts, and student bulletins.
+                    </p>
+                  </div>
+                </div>
+
+                <form onSubmit={handleSaveSettings} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                      WhatsApp channel link
+                    </label>
+                    <input
+                      type="url"
+                      value={whatsappLink}
+                      onChange={(e) => setWhatsappLink(e.target.value)}
+                      placeholder="e.g. https://whatsapp.com/channel/0029Va..."
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF] focus:ring-1 focus:ring-[#2F52FF]"
+                    />
+                    <p className="text-[11px] text-[#9AA8C7] mt-1.5 leading-relaxed">
+                      Saved to Firestore document <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/site</code>. When configured, a <strong className="text-[#25D366]">"Join our SOT WhatsApp Channel"</strong> button is shown on the landing page, footer, student dashboard, and contact page. If left empty, the button is hidden.
+                    </p>
+                  </div>
+
+                  {/* Live preview */}
+                  {whatsappLink.trim() && (
+                    <div className="p-4 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-2">
+                      <span className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider block">
+                        Live Preview (Green WhatsApp Branding)
+                      </span>
+                      <div className="flex flex-wrap items-center gap-3 pt-1">
+                        <WhatsAppChannelButton url={whatsappLink.trim()} variant="solid" />
+                        <WhatsAppChannelButton url={whatsappLink.trim()} variant="outline" />
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-end gap-3 pt-2 border-t border-[#1E2E52]">
+                    {whatsappLink.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setWhatsappLink('')}
+                        className="px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-white cursor-pointer"
+                      >
+                        Clear Link
+                      </button>
+                    )}
+                    <button
+                      type="submit"
+                      disabled={savingSettings}
+                      className="px-5 py-2.5 rounded-xl bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] transition-all shadow-[0_0_15px_rgba(255,199,0,0.25)] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {savingSettings ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>Save Settings</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
 

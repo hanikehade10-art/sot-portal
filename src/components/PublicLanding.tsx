@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Sprout,
   Cpu,
   FlaskConical,
   Hotel,
@@ -33,8 +32,6 @@ interface PublicLandingProps {
 
 export const DepartmentIcon: React.FC<{ name: string; className?: string }> = ({ name, className = 'w-6 h-6' }) => {
   switch (name) {
-    case 'Sprout':
-      return <Sprout className={className} />;
     case 'Cpu':
       return <Cpu className={className} />;
     case 'FlaskConical':

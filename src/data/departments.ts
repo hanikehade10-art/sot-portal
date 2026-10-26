@@ -29,7 +29,7 @@ export const DEPARTMENTS: DepartmentItem[] = [
     shortCode: 'FST',
     iconName: 'FlaskConical',
     oneLiner: 'Industrial food processing, quality control, preservation techniques, and food safety standards.',
-    description: 'Equipping students to process agricultural harvests into hygienic consumer products through food microbiology, industrial processing operations, quality testing, and shelf-life preservation techniques.',
+    description: 'Equipping students to process raw harvests into hygienic consumer products through food microbiology, industrial processing operations, quality testing, and shelf-life preservation techniques.',
     programFocus: [
       'Food Processing & Preservation Operations',
       'Food Microbiology & Sanitation Standards',
@@ -144,7 +144,7 @@ export function normalizeDepartmentName(name?: string): SotDepartmentName {
   if (trimmed === 'Leisure & Tourism Management' || trimmed === 'Leisure and Tourism Management') return 'Tourism Management';
   if (trimmed === 'Nutrition & Dietetics') return 'Nutrition and Dietetics';
   if (trimmed === 'Polymer & Textile Technology' || trimmed === 'Polymer & Textile Management') return 'Polymer and Textile Management';
-  if (trimmed === 'Agricultural Technology') return 'Computer Technology'; // Fallback if old doc had AGT
+  if (trimmed.startsWith('Agric')) return 'Computer Technology';
   return trimmed as SotDepartmentName;
 }
 

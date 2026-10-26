@@ -49,6 +49,18 @@ export function sanitizeMatricId(matric: string): string {
   return matric.trim().toUpperCase().replace(/[\/\s]/g, '_');
 }
 
+export function checkIsAdminRole(roleValue: unknown): boolean {
+  if (typeof roleValue !== 'string') return false;
+  const cleaned = roleValue.replace(/\s+/g, '').toLowerCase();
+  return cleaned === 'admin';
+}
+
+export function checkIsRepRole(roleValue: unknown): boolean {
+  if (typeof roleValue !== 'string') return false;
+  const cleaned = roleValue.replace(/\s+/g, '').toLowerCase();
+  return cleaned === 'rep';
+}
+
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
@@ -135,11 +147,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (snap.exists()) {
         const data = snap.data();
-        // Case-insensitive check and trim spaces for role
-        const rawRole = (data as any)?.role;
-        const trimmedRole = typeof rawRole === 'string' ? rawRole.trim() : '';
-        const isDocAdmin = trimmedRole.toLowerCase() === 'admin';
-        const isDocRep = trimmedRole.toLowerCase() === 'rep';
+        // Check role case-insensitively, ignoring spaces
+        const isDocAdmin = checkIsAdminRole((data as any)?.role) || (data as any)?.isAdmin === true || (data as any)?.is_admin === true;
+        const isDocRep = checkIsRepRole((data as any)?.role);
 
         const finalRole: UserRole = (isDocAdmin || isConfigAdmin || hasAdminDoc)
           ? 'admin'
@@ -155,26 +165,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.setItem('sot_local_profile', JSON.stringify(resolvedProfile));
         return resolvedProfile;
       } else {
-        const reason = `No user profile document found at users/${firebaseUser.uid} in Firestore.`;
-        console.warn(reason);
-        setRoleReadError(reason);
-
-        const initialRole: UserRole = (isConfigAdmin || hasAdminDoc) ? 'admin' : 'student';
+        const isRoleAdmin = isConfigAdmin || hasAdminDoc;
+        const initialRole: UserRole = isRoleAdmin ? 'admin' : 'student';
         const initialProfile: UserProfile = {
           uid: firebaseUser.uid,
           email: firebaseUser.email || '',
           fullName: firebaseUser.displayName || '',
-          profileComplete: false,
+          profileComplete: isRoleAdmin ? true : false,
           role: initialRole,
           createdAt: new Date().toISOString()
         };
-        try {
-          await setDoc(userDocRef, initialProfile);
-          setRoleReadError(null);
-        } catch (e: any) {
-          console.warn('Initial profile write:', e);
-          setRoleReadError(`Failed to initialize user document at users/${firebaseUser.uid}: ${e?.message || e}`);
+
+        if (isRoleAdmin) {
+          try {
+            await setDoc(userDocRef, initialProfile);
+            setRoleReadError(null);
+          } catch (e: any) {
+            console.warn('Initial admin profile write:', e);
+          }
+        } else {
+          const reason = `No user document found at users/${firebaseUser.uid} in Firestore. Role could not be read.`;
+          console.warn(reason);
+          setRoleReadError(reason);
         }
+
         setProfile(initialProfile);
         localStorage.setItem('sot_local_profile', JSON.stringify(initialProfile));
         return initialProfile;
@@ -189,7 +203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const fallback: UserProfile = {
         uid: firebaseUser.uid,
         email: firebaseUser.email || '',
-        profileComplete: false,
+        profileComplete: isConfigAdmin ? true : false,
         role: isConfigAdmin ? 'admin' : 'student'
       };
       setProfile(fallback);
@@ -637,11 +651,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     await sendPasswordResetEmail(auth, email.trim());
   };
 
-  // Case-insensitive and trimmed check for admin and rep roles
-  const isProfileAdmin = typeof profile?.role === 'string' && profile.role.trim().toLowerCase() === 'admin';
+  // Case-insensitive and space-ignoring check for admin and rep roles
+  const isProfileAdmin = checkIsAdminRole(profile?.role) || (profile as any)?.isAdmin === true;
   const isEmailAdmin = typeof user?.email === 'string' && user.email.trim().toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase();
   const isAdmin = Boolean(isProfileAdmin || isEmailAdmin);
-  const isRep = !isAdmin && typeof profile?.role === 'string' && profile.role.trim().toLowerCase() === 'rep';
+  const isRep = !isAdmin && checkIsRepRole(profile?.role);
 
   return (
     <AuthContext.Provider

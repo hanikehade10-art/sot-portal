@@ -271,6 +271,8 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       department: repDepartment,
       urgent: annUrgent,
       author: repAuthor,
+      uploadedBy: user?.uid || '',
+      uploadedByEmail: user?.email || '',
       createdAt: now
     };
 

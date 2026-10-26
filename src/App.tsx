@@ -21,6 +21,7 @@ import { DepartmentItem } from './types';
 import { DEPARTMENTS } from './data/departments';
 import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
 import { SITE_CONFIG } from './config/site';
+import { AdminTopBarSwitcher, AdminViewMode } from './components/AdminTopBarSwitcher';
 
 function AppContent() {
   const { user, profile, loading, authReady, isAdmin, isRep, roleReadError, refreshProfile } = useAuth();
@@ -41,6 +42,8 @@ function AppContent() {
       setCurrentView('admin');
     } else if (path === '/rep') {
       setCurrentView('rep');
+    } else if (path === '/dashboard') {
+      setCurrentView('dashboard');
     } else if (path === '/contact') {
       setCurrentView('contact');
     } else if (path === '/faq') {
@@ -60,6 +63,8 @@ function AppContent() {
         ? '/admin'
         : view === 'rep'
         ? '/rep'
+        : view === 'dashboard'
+        ? '/dashboard'
         : view === 'contact'
         ? '/contact'
         : view === 'faq'
@@ -73,6 +78,40 @@ function AppContent() {
       window.history.pushState({}, '', targetPath);
     }
     window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // For Admins: Keep view choice active and persist after refreshing
+  useEffect(() => {
+    if (authReady && isAdmin) {
+      const path = window.location.pathname;
+      const savedChoice = localStorage.getItem('sot_admin_view_choice') as AdminViewMode | null;
+      if (path === '/admin') {
+        localStorage.setItem('sot_admin_view_choice', 'admin');
+      } else if (path === '/rep') {
+        localStorage.setItem('sot_admin_view_choice', 'rep');
+      } else if (path === '/dashboard') {
+        localStorage.setItem('sot_admin_view_choice', 'student');
+      } else if (path === '/' && savedChoice) {
+        if (savedChoice === 'admin') {
+          navigateTo('admin');
+        } else if (savedChoice === 'rep') {
+          navigateTo('rep');
+        } else if (savedChoice === 'student') {
+          navigateTo('dashboard');
+        }
+      }
+    }
+  }, [authReady, isAdmin]);
+
+  const handleAdminSwitchView = (mode: AdminViewMode) => {
+    localStorage.setItem('sot_admin_view_choice', mode);
+    if (mode === 'admin') {
+      navigateTo('admin');
+    } else if (mode === 'rep') {
+      navigateTo('rep');
+    } else {
+      navigateTo('dashboard');
+    }
   };
 
   // Route Guard Enforcement: If student profile is incomplete and user is not admin, prompt step 2
@@ -89,14 +128,13 @@ function AppContent() {
   }, [authReady, user, profile, isAdmin, currentView]);
 
   // Admin route protection: Require login and strict admin role for /admin
-  // Reps and normal students must NEVER open /admin!
   useEffect(() => {
     if (currentView === 'admin' && authReady) {
       if (!user) {
         setAuthModalMode('login');
         setAuthModalOpen(true);
-      } else if (!isAdmin) {
-        // Eject non-admins immediately! Rep goes to /rep, student goes to /dashboard
+      } else if (!isAdmin && !roleReadError) {
+        // Eject non-admins only if role was read without errors
         if (isRep) {
           navigateTo('rep');
         } else {
@@ -104,7 +142,7 @@ function AppContent() {
         }
       }
     }
-  }, [currentView, user, authReady, isAdmin, isRep]);
+  }, [currentView, user, authReady, isAdmin, isRep, roleReadError]);
 
   // Rep route protection: Require login and rep or admin role for /rep
   useEffect(() => {
@@ -166,6 +204,14 @@ function AppContent() {
   return (
     <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col selection:bg-[#2F52FF] selection:text-white">
       
+      {/* Admin Top Bar View Switcher (Admin Only: Admin | Student view | Rep view) */}
+      {isAdmin && (
+        <AdminTopBarSwitcher
+          currentView={currentView}
+          onSwitchView={handleAdminSwitchView}
+        />
+      )}
+
       {/* Disclaimer Banner on all views */}
       <div className="bg-[#121C36] border-b border-[#24315A] px-4 py-2 text-center text-xs text-[#9AA8C7]">
         <span className="text-[#FFC700] font-semibold">{SITE_CONFIG.tagline}</span> — {SITE_CONFIG.disclaimer}
@@ -347,10 +393,11 @@ function AppContent() {
         initialMode={authModalMode}
         initialDepartment={initialDepartment}
         onSuccessRedirect={(role) => {
-          if (role === 'rep' || isRep) {
-            navigateTo('rep');
-          } else if (role === 'admin' || isAdmin) {
+          if (role === 'admin' || isAdmin) {
+            localStorage.setItem('sot_admin_view_choice', 'admin');
             navigateTo('admin');
+          } else if (role === 'rep' || isRep) {
+            navigateTo('rep');
           } else {
             navigateTo('dashboard');
           }
