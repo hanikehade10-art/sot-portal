@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0A1224"/>
+      <stop offset="100%" stop-color="#121C36"/>
+    </linearGradient>
+    <linearGradient id="cobalt" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2F52FF"/>
+      <stop offset="100%" stop-color="#1E3AC7"/>
+    </linearGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#FF9E00"/>
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Shield -->
+  <rect width="512" height="512" rx="110" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="98" fill="none" stroke="#2F52FF" stroke-width="8" stroke-opacity="0.6"/>
+  <circle cx="256" cy="256" r="190" fill="#121C36" stroke="#24315A" stroke-width="4"/>
+
+  <!-- Graduation Cap / Mortarboard Icon -->
+  <path d="M256 140 L390 200 L256 260 L122 200 Z" fill="url(#gold)"/>
+  <path d="M165 220 L165 290 Q256 340 347 290 L347 220 Q256 265 165 220 Z" fill="#2F52FF"/>
+  <!-- Tassel -->
+  <path d="M370 210 L390 280 L380 285 L360 215 Z" fill="#FFC700"/>
+  <circle cx="385" cy="290" r="10" fill="#FFC700"/>
+
+  <!-- Faculty Text -->
+  <text x="256" y="380" font-family="'Plus Jakarta Sans', system-ui, sans-serif" font-size="52" font-weight="800" fill="#FFFFFF" text-anchor="middle" letter-spacing="4">SOT</text>
+  <text x="256" y="415" font-family="'Inter', system-ui, sans-serif" font-size="20" font-weight="600" fill="#FFC700" text-anchor="middle" letter-spacing="2">FACULTY PORTAL</text>
+</svg>

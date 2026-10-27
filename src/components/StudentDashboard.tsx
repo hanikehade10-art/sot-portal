@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DEPARTMENTS, INITIAL_ANNOUNCEMENTS } from '../data/departments';
 import { DepartmentIcon } from './PublicLanding';
@@ -10,6 +10,11 @@ import { AskAiView } from './AskAiView';
 import { DailyStreakCard } from './DailyStreakCard';
 import { StudentBookmarksView } from './StudentBookmarksView';
 import { WhatsAppChannelButton } from './WhatsAppChannelButton';
+import { GpaCalculator } from './GpaCalculator';
+import { StudyPlanner } from './StudyPlanner';
+import { ExamCountdownCard } from './ExamCountdownCard';
+import { StudentResourcesView } from './StudentResourcesView';
+import { PWAInstallRow } from './PWAInstallRow';
 import { useSiteSettings } from '../hooks/useSiteSettings';
 import {
   LayoutDashboard,
@@ -48,7 +53,9 @@ import {
   Bookmark,
   BookmarkCheck,
   Flame,
-  Trash2
+  Trash2,
+  Calculator,
+  ListTodo
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -61,11 +68,14 @@ interface StudentDashboardProps {
 
 type TabType =
   | 'overview'
+  | 'resources'
   | 'department'
   | 'courses'
   | 'timetables'
   | 'announcements'
   | 'bookmarks'
+  | 'gpa'
+  | 'study-planner'
   | 'my-messages'
   | 'rep-announcement'
   | 'ask-ai'
@@ -86,6 +96,65 @@ export function getLagosDateString(d: Date = new Date()): string {
 export function getLagosYesterdayString(d: Date = new Date()): string {
   const yesterday = new Date(d.getTime() - 86400000);
   return getLagosDateString(yesterday);
+}
+
+export interface LagosGreetingResult {
+  greeting: string;
+  period: 'morning' | 'afternoon' | 'evening' | 'night';
+  messages: string[];
+}
+
+export function getLagosPeriodGreeting(): LagosGreetingResult {
+  const now = new Date();
+  const timeStr = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Lagos',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false
+  }).format(now);
+  const hour = parseInt(timeStr.split(':')[0], 10);
+
+  if (hour >= 5 && hour < 12) {
+    return {
+      greeting: 'Good morning',
+      period: 'morning',
+      messages: [
+        "Ready for a productive day ahead? Review today's classes and syllabus.",
+        "Start early, finish strong! Check your lecture timetable.",
+        "Great morning to learn something new. Stay focused today!"
+      ]
+    };
+  } else if (hour >= 12 && hour < 17) {
+    return {
+      greeting: 'Good afternoon',
+      period: 'afternoon',
+      messages: [
+        "Keep up the academic momentum! Take a short study break between lectures.",
+        "Afternoon check-in: Catch up on course notes, handouts and assignments.",
+        "Powering through the day. Stay hydrated and focused!"
+      ]
+    };
+  } else if (hour >= 17 && hour < 21) {
+    return {
+      greeting: 'Good evening',
+      period: 'evening',
+      messages: [
+        "Time to wind down lectures and review today's notes.",
+        "Solid work today. Glance over tomorrow's class schedule.",
+        "Evenings are prime time for revising key concepts and past questions."
+      ]
+    };
+  } else {
+    return {
+      greeting: 'Good night',
+      period: 'night',
+      messages: [
+        "Rest well and recharge for tomorrow's academic goals.",
+        "Late night study session? Keep it calm and get enough sleep.",
+        "A peaceful night's rest is part of smart exam preparation."
+      ]
+    };
+  }
 }
 
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
@@ -179,13 +248,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Department uploaded resources from Course Reps
   const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
 
-  // Profile edit states (Full Name and Password only; matric is locked)
+  // Profile edit states (Full Name, Level, Password)
   const [editFullName, setEditFullName] = useState(profile?.fullName || '');
+  const [editLevel, setEditLevel] = useState<string>(profile?.level || 'ND1');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  // Home Dynamic Greeting with Lagos time auto-update
+  const [lagosGreetingData, setLagosGreetingData] = useState<LagosGreetingResult>(() => getLagosPeriodGreeting());
+  const [greetingMsgIdx, setGreetingMsgIdx] = useState(0);
+
+  useEffect(() => {
+    const updateGreeting = () => {
+      const updated = getLagosPeriodGreeting();
+      setLagosGreetingData(updated);
+      setGreetingMsgIdx(prev => (prev + 1) % updated.messages.length);
+    };
+    const interval = setInterval(updateGreeting, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Universal Search on Home
+  const [homeSearchQuery, setHomeSearchQuery] = useState('');
 
   // Live Announcements
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
@@ -193,13 +280,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Timetables
   const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
-  const [ttLevelFilter, setTtLevelFilter] = useState<string>('All');
+  const [ttLevelFilter, setTtLevelFilter] = useState<string>(profile?.level ? normalizeCourseLevel(profile.level) : 'All');
   const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
 
   // Department Courses for Student's own department
   const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
   const [loadingCourses, setLoadingCourses] = useState(false);
-  const [courseLevel, setCourseLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [courseLevel, setCourseLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>(
+    profile?.level ? normalizeCourseLevel(profile.level) : 'ND1'
+  );
   const [courseSemester, setCourseSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
   const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
   const [courseSearchQuery, setCourseSearchQuery] = useState('');
@@ -223,6 +312,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   useEffect(() => {
     if (profile?.fullName) {
       setEditFullName(profile.fullName);
+    }
+    if (profile?.level) {
+      setEditLevel(profile.level);
+      setTtLevelFilter(profile.level);
+      setCourseLevel(normalizeCourseLevel(profile.level));
     }
   }, [profile]);
 
@@ -443,6 +537,66 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const studentDepartment = DEPARTMENTS.find((d) => d.name === profile?.department) || DEPARTMENTS[1];
 
+  const studentFirstName = useMemo(() => {
+    if (profile?.fullName?.trim()) {
+      return profile.fullName.trim().split(' ')[0];
+    }
+    if (user?.email) {
+      const namePart = user.email.split('@')[0];
+      return namePart.charAt(0).toUpperCase() + namePart.slice(1);
+    }
+    return 'Student';
+  }, [profile?.fullName, user?.email]);
+
+  // Universal Search across Courses, Materials, Past Questions, and Announcements
+  const universalSearchResults = useMemo(() => {
+    if (!homeSearchQuery.trim()) return null;
+    const q = homeSearchQuery.toLowerCase();
+
+    const matchedCourses = courses.filter(
+      c => c.department === studentDept && (c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
+    );
+
+    const matchedMaterials: Array<{ id: string; title: string; courseCode: string; category: string; url: string }> = [];
+    courses.forEach(c => {
+      if (c.department === studentDept && c.materials) {
+        c.materials.forEach((m, idx) => {
+          if (m.title.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)) {
+            matchedMaterials.push({
+              id: m.id || `${c.code}_${idx}`,
+              title: m.title,
+              courseCode: c.code,
+              category: m.category,
+              url: m.url
+            });
+          }
+        });
+      }
+    });
+
+    deptResources.forEach(r => {
+      if (r.department === studentDept && (r.title.toLowerCase().includes(q) || r.courseCode.toLowerCase().includes(q))) {
+        matchedMaterials.push({
+          id: r.id,
+          title: r.title,
+          courseCode: r.courseCode,
+          category: r.category,
+          url: r.url
+        });
+      }
+    });
+
+    const matchedAnnouncements = relevantAnnouncements.filter(
+      a => a.title.toLowerCase().includes(q) || a.content.toLowerCase().includes(q)
+    );
+
+    return {
+      courses: matchedCourses.slice(0, 4),
+      materials: matchedMaterials.slice(0, 4),
+      announcements: matchedAnnouncements.slice(0, 3)
+    };
+  }, [homeSearchQuery, courses, deptResources, relevantAnnouncements, studentDept]);
+
   const handleProfileSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileError(null);
@@ -459,7 +613,17 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     setProfileSaving(true);
     try {
+      if (user?.uid) {
+        try {
+          await updateDoc(doc(db, 'users', user.uid), {
+            level: editLevel
+          });
+        } catch (e) {
+          console.warn('Level save error:', e);
+        }
+      }
       await updateStudentProfile(editFullName, newPassword || undefined);
+      await refreshProfile();
       setProfileSuccess('Profile records updated successfully!');
       setNewPassword('');
       setConfirmPassword('');
@@ -528,10 +692,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   });
 
   return (
-    <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col md:flex-row">
+    <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col md:flex-row pb-20 md:pb-0">
       
       {/* Mobile Top Bar */}
-      <div className="md:hidden flex items-center justify-between h-16 px-4 bg-[#0A1224] border-b border-[#24315A] sticky top-0 z-30">
+      <div className="md:hidden flex items-center justify-between h-14 px-4 bg-[#0A1224] border-b border-[#24315A] sticky top-0 z-30">
         <div className="flex items-center gap-2.5">
           <div className="w-8 h-8 rounded-lg bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
             <GraduationCap className="w-4 h-4" />
@@ -542,34 +706,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Mobile Bell Icon with Unread Count */}
+          {/* Mobile Bell Icon with Unread Count (Single Bell) */}
           <button
             onClick={handleOpenAnnouncements}
             title="Announcements"
             className="relative p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
           >
-            <Bell className="w-5 h-5" />
+            <Bell className="w-4 h-4" />
             {unreadAnnouncementsCount > 0 && (
-              <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[10px] animate-pulse">
+              <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
                 {unreadAnnouncementsCount}
               </span>
             )}
           </button>
-
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7]"
-          >
-            {sidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
         </div>
       </div>
 
-      {/* Sidebar Navigation */}
+      {/* Desktop Sidebar Navigation (Hidden for students on mobile in favor of bottom tab bar) */}
       <aside
-        className={`fixed md:sticky top-0 z-40 h-screen w-72 bg-[#0A1224] border-r border-[#24315A] flex flex-col justify-between p-5 transition-transform duration-300 md:translate-x-0 ${
-          sidebarOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'
-        }`}
+        className="hidden md:flex md:sticky top-0 z-40 h-screen w-72 bg-[#0A1224] border-r border-[#24315A] flex-col justify-between p-5"
       >
         <div className="space-y-5 overflow-y-auto pr-1">
           <div className="flex items-center justify-between pb-3 border-b border-[#24315A]">
@@ -586,12 +741,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </span>
                 <span className="text-[10px] text-[#9AA8C7]">{SITE_CONFIG.tagline}</span>
               </div>
-            </button>
-            <button
-              onClick={() => setSidebarOpen(false)}
-              className="md:hidden p-1 rounded-lg text-[#9AA8C7]"
-            >
-              <X className="w-5 h-5" />
             </button>
           </div>
 
@@ -610,7 +759,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="text-xs font-semibold text-[#E6ECFA] truncate">
               {profile?.fullName || user?.email}
             </div>
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px] font-mono text-[#9AA8C7]">
+            <div className="mt-1.5 flex items-center gap-1.5 text-[11px]  text-[#9AA8C7]">
               <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-[#FFC700]' : isRep ? 'bg-[#2F52FF]' : 'bg-emerald-400'}`} />
               <span>{isAdmin ? 'CLEARANCE: ADMIN' : (profile?.matricNumber || 'MATRIC PENDING')}</span>
             </div>
@@ -631,6 +780,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </button>
 
             <button
+              onClick={() => { setActiveTab('resources'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'resources' || activeTab === 'courses'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <BookOpen className="w-4 h-4 text-[#FFC700]" />
+                <span>Academic Resources</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
+                {courses.length}
+              </span>
+            </button>
+
+            <button
               onClick={() => { setActiveTab('department'); setSidebarOpen(false); }}
               className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
                 activeTab === 'department'
@@ -642,23 +808,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <span>My Department</span>
             </button>
 
-            {/* Courses Tab */}
-            <button
-              onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'courses'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <BookOpen className="w-4 h-4 text-[#FFC700]" />
-                <span>Courses</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
-                {courses.length}
-              </span>
-            </button>
 
             {/* Timetables Tab (NEW) */}
             <button
@@ -710,9 +859,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <Bookmark className="w-4 h-4 text-[#FFC700]" />
                 <span>Bookmarks</span>
               </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A] font-mono font-bold">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A] font-bold">
                 {(profile?.bookmarks || []).length}
               </span>
+            </button>
+
+            {/* GPA / CGPA Calculator Tab */}
+            <button
+              onClick={() => { setActiveTab('gpa'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'gpa'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Calculator className="w-4 h-4 text-[#FFC700]" />
+                <span>GPA Calculator</span>
+              </div>
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/30">
+                4.00
+              </span>
+            </button>
+
+            {/* Study Planner Tab */}
+            <button
+              onClick={() => { setActiveTab('study-planner'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'study-planner'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <ListTodo className="w-4 h-4 text-[#FFC700]" />
+                <span>Study Planner</span>
+              </div>
+              {(profile?.studyPlanner || []).filter(t => !t.done).length > 0 && (
+                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
+                  {(profile?.studyPlanner || []).filter(t => !t.done).length}
+                </span>
+              )}
             </button>
 
             {/* Complaint Tracking / My Messages Tab (NEW) */}
@@ -870,7 +1057,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <strong className="text-rose-100 font-semibold block text-sm">
                   Failed to Read User Role from Firestore
                 </strong>
-                <p className="font-mono text-[11px] text-rose-300 mt-0.5 break-all">
+                <p className=" text-[11px] text-rose-300 mt-0.5 break-all">
                   {roleReadError}
                 </p>
               </div>
@@ -885,55 +1072,36 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           </div>
         )}
         
-        {/* TOP BAR WITH NOTIFICATION BELL */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#24315A]">
+        {/* PAGE HEADER */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#24315A]">
           <div>
-            <div className="flex items-center gap-2 text-xs text-[#9AA8C7]">
+            <div className="flex items-center gap-2 text-[11px] text-[#9AA8C7]">
               <span>School of Technology</span>
               <span>/</span>
               <span className="text-[#FFC700] font-semibold capitalize">
-                {activeTab === 'rep-announcement' ? 'Course Rep Announcement' : activeTab === 'my-messages' ? 'Complaint & Message Tracking' : activeTab}
+                {activeTab === 'rep-announcement' ? 'Course Rep Announcement' : activeTab === 'my-messages' ? 'Complaint & Message Tracking' : activeTab === 'gpa' ? 'GPA Calculator' : activeTab === 'study-planner' ? 'Study Planner' : activeTab}
               </span>
             </div>
-            <h1 className="font-display font-bold text-2xl sm:text-3xl text-[#E6ECFA] mt-1">
+            <h1 className="font-heading font-bold text-xl sm:text-[22px] text-[#E6ECFA] mt-0.5">
               {activeTab === 'overview' && 'Student Portal Overview'}
               {activeTab === 'department' && 'My Enrolled Department'}
               {activeTab === 'courses' && 'Department Courses & Learning Materials'}
               {activeTab === 'timetables' && 'Department Timetables & Exam Schedules'}
               {activeTab === 'announcements' && 'Student Bulletins & Notices'}
               {activeTab === 'bookmarks' && 'My Bookmarked Items'}
+              {activeTab === 'gpa' && 'GPA & CGPA Calculator'}
+              {activeTab === 'study-planner' && 'Study Planner & To-Dos'}
               {activeTab === 'my-messages' && 'My Complaints & Message Tracking'}
               {activeTab === 'rep-announcement' && 'Course Representative Bulletin Desk'}
-              {activeTab === 'ask-ai' && 'Ask AI: Academic Tutor & Portal Assistant'}
+              {activeTab === 'ask-ai' && 'Ask AI Academic Tutor'}
               {activeTab === 'profile' && 'Student Profile Settings'}
             </h1>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* ANNOUNCEMENT NOTIFICATIONS BELL ICON */}
-            <button
-              onClick={handleOpenAnnouncements}
-              title={`Announcements (${unreadAnnouncementsCount} unread)`}
-              className="relative p-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] hover:border-[#2F52FF] transition-all cursor-pointer group shadow-[0_0_15px_rgba(0,0,0,0.2)]"
-            >
-              <Bell className="w-5 h-5 group-hover:scale-110 transition-transform" />
-              {unreadAnnouncementsCount > 0 && (
-                <span className="absolute -top-1.5 -right-1.5 px-2 py-0.5 rounded-full bg-rose-600 text-white font-extrabold text-[10px] shadow-[0_0_10px_rgba(225,29,72,0.8)] border border-[#0A1224] animate-bounce">
-                  {unreadAnnouncementsCount}
-                </span>
-              )}
-            </button>
-
-            <div className="px-3.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-medium text-[#E6ECFA] flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-              <span>{isRep ? 'Course Rep Clearance' : 'Student Verified Session'}</span>
-            </div>
           </div>
         </div>
 
         {/* Global Bookmarks Toast Alert */}
         {bookmarkToast && (
-          <div className="p-3.5 rounded-xl bg-gradient-to-r from-[#2F52FF]/20 via-[#121C36] to-[#0A1224] border border-[#FFC700]/50 text-xs text-[#E6ECFA] flex items-center justify-between shadow-[0_4px_20px_rgba(255,199,0,0.2)]">
+          <div className="p-3 rounded-xl bg-[#121C36] border border-[#FFC700]/50 text-xs text-[#E6ECFA] flex items-center justify-between shadow-[0_4px_20px_rgba(255,199,0,0.2)]">
             <div className="flex items-center gap-2.5">
               <BookmarkCheck className="w-4 h-4 text-[#FFC700] shrink-0" />
               <span>{bookmarkToast}</span>
@@ -951,7 +1119,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* VIEW 1: OVERVIEW                                         */}
         {/* ======================================================== */}
         {activeTab === 'overview' && (
-          <div className="space-y-6">
+          <div className="space-y-4">
 
             {/* WhatsApp Broadcast Banner if enabled by Admin */}
             {settings.whatsappChannelUrl && (
@@ -961,173 +1129,381 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               />
             )}
 
-            {/* Daily Streak Activity Card */}
+            {/* 1. Compact Navy-to-Cobalt Greeting Card with Lagos Time Auto-Update */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#0E1A38] via-[#12224A] to-[#1A2E63] border border-[#24315A] shadow-[0_4px_20px_rgba(47,82,255,0.12)] space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div>
+                  <h2 className="font-display font-bold text-lg sm:text-xl text-[#E6ECFA] tracking-tight flex items-center gap-2">
+                    <span>{lagosGreetingData.greeting}, {studentFirstName}!</span>
+                    {lagosGreetingData.period === 'morning' && <span className="text-amber-400">☀️</span>}
+                    {lagosGreetingData.period === 'afternoon' && <span className="text-[#FFC700]">⛅</span>}
+                    {lagosGreetingData.period === 'evening' && <span className="text-indigo-400">🌅</span>}
+                    {lagosGreetingData.period === 'night' && <span className="text-blue-300">🌙</span>}
+                  </h2>
+                  <p className="text-xs text-[#9AA8C7] mt-0.5">
+                    {lagosGreetingData.messages[greetingMsgIdx % lagosGreetingData.messages.length]}
+                  </p>
+                </div>
+
+                {/* Quick Shortcuts */}
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <button
+                    onClick={() => setActiveTab('gpa')}
+                    className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] hover:border-[#FFC700] text-[#FFC700] text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    GPA Calc
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('study-planner')}
+                    className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] hover:border-[#2F52FF] text-[#60A5FA] text-xs font-semibold transition-all cursor-pointer"
+                  >
+                    Tasks
+                  </button>
+                </div>
+              </div>
+
+              {/* Small chips for Department, Role and Level (if set) */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#24315A]/60 text-xs">
+                <span className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] text-[#FFC700] font-semibold flex items-center gap-1.5">
+                  <GraduationCap className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <span>{profile?.department || studentDept}</span>
+                </span>
+
+                <span className={`px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 ${
+                  isRep
+                    ? 'bg-[#FFC700]/15 border-[#FFC700]/50 text-[#FFC700]'
+                    : isAdmin
+                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
+                    : 'bg-[#2F52FF]/20 border-[#2F52FF]/40 text-[#60A5FA]'
+                }`}>
+                  <User className="w-3.5 h-3.5" />
+                  <span>{isAdmin ? 'Admin' : isRep ? 'Course Rep' : 'Student'}</span>
+                </span>
+
+                {(profile?.level || editLevel) && (
+                  <span className="px-2.5 py-1 rounded-lg bg-[#2F52FF]/20 border border-[#2F52FF]/40 text-white font-bold flex items-center gap-1.5">
+                    <span className="text-[10px] text-[#FFC700] uppercase font-bold">Level:</span>
+                    <span>{profile?.level || editLevel}</span>
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* 2. Universal Search Bar */}
+            <div className="relative">
+              <div className="relative">
+                <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={homeSearchQuery}
+                  onChange={e => setHomeSearchQuery(e.target.value)}
+                  placeholder="Search courses, notes, past questions"
+                  className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#62759F] focus:outline-none focus:border-[#2F52FF] transition-all"
+                />
+                {homeSearchQuery && (
+                  <button
+                    onClick={() => setHomeSearchQuery('')}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#9AA8C7] hover:text-white"
+                  >
+                    &times;
+                  </button>
+                )}
+              </div>
+
+              {/* Universal Search Results Popover / Card */}
+              {universalSearchResults && (
+                <div className="mt-2 p-3 rounded-xl bg-[#0F1E36] border border-[#24315A] shadow-2xl space-y-3">
+                  <div className="flex items-center justify-between text-xs text-[#9AA8C7] pb-1 border-b border-[#1F2C4C]">
+                    <span>Results for &ldquo;{homeSearchQuery}&rdquo;</span>
+                    <button
+                      onClick={() => setHomeSearchQuery('')}
+                      className="text-xs text-[#9AA8C7] hover:text-white cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  {universalSearchResults.courses.length === 0 &&
+                   universalSearchResults.materials.length === 0 &&
+                   universalSearchResults.announcements.length === 0 ? (
+                    <p className="text-xs text-[#9AA8C7] py-2 text-center">
+                      No matches found. Try searching by course code (e.g. COM 111) or title.
+                    </p>
+                  ) : (
+                    <div className="space-y-3">
+                      {universalSearchResults.courses.length > 0 && (
+                        <div>
+                          <p className="text-[10px] uppercase font-bold text-[#FFC700] mb-1">Courses</p>
+                          <div className="space-y-1">
+                            {universalSearchResults.courses.map((c: CourseItem) => (
+                              <button
+                                key={c.id}
+                                onClick={() => { setActiveTab('resources'); setHomeSearchQuery(''); }}
+                                className="w-full text-left p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                              >
+                                <span className="font-semibold text-[#E6ECFA] truncate">{c.code}: {c.title}</span>
+                                <span className="text-[10px] text-[#FFC700] shrink-0">{c.units} Units &rarr;</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {universalSearchResults.materials.length > 0 && (
+                        <div>
+                          <p className="text-[10px] uppercase font-bold text-[#2F52FF] mb-1">Materials &amp; Past Questions</p>
+                          <div className="space-y-1">
+                            {universalSearchResults.materials.map((m: { id: string; title: string; courseCode: string; category: string; url: string }) => (
+                              <div
+                                key={m.id}
+                                className="p-2 rounded-lg bg-[#121C36] text-xs flex items-center justify-between gap-2"
+                              >
+                                <div className="min-w-0">
+                                  <p className="font-medium text-[#E6ECFA] truncate">{m.title}</p>
+                                  <span className="text-[10px] text-[#9AA8C7]">{m.courseCode} • {m.category}</span>
+                                </div>
+                                {m.url && (
+                                  <a
+                                    href={m.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-2 py-1 rounded bg-[#2F52FF] text-white text-[10px] font-semibold shrink-0 hover:bg-[#2544DD]"
+                                  >
+                                    Open
+                                  </a>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {universalSearchResults.announcements.length > 0 && (
+                        <div>
+                          <p className="text-[10px] uppercase font-bold text-emerald-400 mb-1">Announcements</p>
+                          <div className="space-y-1">
+                            {universalSearchResults.announcements.map((a: AnnouncementItem) => (
+                              <button
+                                key={a.id}
+                                onClick={() => { setActiveTab('announcements'); setHomeSearchQuery(''); }}
+                                className="w-full text-left p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                              >
+                                <span className="font-semibold text-[#E6ECFA] truncate">{a.title}</span>
+                                <span className="text-[10px] text-emerald-400 shrink-0">View &rarr;</span>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* 3. Daily Streak Activity Card (Slim Single-Row) */}
             <DailyStreakCard
               streakCount={profile?.streakCount || 1}
               longestStreak={profile?.longestStreak || profile?.streakCount || 1}
               lastActiveDate={profile?.lastActiveDate}
             />
-            
-            {/* Student Profile Welcome Card */}
-            <div className="relative p-6 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-[0_0_30px_rgba(47,82,255,0.1)] overflow-hidden">
-              <div className="relative z-10 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6">
-                
-                <div className="space-y-3 max-w-2xl">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#FFC700]">
-                    <ShieldCheck className="w-3.5 h-3.5 text-[#FFC700]" />
-                    <span>{isRep ? 'Designated Department Course Representative' : 'Verified Registered Student'}</span>
-                  </div>
 
-                  <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-[#E6ECFA]">
-                    Welcome, <span className="text-[#FFC700] break-all">{profile?.fullName || user?.email}</span>
-                  </h2>
+            {/* 4. Exam Countdown Card */}
+            <ExamCountdownCard
+              department={studentDept}
+              timetables={timetables}
+              onViewTimetable={() => setActiveTab('timetables')}
+            />
 
-                  <p className="text-sm text-[#9AA8C7] leading-relaxed">
-                    Access your departmental lecture timetables, exam lists, track your submitted helpdesk complaints, and consult the AI Study Helper.
-                  </p>
-
-                  <div className="pt-2 flex flex-wrap items-center gap-3 text-xs">
-                    <div className="px-3.5 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA]">
-                      <span className="text-[#9AA8C7] mr-1.5">Department:</span>
-                      <strong className="text-[#FFC700]">{profile?.department || 'Unassigned'}</strong>
-                    </div>
-
-                    <div className="px-3.5 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] font-mono text-[#E6ECFA]">
-                      <span className="text-[#9AA8C7] mr-1.5">Matric No:</span>
-                      <strong className="text-[#2F52FF]">{profile?.matricNumber || 'PENDING'}</strong>
-                    </div>
-
-                    {isRep && (
-                      <div className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF]/20 border border-[#2F52FF] text-[#E6ECFA] font-bold">
-                        Role: <span className="text-[#FFC700]">Course Representative</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Digital Student Card Preview */}
-                <div className="w-full lg:w-72 p-5 rounded-xl bg-[#0A1224] border border-[#24315A] shadow-inner space-y-4 shrink-0">
-                  <div className="flex items-center justify-between border-b border-[#24315A]/70 pb-3">
-                    <div className="flex items-center gap-2">
-                      <GraduationCap className="w-5 h-5 text-[#FFC700]" />
-                      <span className="font-display font-bold text-xs tracking-wider text-[#E6ECFA]">
-                        {isRep ? 'REP PASS' : 'STUDENT PASS'}
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/30">
-                      ACTIVE
-                    </span>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="text-[10px] uppercase font-semibold text-[#9AA8C7]">Matriculation Code</div>
-                    <div className="font-mono text-sm font-bold text-[#FFC700] tracking-wider">
-                      {profile?.matricNumber}
-                    </div>
-                  </div>
-
-                  <div className="space-y-1">
-                    <div className="text-[10px] uppercase font-semibold text-[#9AA8C7]">Department</div>
-                    <div className="text-xs font-semibold text-[#E6ECFA]">
-                      {profile?.department}
-                    </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
-            {/* Quick Actions Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {/* Tidy Grid of Small Cards (12-16px padding, smaller gaps) */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
               
-              {/* Courses Card */}
-              <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                    <BookOpen className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-display font-bold text-base text-[#E6ECFA]">
-                    Department Courses
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
-                    Check curriculum units, syllabus outlines, and access lecture notes and past questions for {studentDept}.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveTab('courses')}
-                  className="py-2.5 px-4 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-all cursor-pointer"
-                >
-                  Explore Courses &rarr;
-                </button>
-              </div>
-              
-              {/* Timetables Card */}
-              <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                    <Calendar className="w-5 h-5" />
-                  </div>
-                  <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                    Department Timetable
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
-                    Check your lecture hours, laboratory venues, and upcoming examination dates for {studentDept}.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveTab('timetables')}
-                  className="py-2.5 px-4 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-all cursor-pointer"
-                >
-                  View Weekly Schedule &rarr;
-                </button>
-              </div>
-
-              {/* Announcements Card */}
-              <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                    <Bell className="w-5 h-5" />
-                  </div>
+              {/* Card 1: Announcements */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                      Announcements
-                    </h3>
-                    {unreadAnnouncementsCount > 0 && (
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <Bell className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Announcements</span>
+                    </span>
+                    {unreadAnnouncementsCount > 0 ? (
                       <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-600 text-white">
-                        {unreadAnnouncementsCount} unread
+                        {unreadAnnouncementsCount} new
+                      </span>
+                    ) : (
+                      <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
+                        {relevantAnnouncements.length} total
                       </span>
                     )}
                   </div>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
-                    Faculty bulletins, class notices, and urgent departmental alerts for {studentDept}.
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-1">
+                    {relevantAnnouncements[0]?.title || 'Latest Bulletins'}
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] line-clamp-2 leading-relaxed">
+                    {relevantAnnouncements[0]?.content || 'Faculty notices and urgent updates for your department.'}
                   </p>
                 </div>
                 <button
                   onClick={handleOpenAnnouncements}
-                  className="py-2.5 px-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#FFC700] text-xs font-bold hover:border-[#FFC700] transition-all cursor-pointer"
+                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
                 >
                   Read Bulletins &rarr;
                 </button>
               </div>
 
-              {/* Complaint Tracking Card */}
-              <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 flex flex-col justify-between">
-                <div className="space-y-2">
-                  <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                    <MessageSquare className="w-5 h-5" />
+              {/* Card 2: Timetable Today */}
+              {(() => {
+                const todayLagosDay = new Intl.DateTimeFormat('en-US', {
+                  timeZone: 'Africa/Lagos',
+                  weekday: 'long'
+                }).format(new Date());
+
+                const todayClasses = timetables.filter(t =>
+                  t.department === studentDept &&
+                  t.day === todayLagosDay &&
+                  t.type === 'class'
+                );
+
+                return (
+                  <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                          <Calendar className="w-3.5 h-3.5 text-[#FFC700]" />
+                          <span>Today ({todayLagosDay})</span>
+                        </span>
+                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A] font-bold">
+                          {todayClasses.length} {todayClasses.length === 1 ? 'class' : 'classes'}
+                        </span>
+                      </div>
+                      <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
+                        {todayClasses.length > 0
+                          ? `${todayClasses[0].courseCode} • ${todayClasses[0].startTime}`
+                          : 'No lectures scheduled today'}
+                      </h3>
+                      <p className="text-xs text-[#9AA8C7] truncate">
+                        {todayClasses.length > 0
+                          ? `Venue: ${todayClasses[0].venue}`
+                          : 'Enjoy your free study or laboratory session.'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('timetables')}
+                      className="text-left text-xs font-semibold text-[#2F52FF] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                    >
+                      View Full Week &rarr;
+                    </button>
                   </div>
-                  <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                    My Complaints & Enquiries
+                );
+              })()}
+
+              {/* Card 3: Academic Resources */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Resources</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
+                      {courses.length} courses
+                    </span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
+                    Curriculum &amp; Notes
                   </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
-                    Track complaints or enquiries you submitted to the student desk, and view official admin replies.
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
+                    Lecture notes, syllabus outlines, and past exam questions.
                   </p>
                 </div>
                 <button
-                  onClick={() => setActiveTab('my-messages')}
-                  className="py-2.5 px-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] text-xs font-bold hover:border-[#2F52FF] transition-all cursor-pointer"
+                  onClick={() => setActiveTab('resources')}
+                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
                 >
-                  Track My Messages &rarr;
+                  Explore Resources &rarr;
+                </button>
+              </div>
+
+              {/* Card 4: Bookmarks */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <Bookmark className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Bookmarks</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A] font-bold">
+                      {(profile?.bookmarks || []).length} saved
+                    </span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                    Saved Library
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
+                    {(profile?.bookmarks || []).length > 0
+                      ? 'Quick access to your starred lecture handouts and announcements.'
+                      : 'Bookmark any course, note, or announcement to view it here.'}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('bookmarks')}
+                  className="text-left text-xs font-semibold text-[#2F52FF] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                >
+                  Open Bookmarks &rarr;
+                </button>
+              </div>
+
+              {/* Card 5: Ask AI Tutor */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Ask AI Tutor</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/30 font-bold">
+                      24/7
+                    </span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                    Study Helper &amp; FAQs
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
+                    Get instant concept summaries, exam quiz drills, and faculty assistance.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('ask-ai')}
+                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                >
+                  Launch Assistant &rarr;
+                </button>
+              </div>
+
+              {/* Card 6: Study Planner Quick Link */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <ListTodo className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Study Tasks</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#60A5FA] border border-[#24315A] font-bold">
+                      {(profile?.studyPlanner || []).filter(t => !t.done).length} pending
+                    </span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                    Personal To-Do List
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
+                    Manage assignments, project deliverables, and study targets.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('study-planner')}
+                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                >
+                  Manage Planner &rarr;
                 </button>
               </div>
 
@@ -1147,7 +1523,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   <DepartmentIcon name={studentDepartment.iconName} className="w-7 h-7" />
                 </div>
                 <div>
-                  <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                  <span className="text-xs  font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                     {studentDepartment.shortCode}
                   </span>
                   <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-[#E6ECFA] mt-1">
@@ -1204,458 +1580,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* ======================================================== */}
         {/* VIEW: DEPARTMENT COURSES & MATERIALS                     */}
         {/* ======================================================== */}
-        {activeTab === 'courses' && (
-          <div className="space-y-6">
-            
-            {/* Header and Controls */}
-            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div>
-                  <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#FFC700] mb-1">
-                    <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
-                    <span>Department Curriculum</span>
-                  </div>
-                  <h2 className="font-display font-bold text-xl sm:text-2xl text-[#E6ECFA]">
-                    {studentDept} Courses
-                  </h2>
-                  <p className="text-xs text-[#9AA8C7] mt-0.5">
-                    Curriculum outline and digital study materials exclusively for students of {studentDept}.
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3">
-                  {/* Level Picker (ND1, ND2, HND1, HND2) */}
-                  <div className="flex items-center gap-1 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
-                    {(['ND1', 'ND2', 'HND1', 'HND2'] as const).map(lvl => (
-                      <button
-                        key={lvl}
-                        onClick={() => { setCourseLevel(lvl); setExpandedCourseId(null); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          courseLevel === lvl
-                            ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
-                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                        }`}
-                      >
-                        {lvl}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Semester Toggle (First / Second) */}
-                  <div className="flex items-center gap-1 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
-                    {(['First Semester', 'Second Semester'] as const).map(sem => (
-                      <button
-                        key={sem}
-                        onClick={() => { setCourseSemester(sem); setExpandedCourseId(null); }}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                          courseSemester === sem
-                            ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_12px_rgba(255,199,0,0.3)]'
-                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                        }`}
-                      >
-                        {sem === 'First Semester' ? 'First Semester' : 'Second Semester'}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Search within filtered courses */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-[#24315A]">
-                <div className="relative w-full sm:w-80">
-                  <input
-                    type="text"
-                    placeholder="Search courses by code or title..."
-                    value={courseSearchQuery}
-                    onChange={(e) => setCourseSearchQuery(e.target.value)}
-                    className="w-full pl-9 pr-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
-                  />
-                  <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-2.5" />
-                </div>
-
-                <div className="text-xs text-[#9AA8C7] font-mono">
-                  Showing <strong className="text-[#FFC700]">{studentFilteredCourses.length}</strong> {studentFilteredCourses.length === 1 ? 'course' : 'courses'} for {courseLevel} • {courseSemester}
-                </div>
-              </div>
-            </div>
-
-            {/* Courses List */}
-            {loadingCourses ? (
-              <div className="p-12 text-center text-xs text-[#9AA8C7] bg-[#121C36] rounded-2xl border border-[#24315A]">
-                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-[#FFC700] mb-2" />
-                <span>Loading your department courses...</span>
-              </div>
-            ) : studentFilteredCourses.length === 0 ? (
-              <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] space-y-2">
-                <BookOpen className="w-10 h-10 text-[#FFC700] mx-auto opacity-70" />
-                <h3 className="font-display font-bold text-base text-[#E6ECFA]">No Courses Listed Yet</h3>
-                <p className="text-xs max-w-md mx-auto">
-                  No courses are currently published for {studentDept} ({courseLevel} - {courseSemester}). Check back shortly or contact your Course Representative.
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {studentFilteredCourses.map(course => {
-                  const isExpanded = expandedCourseId === course.id;
-                  const materialsCount = course.materials ? course.materials.length : 0;
-
-                  return (
-                    <div
-                      key={course.id}
-                      className="rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF]/60 transition-all overflow-hidden"
-                    >
-                      {/* Course Row Header (Tappable) */}
-                      <button
-                        type="button"
-                        onClick={() => setExpandedCourseId(isExpanded ? null : course.id)}
-                        className="w-full p-5 sm:p-6 text-left flex flex-col sm:flex-row sm:items-center justify-between gap-4 cursor-pointer focus:outline-none group"
-                      >
-                        <div className="space-y-1.5 flex-1 pr-4">
-                          <div className="flex items-center gap-2.5 flex-wrap">
-                            <span className="font-mono text-xs font-extrabold px-2.5 py-1 rounded-lg bg-[#0A1224] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/60 transition-colors">
-                              {course.code}
-                            </span>
-                            <span className="text-xs font-mono font-bold text-[#9AA8C7]">
-                              {course.units} {course.units === 1 ? 'Unit' : 'Units'}
-                            </span>
-                            <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                              course.type === 'Core'
-                                ? 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40'
-                                : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]'
-                            }`}>
-                              {course.type}
-                            </span>
-                            {materialsCount > 0 && (
-                              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/30">
-                                {materialsCount} {materialsCount === 1 ? 'resource' : 'resources'}
-                              </span>
-                            )}
-                          </div>
-
-                          <h3 className="font-display font-bold text-base sm:text-lg text-[#E6ECFA] group-hover:text-white transition-colors">
-                            {course.title}
-                          </h3>
-
-                          {course.description && !isExpanded && (
-                            <p className="text-xs text-[#9AA8C7] line-clamp-1">
-                              {course.description}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2.5 self-start sm:self-auto shrink-0">
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              toggleBookmark({
-                                id: course.id,
-                                type: 'course',
-                                title: `${course.code}: ${course.title}`,
-                                code: course.code,
-                                department: course.department,
-                                category: course.type
-                              });
-                            }}
-                            title={isBookmarked('course', course.id) ? 'Remove Bookmark' : 'Bookmark Course'}
-                            className={`p-2 rounded-xl border transition-all cursor-pointer ${
-                              isBookmarked('course', course.id)
-                                ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
-                                : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] hover:border-[#FFC700]/50'
-                            }`}
-                          >
-                            <Bookmark className={`w-4 h-4 ${isBookmarked('course', course.id) ? 'fill-[#FFC700]' : ''}`} />
-                          </button>
-
-                          <span className="text-xs font-semibold text-[#2F52FF] group-hover:text-[#60A5FA] flex items-center gap-1">
-                            <span>{isExpanded ? 'Hide Details' : 'View Materials'}</span>
-                            {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-                          </span>
-                        </div>
-                      </button>
-
-                      {/* Course Expanded Details & Learning Materials */}
-                      {isExpanded && (
-                        <div className="px-5 pb-5 sm:px-6 sm:pb-6 pt-1 border-t border-[#24315A]/60 space-y-4 bg-[#0A1224]/40">
-                          
-                          {/* Syllabus Description */}
-                          {course.description && (
-                            <div className="space-y-1">
-                              <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider block">
-                                Course Outline & Summary
-                              </span>
-                              <p className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A]">
-                                {course.description}
-                              </p>
-                            </div>
-                          )}
-
-                          {/* Learning Materials Section */}
-                          <div className="space-y-2.5">
-                            <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider block">
-                              Digital Learning Materials ({materialsCount})
-                            </span>
-
-                            {materialsCount === 0 ? (
-                              <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] italic">
-                                No lecture notes, past questions, or video tutorials uploaded yet for this course.
-                              </div>
-                            ) : (
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                {course.materials!.map((mat, idx) => (
-                                  <a
-                                    key={mat.id || idx}
-                                    href={mat.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] transition-all flex items-start justify-between gap-3 group/link cursor-pointer"
-                                  >
-                                    <div className="space-y-1 min-w-0">
-                                      <div className="flex items-center gap-2">
-                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${
-                                          mat.category === 'Lecture Note'
-                                            ? 'bg-blue-950 text-blue-300 border border-blue-500/30'
-                                            : mat.category === 'Past Question'
-                                            ? 'bg-amber-950 text-amber-300 border border-amber-500/30'
-                                            : mat.category === 'Video'
-                                            ? 'bg-purple-950 text-purple-300 border border-purple-500/30'
-                                            : 'bg-emerald-950 text-emerald-300 border border-emerald-500/30'
-                                        }`}>
-                                          {mat.category}
-                                        </span>
-                                      </div>
-                                      <h4 className="font-semibold text-xs text-[#E6ECFA] group-hover/link:text-[#FFC700] transition-colors truncate">
-                                        {mat.title}
-                                      </h4>
-                                      <span className="text-[10px] text-[#9AA8C7] block truncate font-mono">
-                                        {mat.url}
-                                      </span>
-                                    </div>
-
-                                    <div className="flex items-center gap-1.5 shrink-0 mt-1">
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.preventDefault();
-                                          e.stopPropagation();
-                                          toggleBookmark({
-                                            id: mat.id || `${course.code}-${mat.title}`,
-                                            type: 'material',
-                                            title: mat.title,
-                                            link: mat.url,
-                                            code: course.code,
-                                            category: mat.category,
-                                            department: course.department
-                                          });
-                                        }}
-                                        title={isBookmarked('material', mat.id || `${course.code}-${mat.title}`) ? 'Remove Bookmark' : 'Bookmark Material'}
-                                        className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                          isBookmarked('material', mat.id || `${course.code}-${mat.title}`)
-                                            ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
-                                            : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                                        }`}
-                                      >
-                                        <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', mat.id || `${course.code}-${mat.title}`) ? 'fill-[#FFC700]' : ''}`} />
-                                      </button>
-                                      <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover/link:text-[#FFC700] group-hover/link:border-[#FFC700]/50">
-                                        <ExternalLink className="w-3.5 h-3.5" />
-                                      </div>
-                                    </div>
-                                  </a>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Course Rep Uploaded Materials for this Course */}
-                          {(() => {
-                            const matchingRepResources = studentFilteredResources.filter(
-                              r => r.courseCode.toUpperCase() === course.code.toUpperCase()
-                            );
-                            if (matchingRepResources.length === 0) return null;
-                            return (
-                              <div className="space-y-2.5 pt-3 border-t border-[#24315A]/60">
-                                <div className="flex items-center justify-between">
-                                  <span className="text-[11px] font-bold text-[#FFC700] uppercase tracking-wider flex items-center gap-1.5">
-                                    <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
-                                    <span>Course Rep Uploads for {course.code} ({matchingRepResources.length})</span>
-                                  </span>
-                                  <span className="text-[10px] text-[#9AA8C7]">
-                                    Verified Department Materials
-                                  </span>
-                                </div>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                  {matchingRepResources.map((res) => (
-                                    <a
-                                      key={res.id}
-                                      href={res.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="p-3.5 rounded-xl bg-[#0A1224] border border-[#2F52FF]/50 hover:border-[#FFC700] transition-all flex items-start justify-between gap-3 group/link cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.15)]"
-                                    >
-                                      <div className="space-y-1 min-w-0">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224]">
-                                            Course Rep
-                                          </span>
-                                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#121C36] text-[#60A5FA] border border-[#2F52FF]/30">
-                                            {res.category}
-                                          </span>
-                                          <span className="text-[10px] text-[#9AA8C7] font-mono">
-                                            {new Date(res.createdAt).toLocaleDateString()}
-                                          </span>
-                                        </div>
-                                        <h4 className="font-semibold text-xs text-[#E6ECFA] group-hover/link:text-[#FFC700] transition-colors truncate">
-                                          {res.title}
-                                        </h4>
-                                        {res.description && (
-                                          <p className="text-[11px] text-[#9AA8C7] line-clamp-1">
-                                            {res.description}
-                                          </p>
-                                        )}
-                                        <span className="text-[10px] text-[#2F52FF] block truncate font-mono">
-                                          {res.url}
-                                        </span>
-                                      </div>
-                                      <div className="flex items-center gap-1.5 shrink-0 mt-1">
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            toggleBookmark({
-                                              id: res.id,
-                                              type: 'material',
-                                              title: res.title,
-                                              link: res.url,
-                                              code: res.courseCode,
-                                              category: res.category,
-                                              department: res.department
-                                            });
-                                          }}
-                                          title={isBookmarked('material', res.id) ? 'Remove Bookmark' : 'Bookmark Material'}
-                                          className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                            isBookmarked('material', res.id)
-                                              ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
-                                              : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                                          }`}
-                                        >
-                                          <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', res.id) ? 'fill-[#FFC700]' : ''}`} />
-                                        </button>
-                                        <div className="p-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-[#FFC700] shrink-0">
-                                          <ExternalLink className="w-3.5 h-3.5" />
-                                        </div>
-                                      </div>
-                                    </a>
-                                  ))}
-                                </div>
-                              </div>
-                            );
-                          })()}
-
-                        </div>
-                      )}
-
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Course Rep Materials Card for this Level and Semester */}
-            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-[#24315A]">
-                <div>
-                  <h3 className="font-display font-bold text-base text-[#E6ECFA] flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-[#FFC700]" />
-                    <span>Course Rep Study Materials ({courseLevel} • {courseSemester})</span>
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] mt-0.5">
-                    Lecture notes, past questions, and assignment guides uploaded by your departmental Course Representative.
-                  </p>
-                </div>
-                <span className="text-xs font-mono text-[#FFC700] font-bold">
-                  {studentFilteredResources.length} {studentFilteredResources.length === 1 ? 'upload' : 'uploads'}
-                </span>
-              </div>
-
-              {studentFilteredResources.length === 0 ? (
-                <div className="py-6 text-center text-xs text-[#9AA8C7] italic">
-                  No materials uploaded yet by Course Reps for {courseLevel} - {courseSemester}.
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-                  {studentFilteredResources.map(res => (
-                    <a
-                      key={res.id}
-                      href={res.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] transition-all flex items-start justify-between gap-3 group cursor-pointer"
-                    >
-                      <div className="space-y-1.5 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-[#121C36] text-[#FFC700] border border-[#FFC700]/30">
-                            {res.courseCode}
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224]">
-                            Course Rep
-                          </span>
-                          <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#121C36] text-[#60A5FA] border border-[#2F52FF]/30">
-                            {res.category}
-                          </span>
-                          <span className="text-[10px] text-[#9AA8C7] font-mono">
-                            {new Date(res.createdAt).toLocaleDateString()}
-                          </span>
-                        </div>
-                        <h4 className="font-semibold text-xs sm:text-sm text-[#E6ECFA] group-hover:text-[#FFC700] transition-colors truncate">
-                          {res.title}
-                        </h4>
-                        {res.description && (
-                          <p className="text-xs text-[#9AA8C7] line-clamp-1">
-                            {res.description}
-                          </p>
-                        )}
-                        <span className="text-[10px] text-[#2F52FF] hover:underline block truncate font-mono">
-                          {res.url}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0 mt-1">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            toggleBookmark({
-                              id: res.id,
-                              type: 'material',
-                              title: res.title,
-                              link: res.url,
-                              code: res.courseCode,
-                              category: res.category,
-                              department: res.department
-                            });
-                          }}
-                          title={isBookmarked('material', res.id) ? 'Remove Bookmark' : 'Bookmark Material'}
-                          className={`p-2 rounded-lg border transition-all cursor-pointer ${
-                            isBookmarked('material', res.id)
-                              ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
-                              : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                          }`}
-                        >
-                          <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('material', res.id) ? 'fill-[#FFC700]' : ''}`} />
-                        </button>
-                        <div className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] group-hover:text-[#FFC700] group-hover:border-[#FFC700]/50">
-                          <ExternalLink className="w-3.5 h-3.5" />
-                        </div>
-                      </div>
-                    </a>
-                  ))}
-                </div>
-              )}
-            </div>
-
-          </div>
+        {(activeTab === 'resources' || activeTab === 'courses') && (
+          <StudentResourcesView
+            courses={courses}
+            resources={deptResources}
+            userLevel={profile?.level || editLevel}
+            department={studentDept}
+            isBookmarked={isBookmarked}
+            toggleBookmark={toggleBookmark}
+            bookmarks={profile?.bookmarks || []}
+          />
         )}
 
         {/* ======================================================== */}
@@ -1753,7 +1687,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             className="p-4 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-colors space-y-2.5"
                           >
                             <div className="flex items-center justify-between">
-                              <span className="font-mono text-xs font-extrabold px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                              <span className=" text-xs font-extrabold px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                                 {entry.courseCode}
                               </span>
                               <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
@@ -1799,7 +1733,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         className="p-5 rounded-2xl bg-[#121C36] border border-[#FFC700]/30 shadow-[0_0_20px_rgba(255,199,0,0.06)] space-y-3"
                       >
                         <div className="flex items-center justify-between">
-                          <span className="px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] font-mono text-xs font-bold border border-[#24315A]">
+                          <span className="px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700]  text-xs font-bold border border-[#24315A]">
                             {entry.courseCode}
                           </span>
                           <span className="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-500/40 text-[10px] font-extrabold uppercase">
@@ -1888,7 +1822,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           )}
                         </div>
                         <div className="flex items-center gap-3">
-                          <span className="text-xs font-mono text-[#9AA8C7]">
+                          <span className="text-xs  text-[#9AA8C7]">
                             {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}
                           </span>
                           <button
@@ -1924,7 +1858,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
                       <div className="text-[11px] text-[#9AA8C7] pt-2 border-t border-[#24315A]/60 flex items-center justify-between">
                         <span>Broadcast by: <strong className="text-[#E6ECFA]">{ann.author || 'Student Administration'}</strong></span>
-                        <span className="font-mono text-[#FFC700]">Audience: {ann.department}</span>
+                        <span className=" text-[#FFC700]">Audience: {ann.department}</span>
                       </div>
                     </div>
                   );
@@ -2025,7 +1959,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </span>
                       </div>
 
-                      <span className="text-xs font-mono text-[#9AA8C7]">
+                      <span className="text-xs  text-[#9AA8C7]">
                         {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
                       </span>
                     </div>
@@ -2049,7 +1983,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             <span>Administrator Response</span>
                           </span>
                           {msg.repliedAt && (
-                            <span className="text-[11px] font-mono text-[#9AA8C7]">
+                            <span className="text-[11px]  text-[#9AA8C7]">
                               {new Date(msg.repliedAt).toLocaleString()}
                             </span>
                           )}
@@ -2115,7 +2049,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 <div className="flex items-center gap-2 p-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-sm text-[#FFC700] font-semibold">
                   <Lock className="w-4 h-4 text-[#FFC700]" />
                   <span>{studentDept}</span>
-                  <span className="text-[10px] text-[#9AA8C7] ml-auto font-normal font-mono">Department Locked</span>
+                  <span className="text-[10px] text-[#9AA8C7] ml-auto font-normal ">Department Locked</span>
                 </div>
               </div>
 
@@ -2252,7 +2186,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <label className="text-xs font-semibold text-[#9AA8C7]">
                       Matriculation Number (Permanent)
                     </label>
-                    <span className="text-[10px] font-mono text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
+                    <span className="text-[10px]  text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
                       Locked &amp; Immutable
                     </span>
                   </div>
@@ -2260,7 +2194,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     type="text"
                     disabled
                     value={profile?.matricNumber || 'NOT ASSIGNED'}
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm font-mono font-bold text-[#FFC700] cursor-not-allowed opacity-80"
+                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm  font-bold text-[#FFC700] cursor-not-allowed opacity-80"
                   />
                   <p className="text-[11px] text-[#9AA8C7] mt-1">
                     Matric numbers are unique and cannot be updated once saved. Contact the student desk if your record contains an error.
@@ -2278,6 +2212,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     value={profile?.department || 'Unassigned'}
                     className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] cursor-not-allowed opacity-80"
                   />
+                </div>
+
+                {/* Academic Level (Optional) */}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-[#9AA8C7]">
+                      Academic Level (Optional)
+                    </label>
+                    <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
+                      Auto-filters Resources &amp; Timetables
+                    </span>
+                  </div>
+                  <select
+                    value={editLevel}
+                    onChange={(e) => setEditLevel(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
+                  >
+                    <option value="ND1">ND I (National Diploma 1)</option>
+                    <option value="ND2">ND II (National Diploma 2)</option>
+                    <option value="HND1">HND I (Higher National Diploma 1)</option>
+                    <option value="HND2">HND II (Higher National Diploma 2)</option>
+                  </select>
+                  <p className="text-[11px] text-[#9AA8C7] mt-1">
+                    When configured, your course materials and timetables default to your current academic level.
+                  </p>
                 </div>
 
                 {/* Full Name (Editable) */}
@@ -2340,6 +2299,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </div>
               </form>
 
+              {/* Install SOT App (PWA) under Profile Settings */}
+              <div className="pt-4 border-t border-[#24315A]">
+                <PWAInstallRow />
+              </div>
+
             </div>
 
           </div>
@@ -2352,7 +2316,99 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <AskAiView />
         )}
 
+        {/* ======================================================== */}
+        {/* VIEW 9: GPA / CGPA CALCULATOR                            */}
+        {/* ======================================================== */}
+        {activeTab === 'gpa' && (
+          <GpaCalculator />
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW 10: STUDY PLANNER                                   */}
+        {/* ======================================================== */}
+        {activeTab === 'study-planner' && (
+          <StudyPlanner />
+        )}
+
       </main>
+
+      {/* Mobile Bottom Tab Bar (Students: Home, Resources, Timetable, Ask AI, Profile) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0A1224]/95 backdrop-blur-md border-t border-[#24315A] px-2 py-1.5 flex items-center justify-around safe-area-pb">
+        {/* 1. Home */}
+        <button
+          onClick={() => setActiveTab('overview')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'overview'
+              ? 'text-[#FFC700] font-bold'
+              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          }`}
+        >
+          <div className={`p-1 rounded-lg ${activeTab === 'overview' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <LayoutDashboard className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Home</span>
+        </button>
+
+        {/* 2. Resources */}
+        <button
+          onClick={() => setActiveTab('resources')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'resources' || activeTab === 'courses' || activeTab === 'bookmarks'
+              ? 'text-[#FFC700] font-bold'
+              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          }`}
+        >
+          <div className={`p-1 rounded-lg ${activeTab === 'resources' || activeTab === 'courses' || activeTab === 'bookmarks' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <BookOpen className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Resources</span>
+        </button>
+
+        {/* 3. Timetable */}
+        <button
+          onClick={() => setActiveTab('timetables')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'timetables'
+              ? 'text-[#FFC700] font-bold'
+              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          }`}
+        >
+          <div className={`p-1 rounded-lg ${activeTab === 'timetables' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <Calendar className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Timetable</span>
+        </button>
+
+        {/* 4. Ask AI */}
+        <button
+          onClick={() => setActiveTab('ask-ai')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'ask-ai'
+              ? 'text-[#FFC700] font-bold'
+              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          }`}
+        >
+          <div className={`p-1 rounded-lg ${activeTab === 'ask-ai' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <Sparkles className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Ask AI</span>
+        </button>
+
+        {/* 5. Profile */}
+        <button
+          onClick={() => setActiveTab('profile')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'profile'
+              ? 'text-[#FFC700] font-bold'
+              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          }`}
+        >
+          <div className={`p-1 rounded-lg ${activeTab === 'profile' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <User className="w-5 h-5" />
+          </div>
+          <span className="text-[10px]">Profile</span>
+        </button>
+      </nav>
 
     </div>
   );

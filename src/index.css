@@ -14,13 +14,14 @@
   body {
     background-color: #0A1224;
     color: #E6ECFA;
-    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
     min-height: 100vh;
+    letter-spacing: normal;
   }
 
-  h1, h2, h3, h4, .font-display {
-    font-family: 'Syne', 'Plus Jakarta Sans', sans-serif;
-    letter-spacing: -0.025em;
+  h1, h2, h3, h4, h5, h6, .font-heading, .font-display {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    letter-spacing: normal;
   }
 
   /* Custom scrollbar for dark theme */

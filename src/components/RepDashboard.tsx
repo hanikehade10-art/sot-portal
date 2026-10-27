@@ -13,6 +13,7 @@ import {
 } from 'firebase/firestore';
 import { ResourceItem, ResourceCategory, AnnouncementItem, AcademicLevel } from '../types';
 import { INITIAL_COURSES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
+import { PWAInstallRow } from './PWAInstallRow';
 import {
   LayoutDashboard,
   UploadCloud,
@@ -525,6 +526,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
 
         {/* Bottom Sidebar Controls */}
         <div className="space-y-2 pt-3 border-t border-[#1F2C4C]">
+          <PWAInstallRow compact className="mb-2" />
           
           {/* Back to Student Portal Link */}
           <button
@@ -562,7 +564,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               {activeTab === 'my-uploads' && 'My Published Uploads'}
             </span>
             <span className="text-xs text-[#9AA8C7]">•</span>
-            <span className="text-xs text-[#FFC700] font-mono">{repDepartment}</span>
+            <span className="text-xs text-[#FFC700] ">{repDepartment}</span>
           </div>
 
           <div className="flex items-center gap-3">
@@ -641,7 +643,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                   <div className="text-base font-bold text-[#E6ECFA] truncate">
                     {repDepartment}
                   </div>
-                  <div className="text-[10px] text-emerald-400 font-mono flex items-center gap-1">
+                  <div className="text-[10px] text-emerald-400  flex items-center gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                     Authorized Course Rep
                   </div>
@@ -710,7 +712,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                       <div key={res.id} className="py-2.5 flex items-center justify-between gap-3 text-xs">
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <span className="font-mono font-bold text-[#FFC700]">{res.courseCode}</span>
+                            <span className=" font-bold text-[#FFC700]">{res.courseCode}</span>
                             <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]">
                               {res.category}
                             </span>
@@ -774,7 +776,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                   <div className="space-y-1">
                     <label className="text-[11px] font-bold text-[#9AA8C7] uppercase tracking-wider flex items-center justify-between">
                       <span>Department (Locked to your profile)</span>
-                      <span className="text-[10px] text-emerald-400 font-mono">Verified Course Rep</span>
+                      <span className="text-[10px] text-emerald-400 ">Verified Course Rep</span>
                     </label>
                     <input
                       type="text"
@@ -849,7 +851,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                         placeholder="e.g. COM 111"
                         value={uploadCourseCode}
                         onChange={(e) => setUploadCourseCode(e.target.value.toUpperCase())}
-                        className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold focus:outline-none focus:border-[#2F52FF]"
+                        className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700]  font-bold focus:outline-none focus:border-[#2F52FF]"
                       />
 
                       {/* Course suggestions chips */}
@@ -918,7 +920,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                       placeholder="https://drive.google.com/file/d/... or https://youtube.com/..."
                       value={uploadUrl}
                       onChange={(e) => setUploadUrl(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none focus:border-[#2F52FF]"
+                      className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]  focus:outline-none focus:border-[#2F52FF]"
                     />
                   </div>
 
@@ -1145,7 +1147,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                         ) : (
                           filteredMaterials.map(item => (
                             <tr key={item.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                              <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                              <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
                                 {item.courseCode}
                               </td>
                               <td className="py-2.5 px-3.5">
@@ -1154,7 +1156,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                                   href={item.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[11px] text-[#2F52FF] hover:underline font-mono truncate max-w-xs block mt-0.5"
+                                  className="text-[11px] text-[#2F52FF] hover:underline  truncate max-w-xs block mt-0.5"
                                 >
                                   {item.url}
                                 </a>
@@ -1227,7 +1229,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                         ) : (
                           filteredAnnouncements.map(ann => (
                             <tr key={ann.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                              <td className="py-2.5 px-3.5 font-mono text-[10px] text-[#9AA8C7] whitespace-nowrap">
+                              <td className="py-2.5 px-3.5  text-[10px] text-[#9AA8C7] whitespace-nowrap">
                                 {new Date(ann.createdAt).toLocaleDateString()}
                               </td>
                               <td className="py-2.5 px-3.5 max-w-sm">
@@ -1345,7 +1347,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                   required
                   value={editUrl}
                   onChange={(e) => setEditUrl(e.target.value)}
-                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none"
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]  focus:outline-none"
                 />
               </div>
 

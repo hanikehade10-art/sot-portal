@@ -40,6 +40,8 @@ interface AiChatContextType {
   floatingOpen: boolean;
   setFloatingOpen: (open: boolean) => void;
   openFloatingWithMode: (targetMode: AiChatMode) => void;
+  isAskAiPageActive: boolean;
+  setIsAskAiPageActive: (active: boolean) => void;
 }
 
 const AiChatContext = createContext<AiChatContextType | undefined>(undefined);
@@ -48,6 +50,7 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   const { user, profile } = useAuth();
   const [mode, setModeState] = useState<AiChatMode>('study');
   const [floatingOpen, setFloatingOpen] = useState(false);
+  const [isAskAiPageActive, setIsAskAiPageActive] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
@@ -286,7 +289,9 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         faqs,
         floatingOpen,
         setFloatingOpen,
-        openFloatingWithMode
+        openFloatingWithMode,
+        isAskAiPageActive,
+        setIsAskAiPageActive
       }}
     >
       {children}

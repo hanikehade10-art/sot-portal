@@ -28,18 +28,7 @@ export const Footer: React.FC<FooterProps> = ({
     <footer className="bg-[#0A1224] border-t border-[#24315A] text-[#9AA8C7] pt-16 pb-12">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         
-        {/* Top Disclaimer Banner */}
-        <div className="mb-10 p-4 rounded-xl bg-[#121C36] border border-[#FFC700]/30 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-          <div className="flex items-center gap-2 text-[#E6ECFA]">
-            <ShieldAlert className="w-4 h-4 text-[#FFC700] shrink-0" />
-            <span>
-              <strong>Note:</strong> {SITE_CONFIG.disclaimer}
-            </span>
-          </div>
-          <span className="text-[#FFC700] font-bold tracking-wide">
-            {SITE_CONFIG.tagline}
-          </span>
-        </div>
+
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-10 pb-12 border-b border-[#24315A]/60">
           

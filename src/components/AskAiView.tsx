@@ -1,23 +1,16 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAiChat } from '../context/AiChatContext';
 import { useAuth } from '../context/AuthContext';
-import { AiChatMode } from '../types';
+import { FormattedAiMessage } from './FormattedAiMessage';
 import {
   Sparkles,
-  BookOpen,
-  HelpCircle,
   RotateCcw,
   Send,
   Bot,
   User,
   GraduationCap,
-  Building2,
+  HelpCircle,
   AlertCircle,
-  CheckCircle2,
-  Lightbulb,
-  FileText,
-  Clock,
-  ShieldCheck,
   Zap
 } from 'lucide-react';
 
@@ -46,12 +39,21 @@ export const AskAiView: React.FC = () => {
     remainingToday,
     isDailyLimitReached,
     sendMessage,
-    startNewChat
+    startNewChat,
+    setIsAskAiPageActive
   } = useAiChat();
 
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Set Ask AI page active to hide the floating button
+  useEffect(() => {
+    setIsAskAiPageActive(true);
+    return () => {
+      setIsAskAiPageActive(false);
+    };
+  }, [setIsAskAiPageActive]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -75,144 +77,118 @@ export const AskAiView: React.FC = () => {
   };
 
   const studentDept = profile?.department || 'School of Technology';
+  // Show suggestions only initially before conversation starts (messages.length <= 1)
+  const showSuggestions = messages.length <= 1;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] min-h-[580px] rounded-2xl bg-[#0D162B] border border-[#24315A] shadow-[0_4px_30px_rgba(0,0,0,0.4)] overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-140px)] min-h-[500px] rounded-xl bg-[#0D162B] border border-[#24315A] shadow-2xl overflow-hidden">
       
-      {/* TOP HEADER & MODE CONTROLS */}
-      <div className="p-4 sm:p-5 bg-[#121C36] border-b border-[#24315A] flex flex-col md:flex-row md:items-center justify-between gap-4">
+      {/* COMPACT SINGLE-ROW HEADER */}
+      <div className="px-3.5 py-2.5 bg-[#121C36] border-b border-[#24315A] flex flex-wrap items-center justify-between gap-2 shrink-0">
         
-        {/* Title & Department Context */}
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#2F52FF] to-[#FFC700] p-0.5 flex items-center justify-center shadow-[0_0_20px_rgba(47,82,255,0.35)]">
-            <div className="w-full h-full bg-[#0A1224] rounded-[10px] flex items-center justify-center">
-              <Sparkles className="w-5 h-5 text-[#FFC700]" />
-            </div>
+        {/* Title */}
+        <div className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-[#2F52FF] flex items-center justify-center text-white border border-[#FFC700]/30 shrink-0">
+            <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
           </div>
           <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-display font-bold text-lg text-[#E6ECFA]">
-                Ask AI Assistant
-              </h2>
-              <span className="text-[10px] font-bold tracking-wider uppercase px-2 py-0.5 rounded-full bg-[#2F52FF]/20 text-[#2F52FF] border border-[#2F52FF]/40">
-                Gemini Powered
-              </span>
-            </div>
-            <p className="text-xs text-[#9AA8C7] flex items-center gap-1.5 mt-0.5">
-              <span>Department Context:</span>
-              <strong className="text-[#FFC700]">{studentDept}</strong>
-            </p>
+            <h2 className="font-heading font-bold text-sm text-[#E6ECFA] leading-tight">
+              Ask AI
+            </h2>
+            <span className="text-[10px] text-[#9AA8C7] truncate max-w-[150px] sm:max-w-xs block leading-tight">
+              {mode === 'study' ? studentDept : 'Portal Knowledge'}
+            </span>
           </div>
         </div>
 
-        {/* Mode Switcher & Stats */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          
-          {/* Mode Switcher Tabs */}
-          <div className="bg-[#0A1224] p-1 rounded-xl border border-[#24315A] flex items-center">
+        {/* Mode Switch, Quota Counter, and New Chat */}
+        <div className="flex items-center gap-2">
+          {/* Mode Switcher */}
+          <div className="bg-[#0A1224] p-0.5 rounded-lg border border-[#24315A] flex items-center">
             <button
               onClick={() => setMode('study')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition-all cursor-pointer ${
                 mode === 'study'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
                   : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
               }`}
             >
-              <GraduationCap className="w-3.5 h-3.5 text-[#FFC700]" />
-              <span>Study Helper</span>
+              <GraduationCap className="w-3 h-3 text-[#FFC700]" />
+              <span className="hidden sm:inline">Study Helper</span>
+              <span className="sm:hidden">Study</span>
             </button>
 
             <button
               onClick={() => setMode('portal')}
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-semibold transition-all cursor-pointer ${
                 mode === 'portal'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
                   : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
               }`}
             >
-              <HelpCircle className="w-3.5 h-3.5 text-[#FFC700]" />
-              <span>Portal Help</span>
+              <HelpCircle className="w-3 h-3 text-[#FFC700]" />
+              <span className="hidden sm:inline">Portal Help</span>
+              <span className="sm:hidden">Portal</span>
             </button>
           </div>
 
-          {/* Daily Quota Indicator */}
-          <div className="px-3 py-1.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs font-mono text-[#9AA8C7] flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5 text-[#FFC700]" />
+          {/* Daily Quota Counter */}
+          <div className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] flex items-center gap-1">
+            <Zap className="w-3 h-3 text-[#FFC700]" />
             <span className="text-[#E6ECFA] font-bold">{remainingToday}</span>
-            <span>/ 30 daily</span>
+            <span className="text-[11px]">left today</span>
           </div>
 
           {/* New Chat Button */}
           <button
             onClick={startNewChat}
-            title="Start fresh conversation"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-medium text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#FFC700]/50 transition-all cursor-pointer"
+            title="Start new conversation"
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-medium text-[#9AA8C7] hover:text-[#FFC700] hover:border-[#FFC700]/50 transition-all cursor-pointer"
           >
-            <RotateCcw className="w-3.5 h-3.5 text-[#FFC700]" />
-            <span className="hidden sm:inline">New chat</span>
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span className="hidden md:inline">New chat</span>
           </button>
-
         </div>
 
       </div>
 
-      {/* MODE INTRO BANNER */}
-      <div className="px-5 py-2.5 bg-[#0A1224]/70 border-b border-[#24315A] text-xs flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[#9AA8C7]">
-          {mode === 'study' ? (
-            <>
-              <Lightbulb className="w-4 h-4 text-[#FFC700] shrink-0" />
-              <span>
-                <strong>Study Helper Mode:</strong> Explaining topics, quizzing, and breaking down notes tailored to <strong>{studentDept}</strong>.
-              </span>
-            </>
-          ) : (
-            <>
-              <Building2 className="w-4 h-4 text-[#2F52FF] shrink-0" />
-              <span>
-                <strong>Portal Help Mode:</strong> Answering questions about the 6 departments, account registration, announcements, and helpdesk support.
-              </span>
-            </>
-          )}
-        </div>
-        <span className="hidden md:inline text-[11px] text-[#9AA8C7]/60 font-mono">
-          Session history only
-        </span>
-      </div>
-
-      {/* MESSAGES STREAM */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 space-y-4">
+      {/* MESSAGES STREAM - FILLS ALL REMAINING SCREEN HEIGHT AND SCROLLS */}
+      <div className="flex-1 min-h-0 overflow-y-auto p-3.5 sm:p-5 space-y-3.5">
         {messages.map((m) => {
           const isStudent = m.sender === 'student';
           return (
             <div
               key={m.id}
-              className={`flex gap-3 max-w-3xl ${isStudent ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
+              className={`flex gap-2.5 max-w-3xl ${isStudent ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
             >
               {/* Avatar */}
               <div
-                className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold ${
+                className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold ${
                   isStudent
-                    ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
-                    : 'bg-[#121C36] border border-[#FFC700]/40 text-[#FFC700] shadow-[0_0_12px_rgba(255,199,0,0.15)]'
+                    ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.3)]'
+                    : 'bg-[#121C36] border border-[#FFC700]/40 text-[#FFC700]'
                 }`}
               >
-                {isStudent ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                {isStudent ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
               </div>
 
               {/* Message Bubble */}
-              <div className="space-y-1">
+              <div className="space-y-0.5 max-w-[88%]">
                 <div
-                  className={`px-4 py-3 rounded-2xl text-xs sm:text-sm leading-relaxed whitespace-pre-wrap ${
+                  className={`px-3.5 py-2.5 rounded-xl text-xs sm:text-sm leading-relaxed ${
                     isStudent
-                      ? 'bg-[#2F52FF] text-white rounded-tr-none shadow-[0_2px_15px_rgba(47,82,255,0.25)]'
-                      : 'bg-[#121C36] text-[#E6ECFA] border border-[#24315A] rounded-tl-none shadow-[0_2px_15px_rgba(0,0,0,0.25)]'
+                      ? 'bg-[#2F52FF] text-white rounded-tr-none shadow-md whitespace-pre-wrap'
+                      : 'bg-[#121C36] text-[#E6ECFA] border border-[#24315A] rounded-tl-none shadow-md'
                   }`}
                 >
-                  {m.text}
+                  {isStudent ? (
+                    m.text
+                  ) : (
+                    <FormattedAiMessage content={m.text} />
+                  )}
                 </div>
                 <div
-                  className={`text-[10px] text-[#9AA8C7]/60 font-mono px-1 ${
+                  className={`text-[10px] text-[#9AA8C7]/60 px-1 ${
                     isStudent ? 'text-right' : 'text-left'
                   }`}
                 >
@@ -225,17 +201,17 @@ export const AskAiView: React.FC = () => {
 
         {/* Typing Indicator */}
         {isTyping && (
-          <div className="flex items-center gap-3 mr-auto max-w-sm">
-            <div className="w-8 h-8 rounded-xl bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700] shrink-0">
-              <Bot className="w-4 h-4 animate-pulse" />
+          <div className="flex items-center gap-2.5 mr-auto max-w-sm">
+            <div className="w-7 h-7 rounded-lg bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700] shrink-0">
+              <Bot className="w-3.5 h-3.5 animate-pulse" />
             </div>
-            <div className="px-4 py-3 rounded-2xl rounded-tl-none bg-[#121C36] border border-[#24315A] text-xs text-[#9AA8C7] flex items-center gap-2">
+            <div className="px-3.5 py-2 rounded-xl rounded-tl-none bg-[#121C36] border border-[#24315A] text-xs text-[#9AA8C7] flex items-center gap-2">
               <div className="flex gap-1">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FFC700] animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FFC700] animate-bounce" style={{ animationDelay: '150ms' }} />
                 <span className="w-1.5 h-1.5 rounded-full bg-[#FFC700] animate-bounce" style={{ animationDelay: '300ms' }} />
               </div>
-              <span>Assistant is thinking...</span>
+              <span>Assistant is typing...</span>
             </div>
           </div>
         )}
@@ -243,33 +219,35 @@ export const AskAiView: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      {/* QUICK SUGGESTION PROMPTS */}
-      <div className="px-4 sm:px-6 py-2 bg-[#0A1224]/50 border-t border-[#24315A] flex flex-wrap items-center gap-2 overflow-x-auto">
-        <span className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider shrink-0 mr-1">
-          Suggestions:
-        </span>
-        {(mode === 'study' ? STUDY_QUICK_CHIPS : PORTAL_QUICK_CHIPS).map((chip, idx) => (
-          <button
-            key={idx}
-            onClick={() => handleSend(chip)}
-            disabled={isTyping || isDailyLimitReached}
-            className="px-2.5 py-1 rounded-lg bg-[#121C36] border border-[#24315A] text-[11px] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-all whitespace-nowrap cursor-pointer disabled:opacity-50"
-          >
-            {chip}
-          </button>
-        ))}
-      </div>
-
-      {/* ERROR NOTICE (e.g. rate limit) */}
-      {errorMessage && (
-        <div className="px-5 py-2 bg-rose-950/60 border-t border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-          <span>{errorMessage}</span>
+      {/* SUGGESTIONS CHIPS (Disappear after the first message) */}
+      {showSuggestions && (
+        <div className="px-3.5 py-1.5 bg-[#0A1224]/70 border-t border-[#24315A] flex items-center gap-1.5 overflow-x-auto shrink-0">
+          <span className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider shrink-0 mr-1">
+            Suggestions:
+          </span>
+          {(mode === 'study' ? STUDY_QUICK_CHIPS : PORTAL_QUICK_CHIPS).map((chip, idx) => (
+            <button
+              key={idx}
+              onClick={() => handleSend(chip)}
+              disabled={isTyping || isDailyLimitReached}
+              className="px-2.5 py-1 rounded-lg bg-[#121C36] border border-[#24315A] text-[11px] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-all whitespace-nowrap cursor-pointer disabled:opacity-50"
+            >
+              {chip}
+            </button>
+          ))}
         </div>
       )}
 
-      {/* INPUT BAR */}
-      <div className="p-3 sm:p-4 bg-[#121C36] border-t border-[#24315A]">
+      {/* ERROR NOTICE */}
+      {errorMessage && (
+        <div className="px-3.5 py-1.5 bg-rose-950/70 border-t border-rose-500/50 text-xs text-rose-200 flex items-center gap-2 shrink-0">
+          <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+          <span className="truncate">{errorMessage}</span>
+        </div>
+      )}
+
+      {/* TEXT BOX PINNED AT THE BOTTOM */}
+      <div className="p-3 bg-[#121C36] border-t border-[#24315A] shrink-0">
         <div className="relative flex items-center gap-2">
           <textarea
             ref={textareaRef}
@@ -279,26 +257,25 @@ export const AskAiView: React.FC = () => {
             onKeyDown={handleKeyDown}
             placeholder={
               mode === 'study'
-                ? `Ask any academic question, paste lecture notes, or request a quiz for ${studentDept}...`
-                : 'Ask about departments, sign-up, announcements, or password reset...'
+                ? `Ask questions, paste notes, or request a quiz for ${studentDept}...`
+                : 'Ask about departments, registration, or helpdesk...'
             }
             disabled={isDailyLimitReached || isTyping}
-            className="flex-1 max-h-32 min-h-[44px] py-2.5 pl-4 pr-12 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs sm:text-sm text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF] focus:ring-1 focus:ring-[#2F52FF] resize-none leading-relaxed transition-all disabled:opacity-50"
+            className="flex-1 max-h-28 min-h-[40px] py-2 pl-3 pr-10 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF] resize-none leading-relaxed transition-all disabled:opacity-50"
           />
 
           <button
             onClick={() => handleSend()}
             disabled={!input.trim() || isTyping || isDailyLimitReached}
-            className="w-11 h-11 rounded-xl bg-[#2F52FF] text-white flex items-center justify-center hover:bg-[#2545df] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-[0_0_15px_rgba(47,82,255,0.3)] shrink-0 cursor-pointer"
+            className="w-10 h-10 rounded-xl bg-[#2F52FF] text-white flex items-center justify-center hover:bg-[#2545df] disabled:opacity-40 disabled:cursor-not-allowed transition-all shadow-[0_0_10px_rgba(47,82,255,0.3)] shrink-0 cursor-pointer"
             aria-label="Send message"
           >
-            <Send className="w-4 h-4" />
+            <Send className="w-3.5 h-3.5" />
           </button>
         </div>
 
-        {/* Mandatory AI Disclaimer */}
-        <p className="text-[11px] text-[#9AA8C7]/70 text-center mt-2 font-medium tracking-wide">
-          AI can make mistakes. Check important information.
+        <p className="text-[10px] text-[#9AA8C7]/70 text-center mt-1">
+          AI can make mistakes. Verify important academic dates.
         </p>
       </div>
 

@@ -560,7 +560,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <label className="text-xs font-semibold text-[#9AA8C7]">
                   Matriculation Number *
                 </label>
-                <span className="text-[11px] text-[#FFC700] font-mono">
+                <span className="text-[11px] text-[#FFC700] ">
                   e.g. F/ND/25/3210001
                 </span>
               </div>
@@ -579,7 +579,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                     matricConflict
                       ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500'
                       : 'border-[#24315A] focus:border-[#2F52FF] focus:ring-2 focus:ring-[#2F52FF]/40 focus:shadow-[0_0_15px_rgba(47,82,255,0.25)]'
-                  } text-[#E6ECFA] uppercase placeholder-[#9AA8C7]/50 font-mono text-sm focus:outline-none transition-all tracking-wider`}
+                  } text-[#E6ECFA] uppercase placeholder-[#9AA8C7]/50  text-sm focus:outline-none transition-all tracking-wider`}
                 />
                 <FileBadge2 className={`w-4 h-4 ${matricConflict ? 'text-rose-400' : 'text-[#9AA8C7]'} absolute left-3.5 top-3`} />
               </div>

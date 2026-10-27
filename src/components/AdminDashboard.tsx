@@ -20,7 +20,8 @@ import {
   CourseMaterial,
   CourseMaterialCategory,
   ResourceItem,
-  TimetableEntry
+  TimetableEntry,
+  GradingScaleEntry
 } from '../types';
 import { SOT_DEPARTMENTS_LIST, INITIAL_ANNOUNCEMENTS } from '../data/departments';
 import {
@@ -29,8 +30,10 @@ import {
   normalizeCourseLevel,
   normalizeCourseSemester
 } from '../data/coursesAndTimetables';
+import { DEFAULT_GRADING_SCALE } from '../config/gradingScale';
 import { WhatsAppIcon } from './WhatsAppIcon';
 import { WhatsAppChannelButton } from './WhatsAppChannelButton';
+import { PWAInstallRow } from './PWAInstallRow';
 import {
   LayoutDashboard,
   Users,
@@ -209,12 +212,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [faqAnswer, setFaqAnswer] = useState('');
 
   // -------------------------------------------------------------
-  // SETTINGS STATE (WhatsApp Channel Link)
+  // SETTINGS STATE (WhatsApp Channel Link & Grading Scale)
   // -------------------------------------------------------------
   const [whatsappLink, setWhatsappLink] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
+
+  const [adminGradingScale, setAdminGradingScale] = useState<GradingScaleEntry[]>(DEFAULT_GRADING_SCALE);
+  const [savingScale, setSavingScale] = useState(false);
+  const [scaleSuccess, setScaleSuccess] = useState<string | null>(null);
+  const [scaleError, setScaleError] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // DATA FETCHING
@@ -364,6 +372,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       } catch (err) {
         console.warn('Settings fetch note:', err);
       }
+
+      // 9. Fetch Grading Scale
+      try {
+        const scaleSnap = await getDoc(doc(db, 'settings', 'grading_scale'));
+        if (scaleSnap.exists()) {
+          const scData = scaleSnap.data();
+          if (Array.isArray(scData.scale) && scData.scale.length > 0) {
+            setAdminGradingScale(scData.scale);
+          }
+        }
+      } catch (err) {
+        console.warn('Grading scale fetch note:', err);
+      }
     } finally {
       setLoading(false);
     }
@@ -386,6 +407,39 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       setSettingsError(err.message || 'Failed to save settings.');
     } finally {
       setSavingSettings(false);
+    }
+  };
+
+  const handleSaveGradingScale = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSavingScale(true);
+    setScaleSuccess(null);
+    setScaleError(null);
+    try {
+      await setDoc(doc(db, 'settings', 'grading_scale'), {
+        scale: adminGradingScale,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+      setScaleSuccess('Academic grading scale saved successfully! All student GPA calculators are now synchronized.');
+    } catch (err: any) {
+      console.error('Grading scale save error:', err);
+      setScaleError(err.message || 'Failed to save grading scale.');
+    } finally {
+      setSavingScale(false);
+    }
+  };
+
+  const handleUpdateScaleRow = (index: number, field: keyof GradingScaleEntry, val: any) => {
+    setAdminGradingScale(prev => {
+      const copy = [...prev];
+      copy[index] = { ...copy[index], [field]: val };
+      return copy;
+    });
+  };
+
+  const handleResetDefaultScale = () => {
+    if (confirm('Reset grading scale to default NBTE standard?')) {
+      setAdminGradingScale(DEFAULT_GRADING_SCALE);
     }
   };
 
@@ -413,7 +467,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
               <span>Role Read Error:</span>
             </div>
-            <p className="font-mono text-[11px] break-all">{roleReadError}</p>
+            <p className=" text-[11px] break-all">{roleReadError}</p>
             <button
               onClick={() => refreshProfile()}
               className="mt-2 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs transition-colors flex items-center gap-1.5 cursor-pointer"
@@ -1164,7 +1218,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             <div className="text-xs font-semibold text-[#E6ECFA] truncate" title={user?.email || ''}>
               {profile?.fullName || user?.email}
             </div>
-            <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 font-mono">
+            <div className="text-[10px] text-emerald-400 mt-1 flex items-center gap-1 ">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               <span>Full Clearance</span>
             </div>
@@ -1359,6 +1413,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
         {/* Sidebar Footer */}
         <div className="space-y-1.5 pt-3 border-t border-[#1F2C4C]">
+          <PWAInstallRow compact className="mb-2" />
           <button
             onClick={onNavigateHome}
             className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36] cursor-pointer"
@@ -1405,7 +1460,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             </button>
 
             <div className="flex items-center gap-2 pl-3 border-l border-[#1F2C4C]">
-              <div className="w-7 h-7 rounded-full bg-[#121C36] border border-[#FFC700]/60 flex items-center justify-center text-[#FFC700] text-xs font-bold font-mono">
+              <div className="w-7 h-7 rounded-full bg-[#121C36] border border-[#FFC700]/60 flex items-center justify-center text-[#FFC700] text-xs font-bold ">
                 {(profile?.fullName?.[0] || user?.email?.[0] || 'A').toUpperCase()}
               </div>
               <div className="text-left text-xs leading-tight">
@@ -1499,7 +1554,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                       <h3 className="font-display font-bold text-sm text-[#E6ECFA]">Student Enrollment by Department</h3>
                       <p className="text-[11px] text-[#9AA8C7]">Distribution of verified registered students</p>
                     </div>
-                    <span className="text-xs font-mono text-[#FFC700] font-bold">{totalStudents} Total</span>
+                    <span className="text-xs  text-[#FFC700] font-bold">{totalStudents} Total</span>
                   </div>
 
                   <div className="space-y-2.5 pt-1">
@@ -1509,7 +1564,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                         <div key={dept} className="space-y-1">
                           <div className="flex items-center justify-between text-xs">
                             <span className="text-[#E6ECFA] truncate pr-2">{dept}</span>
-                            <span className="text-[#FFC700] font-mono text-[11px] shrink-0 font-bold">
+                            <span className="text-[#FFC700]  text-[11px] shrink-0 font-bold">
                               {count} {count === 1 ? 'student' : 'students'}
                             </span>
                           </div>
@@ -1571,7 +1626,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
                   <div className="pt-3 border-t border-[#1E2E52] text-[10px] text-[#9AA8C7] flex items-center justify-between">
                     <span>Connected to Firestore</span>
-                    <span className="text-emerald-400 font-mono flex items-center gap-1">
+                    <span className="text-emerald-400  flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                       Online
                     </span>
@@ -1657,7 +1712,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   </div>
 
                   <div className="flex items-center gap-2.5 self-end sm:self-auto">
-                    <span className="text-xs text-[#9AA8C7] font-mono">
+                    <span className="text-xs text-[#9AA8C7] ">
                       <strong className="text-[#FFC700]">{filteredCourses.length}</strong> {filteredCourses.length === 1 ? 'course' : 'courses'}
                     </span>
 
@@ -1728,7 +1783,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                       ) : (
                         filteredCourses.map(course => (
                           <tr key={course.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                            <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
                               {course.code}
                             </td>
                             <td className="py-2.5 px-3.5">
@@ -1739,7 +1794,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                                 </div>
                               )}
                             </td>
-                            <td className="py-2.5 px-3.5 font-mono text-[#E6ECFA]">
+                            <td className="py-2.5 px-3.5  text-[#E6ECFA]">
                               {course.units} {course.units === 1 ? 'Unit' : 'Units'}
                             </td>
                             <td className="py-2.5 px-3.5">
@@ -1754,7 +1809,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                             <td className="py-2.5 px-3.5">
                               {course.materials && course.materials.length > 0 ? (
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
+                                  <span className="px-2 py-0.5 rounded text-[10px]  font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
                                     {course.materials.length} {course.materials.length === 1 ? 'material' : 'materials'}
                                   </span>
                                   <span className="text-[10px] text-[#9AA8C7]">
@@ -1856,7 +1911,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
                   </div>
 
-                  <span className="text-xs text-[#9AA8C7] font-mono shrink-0">
+                  <span className="text-xs text-[#9AA8C7]  shrink-0">
                     Showing <strong className="text-[#FFC700]">{materialsSubTab === 'materials' ? filteredResources.length : filteredRepAnnouncements.length}</strong> items
                   </span>
                 </div>
@@ -1893,7 +1948,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                           filteredResources.map(res => (
                             <tr key={res.id} className="hover:bg-[#070D1A]/50 transition-colors">
                               <td className="py-2.5 px-3.5">
-                                <div className="font-mono font-bold text-[#FFC700]">{res.courseCode}</div>
+                                <div className=" font-bold text-[#FFC700]">{res.courseCode}</div>
                                 <div className="text-[10px] text-[#9AA8C7]">{res.level} • {res.semester}</div>
                               </td>
                               <td className="py-2.5 px-3.5 max-w-xs">
@@ -1905,7 +1960,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                                   href={res.url}
                                   target="_blank"
                                   rel="noopener noreferrer"
-                                  className="text-[10px] text-[#2F52FF] hover:underline font-mono truncate flex items-center gap-1 mt-0.5"
+                                  className="text-[10px] text-[#2F52FF] hover:underline  truncate flex items-center gap-1 mt-0.5"
                                 >
                                   <span>{res.url}</span>
                                   <ExternalLink className="w-2.5 h-2.5 shrink-0" />
@@ -1923,11 +1978,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                                 <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224] inline-block mb-0.5">
                                   Course Rep
                                 </span>
-                                <div className="text-[11px] text-[#9AA8C7] truncate max-w-[140px] font-mono" title={res.uploadedByEmail}>
+                                <div className="text-[11px] text-[#9AA8C7] truncate max-w-[140px] " title={res.uploadedByEmail}>
                                   {res.uploadedByEmail || 'Rep'}
                                 </div>
                               </td>
-                              <td className="py-2.5 px-3.5 font-mono text-[10px] text-[#9AA8C7] whitespace-nowrap">
+                              <td className="py-2.5 px-3.5  text-[10px] text-[#9AA8C7] whitespace-nowrap">
                                 {new Date(res.createdAt).toLocaleDateString()}
                               </td>
                               <td className="py-2.5 px-3.5 text-right">
@@ -1977,7 +2032,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                         ) : (
                           filteredRepAnnouncements.map(ann => (
                             <tr key={ann.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                              <td className="py-2.5 px-3.5 font-mono text-[10px] text-[#9AA8C7] whitespace-nowrap">
+                              <td className="py-2.5 px-3.5  text-[10px] text-[#9AA8C7] whitespace-nowrap">
                                 {new Date(ann.createdAt).toLocaleDateString()}
                               </td>
                               <td className="py-2.5 px-3.5 font-bold text-[#FFC700]">
@@ -2093,7 +2148,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                               <div className="font-semibold text-[#E6ECFA]">{student.fullName || 'Unnamed Student'}</div>
                               <div className="text-[11px] text-[#9AA8C7]">{student.email}</div>
                             </td>
-                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                            <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
                               {student.matricNumber || <span className="text-[#9AA8C7] font-normal italic">Pending</span>}
                             </td>
                             <td className="py-2.5 px-3.5 text-[#E6ECFA]">
@@ -2269,10 +2324,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                             <td className="py-2.5 px-3.5 font-semibold text-[#E6ECFA]">
                               {entry.day} {entry.date ? `(${entry.date})` : ''}
                             </td>
-                            <td className="py-2.5 px-3.5 font-mono text-[#9AA8C7]">
+                            <td className="py-2.5 px-3.5  text-[#9AA8C7]">
                               {entry.startTime} – {entry.endTime}
                             </td>
-                            <td className="py-2.5 px-3.5 font-mono font-bold text-[#FFC700]">
+                            <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
                               {entry.courseCode}
                             </td>
                             <td className="py-2.5 px-3.5 text-[#E6ECFA]">
@@ -2349,7 +2404,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                         }`}>
                           {ann.category} {ann.urgent && '• URGENT'}
                         </span>
-                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]">
+                        <span className="text-[10px]  px-2 py-0.5 rounded bg-[#070D1A] text-[#9AA8C7] border border-[#1E2E52]">
                           Target: {ann.department}
                         </span>
                       </div>
@@ -2450,7 +2505,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                           </span>
                         </div>
 
-                        <span className="text-[11px] font-mono text-[#9AA8C7]">
+                        <span className="text-[11px]  text-[#9AA8C7]">
                           {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
                         </span>
                       </div>
@@ -2473,7 +2528,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                           </div>
                           <p className="text-xs text-[#E6ECFA] whitespace-pre-wrap">{msg.adminReply}</p>
                           {msg.repliedAt && (
-                            <div className="text-[9px] text-[#9AA8C7] font-mono">
+                            <div className="text-[9px] text-[#9AA8C7] ">
                               Replied on {new Date(msg.repliedAt).toLocaleString()}
                             </div>
                           )}
@@ -2581,7 +2636,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   <div key={faq.id || idx} className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-2">
                     <div className="flex items-start justify-between gap-3">
                       <div className="flex items-start gap-2">
-                        <span className="w-5 h-5 rounded bg-[#070D1A] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700] text-[10px] font-mono shrink-0 mt-0.5">
+                        <span className="w-5 h-5 rounded bg-[#070D1A] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700] text-[10px]  shrink-0 mt-0.5">
                           {idx + 1}
                         </span>
                         <h4 className="font-semibold text-xs text-[#E6ECFA]">{faq.question}</h4>
@@ -2717,6 +2772,124 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   </div>
                 </form>
               </div>
+
+              {/* CARD 2: ACADEMIC GRADING SCALE CONFIGURATION */}
+              <div className="p-5 sm:p-6 rounded-2xl bg-[#0F1E36] border border-[#1F2C4C] space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1E2E52] pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-[#070D1A] border border-[#1E2E52] flex items-center justify-center text-[#FFC700] shrink-0">
+                      <BookOpen className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-sm text-[#E6ECFA]">Academic Grading Scale (GPA / CGPA)</h4>
+                      <p className="text-xs text-[#9AA8C7]">
+                        Define letter grades, percentage boundaries, and grade points for student GPA calculation.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleResetDefaultScale}
+                    className="self-start sm:self-auto px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] hover:border-[#FFC700] text-xs font-semibold text-[#FFC700] transition-all cursor-pointer"
+                  >
+                    Reset to Default Scale
+                  </button>
+                </div>
+
+                {scaleSuccess && (
+                  <div className="p-3 rounded-lg bg-emerald-950/70 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
+                    <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <span>{scaleSuccess}</span>
+                  </div>
+                )}
+
+                {scaleError && (
+                  <div className="p-3 rounded-lg bg-rose-950/70 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <span>{scaleError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleSaveGradingScale} className="space-y-4">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-[#1E2E52] text-[#9AA8C7] text-[11px]">
+                          <th className="pb-2 font-semibold">Grade</th>
+                          <th className="pb-2 font-semibold">Min Score (%)</th>
+                          <th className="pb-2 font-semibold">Max Score (%)</th>
+                          <th className="pb-2 font-semibold">Grade Points</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1E2E52]">
+                        {adminGradingScale.map((row, idx) => (
+                          <tr key={idx} className="hover:bg-[#070D1A]/50">
+                            <td className="py-2.5 font-bold text-[#FFC700]">
+                              {row.grade}
+                            </td>
+                            <td className="py-2.5">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={row.minScore}
+                                onChange={(e) => handleUpdateScaleRow(idx, 'minScore', Number(e.target.value))}
+                                className="w-20 px-2.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                              />
+                            </td>
+                            <td className="py-2.5">
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                value={row.maxScore}
+                                onChange={(e) => handleUpdateScaleRow(idx, 'maxScore', Number(e.target.value))}
+                                className="w-20 px-2.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                              />
+                            </td>
+                            <td className="py-2.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                min={0}
+                                max={5}
+                                value={row.points}
+                                onChange={(e) => handleUpdateScaleRow(idx, 'points', parseFloat(e.target.value) || 0)}
+                                className="w-24 px-2.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs font-bold text-[#60A5FA] focus:outline-none focus:border-[#2F52FF]"
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-3 border-t border-[#1E2E52]">
+                    <span className="text-[11px] text-[#9AA8C7]">
+                      Saved to Firestore document <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/grading_scale</code>
+                    </span>
+
+                    <button
+                      type="submit"
+                      disabled={savingScale}
+                      className="px-5 py-2.5 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-all shadow-[0_0_15px_rgba(47,82,255,0.3)] flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                    >
+                      {savingScale ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Saving Scale...</span>
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle className="w-3.5 h-3.5" />
+                          <span>Save Grading Scale</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
             </div>
           )}
 
@@ -2819,7 +2992,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     placeholder="e.g. COM 124"
                     value={formCode}
                     onChange={(e) => setFormCode(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold focus:outline-none focus:border-[#2F52FF]"
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700]  font-bold focus:outline-none focus:border-[#2F52FF]"
                   />
                 </div>
 
@@ -2831,7 +3004,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     max={10}
                     value={formUnits}
                     onChange={(e) => setFormUnits(Number(e.target.value) || 1)}
-                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none focus:border-[#2F52FF]"
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]  focus:outline-none focus:border-[#2F52FF]"
                   />
                 </div>
               </div>
@@ -2926,7 +3099,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                       placeholder="Resource URL (e.g. https://drive.google.com/...)"
                       value={matUrl}
                       onChange={(e) => setMatUrl(e.target.value)}
-                      className="flex-1 px-2.5 py-1.5 rounded-md bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono focus:outline-none"
+                      className="flex-1 px-2.5 py-1.5 rounded-md bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA]  focus:outline-none"
                     />
                     <button
                       type="button"
@@ -2962,7 +3135,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                             href={mat.url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[10px] text-[#2F52FF] hover:underline truncate block font-mono"
+                            className="text-[10px] text-[#2F52FF] hover:underline truncate block "
                           >
                             {mat.url}
                           </a>
@@ -3037,13 +3210,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
               {batchRows.map((row, idx) => (
                 <div key={idx} className="flex items-center gap-2 p-2 rounded-lg bg-[#0F1E36] border border-[#1E2E52]">
-                  <span className="text-[10px] text-[#9AA8C7] font-mono w-4">{idx + 1}.</span>
+                  <span className="text-[10px] text-[#9AA8C7]  w-4">{idx + 1}.</span>
                   <input
                     type="text"
                     placeholder="Code (e.g. COM 111)"
                     value={row.code}
                     onChange={(e) => handleUpdateBatchRow(idx, 'code', e.target.value)}
-                    className="w-28 px-2 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold focus:outline-none"
+                    className="w-28 px-2 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700]  font-bold focus:outline-none"
                   />
                   <input
                     type="text"
@@ -3058,7 +3231,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     max={10}
                     value={row.units}
                     onChange={(e) => handleUpdateBatchRow(idx, 'units', Number(e.target.value) || 1)}
-                    className="w-14 px-1.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-center font-mono text-[#E6ECFA] focus:outline-none"
+                    className="w-14 px-1.5 py-1 rounded bg-[#070D1A] border border-[#1E2E52] text-xs text-center  text-[#E6ECFA] focus:outline-none"
                     title="Units"
                   />
                   <select
@@ -3209,7 +3382,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     placeholder="08:00 AM"
                     value={ttFormStartTime}
                     onChange={(e) => setTtFormStartTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] "
                   />
                 </div>
 
@@ -3221,7 +3394,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     placeholder="10:00 AM"
                     value={ttFormEndTime}
                     onChange={(e) => setTtFormEndTime(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-mono"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] "
                   />
                 </div>
               </div>
@@ -3235,7 +3408,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     placeholder="e.g. COM 111"
                     value={ttFormCourseCode}
                     onChange={(e) => setTtFormCourseCode(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono font-bold"
+                    className="w-full px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700]  font-bold"
                   />
                 </div>
 

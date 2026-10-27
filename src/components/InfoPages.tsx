@@ -65,9 +65,6 @@ export const PrivacyPolicyPage: React.FC<{ onNavigateHome: () => void }> = ({ on
           <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
             Student Data Protection Policy
           </h1>
-          <p className="text-xs text-[#FFC700] bg-[#121C36] py-1 px-3 rounded-full border border-[#24315A] inline-block font-medium">
-            {SITE_CONFIG.disclaimer}
-          </p>
         </div>
 
         <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5 text-sm text-[#9AA8C7] leading-relaxed">
@@ -111,9 +108,6 @@ export const TermsPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigate
           <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
             Portal Code of Conduct & Terms
           </h1>
-          <p className="text-xs text-[#FFC700] bg-[#121C36] py-1 px-3 rounded-full border border-[#24315A] inline-block font-medium">
-            {SITE_CONFIG.disclaimer}
-          </p>
         </div>
 
         <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5 text-sm text-[#9AA8C7] leading-relaxed">
@@ -140,7 +134,7 @@ export const TermsPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigate
 export const NotFoundPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigateHome }) => {
   return (
     <div className="min-h-[75vh] bg-[#0A1224] text-[#E6ECFA] flex flex-col items-center justify-center p-6 text-center">
-      <div className="w-20 h-20 rounded-3xl bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700] text-3xl font-extrabold font-mono mb-4 shadow-[0_0_30px_rgba(47,82,255,0.2)]">
+      <div className="w-20 h-20 rounded-3xl bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700] text-3xl font-extrabold  mb-4 shadow-[0_0_30px_rgba(47,82,255,0.2)]">
         404
       </div>
       <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA] mb-2">

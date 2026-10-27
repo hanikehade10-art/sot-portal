@@ -20,7 +20,6 @@ export const SITE_CONFIG = {
   portalName: 'School of Technology (SOT) Student Portal',
   shortName: 'SOT Student Portal',
   tagline: 'Built by students, for students',
-  disclaimer: 'Student-run portal. Not an official university channel.',
   description: 'School of Technology offering computer technology, food science, hospitality, tourism, nutrition and polymer & textile management programmes.',
   departmentCount: DEPARTMENT_COUNT,
   departments: SOT_DEPARTMENTS_CONFIG,

@@ -78,7 +78,7 @@ export const StudentBookmarksView: React.FC<StudentBookmarksViewProps> = ({
           <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] min-w-[220px] space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-[#9AA8C7] font-medium">Storage Capacity</span>
-              <span className="font-mono font-bold text-[#FFC700]">
+              <span className=" font-bold text-[#FFC700]">
                 {bookmarks.length} / 100 items
               </span>
             </div>
@@ -94,7 +94,7 @@ export const StudentBookmarksView: React.FC<StudentBookmarksViewProps> = ({
                 style={{ width: `${Math.min(100, (bookmarks.length / 100) * 100)}%` }}
               />
             </div>
-            <span className="text-[10px] text-[#9AA8C7]/70 block text-right font-mono">
+            <span className="text-[10px] text-[#9AA8C7]/70 block text-right ">
               {100 - bookmarks.length} slots remaining
             </span>
           </div>
@@ -199,7 +199,7 @@ export const StudentBookmarksView: React.FC<StudentBookmarksViewProps> = ({
                       </span>
 
                       {item.code && (
-                        <span className="font-mono text-[10px] font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                        <span className=" text-[10px] font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                           {item.code}
                         </span>
                       )}
@@ -233,7 +233,7 @@ export const StudentBookmarksView: React.FC<StudentBookmarksViewProps> = ({
                 </div>
 
                 <div className="pt-3 border-t border-[#24315A]/70 flex items-center justify-between text-xs">
-                  <span className="text-[10px] text-[#9AA8C7] font-mono">
+                  <span className="text-[10px] text-[#9AA8C7] ">
                     Saved: {new Date(item.createdAt).toLocaleDateString()}
                   </span>
 

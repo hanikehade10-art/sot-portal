@@ -70,14 +70,14 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
           <div className="text-center max-w-3xl mx-auto space-y-6">
             
-            {/* Disclaimer pill */}
-            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#121C36] border border-[#24315A] text-xs text-[#9AA8C7]">
+            {/* Tagline pill */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA]">
               <span className="w-2 h-2 rounded-full bg-[#FFC700] animate-pulse" />
-              <span>{SITE_CONFIG.disclaimer}</span>
+              <span>{SITE_CONFIG.tagline} • 6 Academic Departments</span>
             </div>
 
             {/* Main Headline */}
-            <h1 className="font-display font-extrabold text-4xl sm:text-6xl lg:text-7xl tracking-tight text-[#E6ECFA] leading-[1.08]">
+            <h1 className="font-heading font-extrabold text-3xl sm:text-5xl lg:text-6xl tracking-tight text-[#E6ECFA] leading-[1.1]">
               School of Technology
             </h1>
 
@@ -166,12 +166,12 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                     <div className="w-13 h-13 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:text-white group-hover:bg-[#2F52FF] group-hover:border-[#2F52FF] transition-all duration-300">
                       <DepartmentIcon name={dept.iconName} className="w-6 h-6" />
                     </div>
-                    <span className="text-xs font-mono font-bold px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                    <span className="text-xs font-bold px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                       {dept.shortCode}
                     </span>
                   </div>
 
-                  <h3 className="font-display font-bold text-xl text-[#E6ECFA] group-hover:text-white mb-2 transition-colors">
+                  <h3 className="font-heading font-bold text-xl text-[#E6ECFA] group-hover:text-white mb-2 transition-colors">
                     {dept.name}
                   </h3>
 
@@ -181,7 +181,7 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                 </div>
 
                 <div className="pt-4 border-t border-[#24315A]/70 flex items-center justify-between text-xs text-[#9AA8C7]">
-                  <span className="text-[#FFC700] font-mono">{dept.facilityNotice}</span>
+                  <span className="text-[#FFC700] font-medium">{dept.facilityNotice}</span>
                   <span className="inline-flex items-center gap-1 font-semibold text-[#FFC700] group-hover:text-[#2F52FF] transition-colors">
                     Explore &rarr;
                   </span>
@@ -234,11 +234,11 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                 <div className="text-xs font-bold text-[#FFC700] uppercase tracking-wider">
                   Important Information
                 </div>
-                <h3 className="font-display font-bold text-xl text-[#E6ECFA] mt-1">
-                  Independent Student Portal
+                <h3 className="font-heading font-bold text-xl text-[#E6ECFA] mt-1">
+                  Student Academic Portal
                 </h3>
                 <p className="text-xs text-[#9AA8C7] mt-1">
-                  {SITE_CONFIG.disclaimer}
+                  Built by students, for students.
                 </p>
               </div>
 

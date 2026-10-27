@@ -92,9 +92,7 @@ export const ContactPage: React.FC = () => {
           <p className="text-sm sm:text-base text-[#9AA8C7]">
             Have a question, feedback, or a complaint regarding the student portal or course listings? Submit your message directly to our student desk.
           </p>
-          <div className="text-xs text-[#FFC700] bg-[#121C36] py-1 px-3 rounded-full border border-[#24315A] inline-block font-medium">
-            {SITE_CONFIG.disclaimer}
-          </div>
+
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -178,8 +176,8 @@ export const ContactPage: React.FC = () => {
                 <div className="pt-1">
                   <WhatsAppChannelButton
                     url={settings.whatsappChannelUrl}
-                    variant="solid"
-                    className="w-full justify-center py-3"
+                    variant="banner"
+                    className="w-full"
                   />
                 </div>
               )}

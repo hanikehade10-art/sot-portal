@@ -11,6 +11,42 @@ export interface BookmarkItem {
   createdAt: string;
 }
 
+export interface GradingScaleEntry {
+  grade: string;
+  minScore: number;
+  maxScore: number;
+  points: number;
+}
+
+export interface GpaCourseEntry {
+  id: string;
+  code: string;
+  title: string;
+  units: number;
+  grade: string;
+  points: number;
+}
+
+export interface SemesterGpaRecord {
+  semesterId: string;
+  semesterName: string;
+  courses: GpaCourseEntry[];
+  totalUnits: number;
+  totalQualityPoints: number;
+  gpa: number;
+  updatedAt?: string;
+}
+
+export interface StudyPlannerTask {
+  id: string;
+  title: string;
+  courseCode?: string;
+  dueDate?: string;
+  priority?: 'normal' | 'high';
+  done: boolean;
+  createdAt: string;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -25,6 +61,9 @@ export interface UserProfile {
   streakCount?: number;
   longestStreak?: number;
   lastActiveDate?: string; // YYYY-MM-DD formatted in Africa/Lagos
+  level?: 'ND1' | 'ND2' | 'HND1' | 'HND2' | string;
+  gpaRecords?: Record<string, SemesterGpaRecord>;
+  studyPlanner?: StudyPlannerTask[];
   createdAt?: string;
   updatedAt?: string;
 }

@@ -16,7 +16,6 @@ import { RepDashboard } from './components/RepDashboard';
 import { ContactPage } from './components/ContactPage';
 import { DepartmentDetailPage } from './components/DepartmentDetailPage';
 import { FAQPage, PrivacyPolicyPage, TermsPage, NotFoundPage } from './components/InfoPages';
-import { Chatbot } from './components/Chatbot';
 import { DepartmentItem } from './types';
 import { DEPARTMENTS } from './data/departments';
 import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
@@ -212,10 +211,7 @@ function AppContent() {
         />
       )}
 
-      {/* Disclaimer Banner on all views */}
-      <div className="bg-[#121C36] border-b border-[#24315A] px-4 py-2 text-center text-xs text-[#9AA8C7]">
-        <span className="text-[#FFC700] font-semibold">{SITE_CONFIG.tagline}</span> — {SITE_CONFIG.disclaimer}
-      </div>
+
 
       {/* Global Role Read Error Alert Banner */}
       {roleReadError && (
@@ -403,9 +399,6 @@ function AppContent() {
           }
         }}
       />
-
-      {/* SOT ASSISTANT AI HELPER CHATBOT */}
-      <Chatbot />
 
     </div>
   );

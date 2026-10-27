@@ -90,7 +90,7 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
               <div className="w-16 h-16 rounded-2xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.2)]">
                 <DepartmentIcon name={department.iconName} className="w-8 h-8" />
               </div>
-              <span className="font-mono text-xs font-bold px-3 py-1 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+              <span className=" text-xs font-bold px-3 py-1 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                 CODE: {department.shortCode}
               </span>
             </div>
@@ -234,7 +234,7 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
                             className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF]/60 transition-all flex flex-col justify-between gap-3 group"
                           >
                             <div className="flex items-start justify-between gap-2">
-                              <span className="font-mono text-xs font-extrabold px-2.5 py-1 rounded-md bg-[#121C36] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/50 transition-colors">
+                              <span className=" text-xs font-extrabold px-2.5 py-1 rounded-md bg-[#121C36] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/50 transition-colors">
                                 {course.code}
                               </span>
                               <span className="text-[11px] font-semibold text-[#9AA8C7] px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A]">

@@ -438,7 +438,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                 <h3 className="font-display font-bold text-base text-[#E6ECFA]">
                   Course Representatives
                 </h3>
-                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#FFC700]/30">
+                <span className="text-xs  font-bold px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#FFC700]/30">
                   {reps.length} {reps.length === 1 ? 'Rep' : 'Reps'}
                 </span>
               </div>
@@ -492,12 +492,12 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                   <h4 className="font-display font-bold text-sm text-[#E6ECFA] truncate group-hover:text-[#FFC700] transition-colors" title={rep.fullName || 'Student Rep'}>
                     {rep.fullName || 'Unnamed Student Rep'}
                   </h4>
-                  <div className="text-[11px] text-[#9AA8C7] font-mono truncate mt-0.5 flex items-center gap-1">
+                  <div className="text-[11px] text-[#9AA8C7]  truncate mt-0.5 flex items-center gap-1">
                     <Mail className="w-3 h-3 shrink-0" />
                     <span className="truncate">{rep.email}</span>
                   </div>
                   {rep.matricNumber && (
-                    <div className="text-[10px] font-mono text-[#FFC700] mt-0.5">
+                    <div className="text-[10px]  text-[#FFC700] mt-0.5">
                       Matric: {rep.matricNumber}
                     </div>
                   )}
@@ -508,11 +508,11 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                   <div className="grid grid-cols-2 gap-2 text-center">
                     <div className="p-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52]">
                       <div className="text-[10px] text-[#9AA8C7]">Uploads</div>
-                      <div className="font-mono font-bold text-xs text-[#E6ECFA]">{uploadsCount}</div>
+                      <div className=" font-bold text-xs text-[#E6ECFA]">{uploadsCount}</div>
                     </div>
                     <div className="p-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52]">
                       <div className="text-[10px] text-[#9AA8C7]">Bulletins</div>
-                      <div className="font-mono font-bold text-xs text-[#E6ECFA]">{announcementsCount}</div>
+                      <div className=" font-bold text-xs text-[#E6ECFA]">{announcementsCount}</div>
                     </div>
                   </div>
 
@@ -521,7 +521,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                       <Clock className="w-3 h-3 text-[#FFC700]" />
                       <span>Last Activity:</span>
                     </span>
-                    <span className="font-mono text-[#E6ECFA]">
+                    <span className=" text-[#E6ECFA]">
                       {lastActivityDate
                         ? new Date(lastActivityDate).toLocaleDateString(undefined, {
                             month: 'short',
@@ -577,7 +577,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                 <h3 className="font-display font-bold text-base text-[#E6ECFA]">
                   Combined Rep Activity Feed
                 </h3>
-                <span className="text-xs font-mono font-bold px-2 py-0.5 rounded-full bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
+                <span className="text-xs  font-bold px-2 py-0.5 rounded-full bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
                   {filteredFeed.length} {filteredFeed.length === 1 ? 'item' : 'items'}
                 </span>
               </div>
@@ -703,18 +703,18 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                       </span>
                     )}
 
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
+                    <span className="text-[10px]  px-2 py-0.5 rounded bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
                       {item.department}
                     </span>
 
                     {item.courseCode && (
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#070D1A] text-[#E6ECFA] border border-[#1E2E52]">
+                      <span className="text-[10px]  font-bold px-2 py-0.5 rounded bg-[#070D1A] text-[#E6ECFA] border border-[#1E2E52]">
                         {item.courseCode}
                       </span>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2 text-[10px] font-mono text-[#9AA8C7]">
+                  <div className="flex items-center gap-2 text-[10px]  text-[#9AA8C7]">
                     <Clock className="w-3 h-3 text-[#FFC700]" />
                     <span>
                       {new Date(item.createdAt).toLocaleString(undefined, {
@@ -750,7 +750,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="text-[11px] text-[#9AA8C7]">Posted by:</span>
                     <strong className="text-[#E6ECFA] text-xs">{item.repName}</strong>
-                    <span className="text-[11px] font-mono text-[#60A5FA]">({item.repEmail})</span>
+                    <span className="text-[11px]  text-[#60A5FA]">({item.repEmail})</span>
                   </div>
 
                   <div className="flex items-center gap-1.5 text-[11px] text-[#FFC700] font-semibold group-hover:translate-x-1 transition-transform">
@@ -899,7 +899,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
 
                   <div className="p-3 rounded-xl bg-[#121C36] border border-[#24315A]">
                     <span className="text-[#9AA8C7] text-[10px] block">Date Published</span>
-                    <strong className="text-[#E6ECFA] text-xs font-mono">
+                    <strong className="text-[#E6ECFA] text-xs ">
                       {new Date(selectedItem.createdAt).toLocaleDateString()}
                     </strong>
                   </div>
@@ -907,7 +907,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                   {selectedItem.courseCode && (
                     <div className="p-3 rounded-xl bg-[#121C36] border border-[#24315A]">
                       <span className="text-[#9AA8C7] text-[10px] block">Course Code</span>
-                      <strong className="text-[#E6ECFA] text-xs font-mono">{selectedItem.courseCode}</strong>
+                      <strong className="text-[#E6ECFA] text-xs ">{selectedItem.courseCode}</strong>
                     </div>
                   )}
 
@@ -937,7 +937,7 @@ export const AdminRepActivityView: React.FC<AdminRepActivityViewProps> = ({
                   <div className="p-4 rounded-xl bg-[#070D1A] border border-[#24315A] space-y-2">
                     <span className="text-[10px] uppercase font-bold tracking-wider text-[#9AA8C7]">Resource Link</span>
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-mono text-xs text-[#60A5FA] truncate">{selectedItem.url}</span>
+                      <span className=" text-xs text-[#60A5FA] truncate">{selectedItem.url}</span>
                       <a
                         href={selectedItem.url}
                         target="_blank"
