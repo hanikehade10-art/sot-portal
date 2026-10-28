@@ -4,9 +4,11 @@ import { useAuth } from './AuthContext';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 
+import { useSiteSettings } from '../hooks/useSiteSettings';
+
 const STORAGE_SESSION_CHAT = 'sot_ask_ai_session_messages';
 const STORAGE_DAILY_TIMESTAMPS = 'sot_ask_ai_daily_timestamps';
-const DAILY_LIMIT_MAX = 30;
+const DEFAULT_DAILY_LIMIT = 60;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 export const INITIAL_PORTAL_MESSAGE: ChatMessage = {
@@ -33,6 +35,7 @@ interface AiChatContextType {
   errorMessage: string | null;
   setErrorMessage: (msg: string | null) => void;
   remainingToday: number;
+  dailyLimit: number;
   isDailyLimitReached: boolean;
   sendMessage: (text: string) => Promise<void>;
   startNewChat: () => void;
@@ -113,10 +116,15 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     fetchFaqs();
   }, []);
 
+  const { settings } = useSiteSettings();
+  const dailyLimit = typeof settings.aiDailyLimit === 'number' && settings.aiDailyLimit > 0
+    ? settings.aiDailyLimit
+    : DEFAULT_DAILY_LIMIT;
+
   // Compute daily limit remaining
   const now = Date.now();
   const validTimestamps = dailyTimestamps.filter(ts => now - ts < ONE_DAY_MS);
-  const remainingToday = Math.max(0, DAILY_LIMIT_MAX - validTimestamps.length);
+  const remainingToday = Math.max(0, dailyLimit - validTimestamps.length);
   const isDailyLimitReached = remainingToday === 0;
 
   // Change mode
@@ -148,7 +156,7 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
     if (!cleanText || isTyping) return;
 
     if (isDailyLimitReached) {
-      setErrorMessage("You've reached your daily limit of 30 AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.");
+      setErrorMessage(`You've reached your daily limit of ${dailyLimit} AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.`);
       return;
     }
 
@@ -197,15 +205,23 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           clientUid: user?.uid,
           mode,
           department: profile?.department,
-          studentName: profile?.fullName || user?.displayName
+          studentName: profile?.fullName || user?.displayName,
+          maxDailyLimit: dailyLimit
         })
       });
 
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
-        const errMsg = errData.error || (res.status === 429
-          ? "You've reached your daily limit of 30 AI messages. Please come back tomorrow!"
-          : "AI is unavailable, try again.");
+        let errMsg = errData.error;
+        if (res.status === 429) {
+          if (errData.isBusy || (errMsg && /busy|quota|resource_exhausted|too many requests|overloaded/i.test(errMsg))) {
+            errMsg = 'The AI is busy right now. Please try again in a few minutes.';
+          } else if (!errMsg) {
+            errMsg = `You've reached your daily limit of ${dailyLimit} AI messages. Please come back tomorrow!`;
+          }
+        } else if (!errMsg) {
+          errMsg = 'AI is unavailable, try again.';
+        }
 
         setErrorMessage(errMsg);
 
@@ -218,13 +234,13 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
           mode
         };
         setMessages(prev => [...prev, errBubble]);
-        // Do NOT count failed messages against daily limit of 30
+        // Do NOT count failed messages against daily limit
         return;
       }
 
       const data = await res.json();
       if (!data.reply || typeof data.reply !== 'string' || !data.reply.trim()) {
-        const errMsg = "AI returned an empty reply. Please try again.";
+        const errMsg = 'AI returned an empty reply. Please try again.';
         setErrorMessage(errMsg);
         const errBubble: ChatMessage = {
           id: 'bot-err-' + Date.now(),
@@ -246,7 +262,7 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       };
       setMessages(prev => [...prev, botReply]);
 
-      // ONLY count successful responses against the 30 daily message limit
+      // ONLY count successful responses against the daily message limit
       const updatedTimestamps = [...validTimestamps, Date.now()];
       setDailyTimestamps(updatedTimestamps);
       try {
@@ -256,18 +272,21 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       }
     } catch (err: any) {
       console.error('AI chat network failure:', err);
-      const errMsg = err?.message || 'AI is unavailable, try again.';
+      let errMsg = err?.message || 'AI is unavailable, try again.';
+      if (/429|busy|quota|resource_exhausted|too many requests/i.test(errMsg)) {
+        errMsg = 'The AI is busy right now. Please try again in a few minutes.';
+      }
       setErrorMessage(errMsg);
       // Visible error message instead of fake fallback
       const errorReply: ChatMessage = {
         id: 'bot-err-' + Date.now(),
         sender: 'assistant',
-        text: `⚠️ AI is unavailable, try again. (${errMsg})`,
+        text: `⚠️ ${errMsg}`,
         timestamp: Date.now(),
         mode
       };
       setMessages(prev => [...prev, errorReply]);
-      // Do NOT count failed messages against daily limit of 30
+      // Do NOT count failed messages against daily limit
     } finally {
       setIsTyping(false);
     }
@@ -283,6 +302,7 @@ export const AiChatProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         errorMessage,
         setErrorMessage,
         remainingToday,
+        dailyLimit,
         isDailyLimitReached,
         sendMessage,
         startNewChat,

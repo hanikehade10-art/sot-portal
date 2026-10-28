@@ -155,6 +155,21 @@ export interface CourseItem {
   updatedAt?: string;
 }
 
+export type CourseSheetLevel = 'ND1' | 'ND2' | 'HND1' | 'HND2';
+export type CourseSheetSemester = 'First' | 'Second';
+
+export interface CourseSheetItem {
+  id: string; // document id: department_level_semester
+  department: string;
+  level: CourseSheetLevel;
+  semester: CourseSheetSemester;
+  title: string;
+  url: string;
+  fileName: string;
+  uploadedBy: string;
+  createdAt: string;
+}
+
 export type TimetableType = 'class' | 'exam';
 
 export interface TimetableEntry {
@@ -179,6 +194,7 @@ export interface AnnouncementItem {
   category: 'Academic' | 'Student Notice' | 'Department' | 'General';
   department: string; // 'All' or specific department
   urgent?: boolean;
+  pinned?: boolean;
   createdAt: string;
   author?: string;
 }
@@ -191,6 +207,28 @@ export interface FaqItem {
   updatedAt?: string;
 }
 
+export type LinkCategory = 'WhatsApp Groups' | 'Registration' | 'Associations' | 'Other';
+
+export interface LinkItem {
+  id: string;
+  name: string;
+  description: string;
+  category: LinkCategory;
+  url: string;
+  buttonText: string;
+  audience: string; // 'All' or specific department name
+  active: boolean;
+  order: number;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SiteSettings {
+  whatsappChannelUrl?: string;
+  aiDailyLimit?: number; // Daily quota per student (default 60)
+  updatedAt?: string;
+}
+
 export type AiChatMode = 'portal' | 'study';
 
 export interface ChatMessage {
@@ -200,4 +238,5 @@ export interface ChatMessage {
   timestamp: number;
   mode?: AiChatMode;
 }
+
 

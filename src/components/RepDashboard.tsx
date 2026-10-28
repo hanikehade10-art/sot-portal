@@ -11,7 +11,7 @@ import {
   query,
   where
 } from 'firebase/firestore';
-import { ResourceItem, ResourceCategory, AnnouncementItem, AcademicLevel } from '../types';
+import { ResourceItem, ResourceCategory, AnnouncementItem, AcademicLevel, CourseItem } from '../types';
 import { INITIAL_COURSES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
 import { PWAInstallRow } from './PWAInstallRow';
 import {
@@ -179,16 +179,34 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     fetchRepData();
   }, [user, repDepartment]);
 
+  const [deptCourses, setDeptCourses] = useState<CourseItem[]>([]);
+
+  useEffect(() => {
+    const fetchCourses = async () => {
+      try {
+        const snap = await getDocs(query(collection(db, 'courses'), where('department', '==', repDepartment)));
+        if (!snap.empty) {
+          setDeptCourses(snap.docs.map(d => ({ id: d.id, ...d.data() } as CourseItem)));
+        } else {
+          setDeptCourses([]);
+        }
+      } catch (e) {
+        setDeptCourses([]);
+      }
+    };
+    fetchCourses();
+  }, [repDepartment]);
+
   // Suggested course codes for rep's department
   const suggestedCourseCodes = useMemo(() => {
-    const matched = INITIAL_COURSES.filter(
+    const matched = deptCourses.filter(
       c =>
         c.department === repDepartment &&
         normalizeCourseLevel(c.level) === uploadLevel &&
         normalizeCourseSemester(c.semester) === uploadSemester
     );
     return matched.map(c => ({ code: c.code, title: c.title }));
-  }, [repDepartment, uploadLevel, uploadSemester]);
+  }, [deptCourses, repDepartment, uploadLevel, uploadSemester]);
 
   // Handle Upload Submission
   const handleUploadSubmit = async (e: React.FormEvent) => {

@@ -212,5 +212,17 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
     }
+
+    // Communities & Links (WhatsApp groups, departmental portals, associations)
+    match /links/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // Course PDFs / Curriculum Sheets
+    match /courseSheets/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
   }
 }

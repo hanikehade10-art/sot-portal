@@ -65,9 +65,15 @@ import {
   ExternalLink,
   Megaphone,
   Settings,
-  Activity
+  Activity,
+  Link2,
+  Pin,
+  PinOff,
+  FileText
 } from 'lucide-react';
 import { AdminRepActivityView } from './AdminRepActivityView';
+import { AdminLinksView } from './AdminLinksView';
+import { AdminCoursePdfsView } from './AdminCoursePdfsView';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
@@ -77,12 +83,14 @@ type AdminTab =
   | 'overview'
   | 'students'
   | 'rep-activity'
+  | 'course-sheets'
   | 'courses'
   | 'materials'
   | 'timetables'
   | 'announcements'
   | 'messages'
   | 'faqs'
+  | 'links'
   | 'settings';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
@@ -202,6 +210,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [annCategory, setAnnCategory] = useState<'Academic' | 'Student Notice' | 'Department' | 'General'>('General');
   const [annDepartment, setAnnDepartment] = useState('All');
   const [annUrgent, setAnnUrgent] = useState(false);
+  const [annPinned, setAnnPinned] = useState(false);
 
   // -------------------------------------------------------------
   // FAQS STATE
@@ -212,9 +221,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [faqAnswer, setFaqAnswer] = useState('');
 
   // -------------------------------------------------------------
-  // SETTINGS STATE (WhatsApp Channel Link & Grading Scale)
+  // SETTINGS STATE (WhatsApp Channel Link, AI Limit & Grading Scale)
   // -------------------------------------------------------------
   const [whatsappLink, setWhatsappLink] = useState('');
+  const [aiDailyLimit, setAiDailyLimit] = useState<number>(60);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -276,11 +286,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           });
           setCourses(list);
         } else {
-          setCourses(INITIAL_COURSES);
+          setCourses([]);
         }
       } catch (err) {
         console.warn('Courses load note:', err);
-        setCourses(INITIAL_COURSES);
+        setCourses([]);
       }
 
       // 3. Fetch Timetables
@@ -293,11 +303,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           });
           setTimetables(list);
         } else {
-          setTimetables(INITIAL_TIMETABLES);
+          setTimetables([]);
         }
       } catch (err) {
         console.warn('Timetables load note:', err);
-        setTimetables(INITIAL_TIMETABLES);
+        setTimetables([]);
       }
 
       // 4. Fetch Messages
@@ -360,13 +370,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         console.warn('Resources load note:', err);
       }
 
-      // 8. Fetch Site Settings (WhatsApp Channel URL)
+      // 8. Fetch Site Settings (WhatsApp Channel URL & AI Limit)
       try {
         const settingsSnap = await getDoc(doc(db, 'settings', 'site'));
         if (settingsSnap.exists()) {
           const sData = settingsSnap.data();
           if (sData.whatsappChannelUrl) {
             setWhatsappLink(sData.whatsappChannelUrl);
+          }
+          if (sData.aiDailyLimit !== undefined) {
+            setAiDailyLimit(Number(sData.aiDailyLimit) || 60);
           }
         }
       } catch (err) {
@@ -397,11 +410,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     setSettingsError(null);
     try {
       const cleanUrl = whatsappLink.trim();
+      const limitVal = Number(aiDailyLimit) || 60;
       await setDoc(doc(db, 'settings', 'site'), {
         whatsappChannelUrl: cleanUrl,
+        aiDailyLimit: limitVal,
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      setSettingsSuccess(cleanUrl ? 'WhatsApp channel link saved! The button is now visible across all student pages.' : 'Settings saved. WhatsApp button is now hidden.');
+      setSettingsSuccess(cleanUrl ? 'Settings and AI limit saved! WhatsApp button is active.' : 'Settings and AI limit saved! (WhatsApp button hidden).');
     } catch (err: any) {
       console.error('Settings save error:', err);
       setSettingsError(err.message || 'Failed to save settings.');
@@ -967,6 +982,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       category: annCategory,
       department: annDepartment,
       urgent: annUrgent,
+      pinned: annPinned,
       author: profile?.fullName || 'Student Admin',
       updatedAt: new Date().toISOString()
     };
@@ -995,6 +1011,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
     setShowAnnModal(false);
     setEditingAnnId(null);
+  };
+
+  const handleTogglePinAnnouncement = async (id: string, currentPinned?: boolean) => {
+    const newPinned = !currentPinned;
+    try {
+      await updateDoc(doc(db, 'announcements', id), { pinned: newPinned });
+    } catch (e) {
+      console.warn('Could not update pin state:', e);
+    }
+    setAnnouncements(prev => prev.map(a => (a.id === id ? { ...a, pinned: newPinned } : a)));
   };
 
   const handleDeleteAnnouncement = async (id: string) => {
@@ -1143,6 +1169,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     announcements: 'Announcements',
     messages: 'Messages',
     faqs: 'Chatbot FAQs',
+    links: 'Links & Communities',
     settings: 'Settings'
   };
 
@@ -1276,6 +1303,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </span>
             </button>
 
+            {/* 2.8 Course PDFs */}
+            <button
+              onClick={() => { setActiveTab('course-sheets'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'course-sheets'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <FileText className="w-4 h-4 text-[#FFC700]" />
+                <span>Course PDFs</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#FFC700] font-bold">
+                PDFs
+              </span>
+            </button>
+
             {/* 3. Courses */}
             <button
               onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
@@ -1388,6 +1433,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
                 {faqs.length}
               </span>
+            </button>
+
+            {/* 7.5 Links & Communities */}
+            <button
+              onClick={() => { setActiveTab('links'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'links'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Link2 className="w-4 h-4 text-[#FFC700]" />
+                <span>Links & Hubs</span>
+              </div>
             </button>
 
             {/* 8. Settings */}
@@ -2385,6 +2445,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     setAnnCategory('General');
                     setAnnDepartment('All');
                     setAnnUrgent(false);
+                    setAnnPinned(false);
                     setShowAnnModal(true);
                   }}
                   className="px-3.5 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(255,199,0,0.25)]"
@@ -2395,10 +2456,22 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </div>
 
               <div className="space-y-3">
-                {announcements.map(ann => (
+                {[...announcements]
+                  .sort((a, b) => {
+                    if (a.pinned && !b.pinned) return -1;
+                    if (!a.pinned && b.pinned) return 1;
+                    return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+                  })
+                  .map(ann => (
                   <div key={ann.id} className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex items-center gap-2">
+                        {ann.pinned && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/40 flex items-center gap-1">
+                            <Pin className="w-3 h-3 fill-[#FFC700]" />
+                            Pinned
+                          </span>
+                        )}
                         <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
                           ann.urgent ? 'bg-rose-950 text-rose-300 border border-rose-500/40' : 'bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]'
                         }`}>
@@ -2411,6 +2484,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
                       <div className="flex items-center gap-1.5">
                         <button
+                          onClick={() => handleTogglePinAnnouncement(ann.id, ann.pinned)}
+                          title={ann.pinned ? "Unpin announcement" : "Pin announcement to top"}
+                          className={`p-1.5 rounded-lg border text-xs cursor-pointer flex items-center gap-1 transition-colors ${
+                            ann.pinned
+                              ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/40'
+                              : 'bg-[#070D1A] border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700]'
+                          }`}
+                        >
+                          <Pin className={`w-3.5 h-3.5 ${ann.pinned ? 'fill-[#FFC700]' : ''}`} />
+                          <span className="text-[10px] hidden sm:inline">{ann.pinned ? 'Pinned' : 'Pin'}</span>
+                        </button>
+                        <button
                           onClick={() => {
                             setEditingAnnId(ann.id);
                             setAnnTitle(ann.title);
@@ -2418,6 +2503,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                             setAnnCategory(ann.category);
                             setAnnDepartment(ann.department);
                             setAnnUrgent(Boolean(ann.urgent));
+                            setAnnPinned(Boolean(ann.pinned));
                             setShowAnnModal(true);
                           }}
                           className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
@@ -2674,7 +2760,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           )}
 
           {/* ======================================================== */}
-          {/* TAB 8: SETTINGS (WHATSAPP CHANNEL LINK)                  */}
+          {/* TAB 7.5: LINKS & COMMUNITIES                             */}
+          {/* ======================================================== */}
+          {activeTab === 'links' && <AdminLinksView />}
+
+          {/* ======================================================== */}
+          {/* TAB 8: SETTINGS (WHATSAPP CHANNEL LINK & AI LIMIT)       */}
           {/* ======================================================== */}
           {activeTab === 'settings' && (
             <div className="space-y-6 max-w-3xl">
@@ -2726,6 +2817,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     />
                     <p className="text-[11px] text-[#9AA8C7] mt-1.5 leading-relaxed">
                       Saved to Firestore document <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/site</code>. When configured, a <strong className="text-[#25D366]">"Join our SOT WhatsApp Channel"</strong> button is shown on the landing page, footer, student dashboard, and contact page. If left empty, the button is hidden.
+                    </p>
+                  </div>
+
+                  {/* Ask AI Daily Limit per Student */}
+                  <div className="pt-4 border-t border-[#1E2E52]/70">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Sparkles className="w-4 h-4 text-[#FFC700]" />
+                      <label className="text-xs font-semibold text-[#E6ECFA]">
+                        Ask AI Daily Message Limit per Student
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="number"
+                        min={5}
+                        max={300}
+                        value={aiDailyLimit}
+                        onChange={(e) => setAiDailyLimit(Number(e.target.value) || 60)}
+                        className="w-28 px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-bold focus:outline-none focus:border-[#2F52FF]"
+                      />
+                      <span className="text-xs text-[#9AA8C7]">
+                        messages per student per day (default 60)
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#9AA8C7] mt-1.5 leading-relaxed">
+                      Configures the daily AI study and portal assistance quota for all students. Saved in <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/site</code> (<code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">aiDailyLimit</code>).
                     </p>
                   </div>
 
@@ -3504,17 +3621,33 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="annUrgentAdmin"
-                  checked={annUrgent}
-                  onChange={(e) => setAnnUrgent(e.target.checked)}
-                  className="rounded bg-[#070D1A] border-[#1E2E52] text-[#FFC700]"
-                />
-                <label htmlFor="annUrgentAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
-                  Mark as Urgent Alert
-                </label>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="annUrgentAdmin"
+                    checked={annUrgent}
+                    onChange={(e) => setAnnUrgent(e.target.checked)}
+                    className="rounded bg-[#070D1A] border-[#1E2E52] text-[#FFC700]"
+                  />
+                  <label htmlFor="annUrgentAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
+                    Mark as Urgent Alert
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="annPinnedAdmin"
+                    checked={annPinned}
+                    onChange={(e) => setAnnPinned(e.target.checked)}
+                    className="rounded bg-[#070D1A] border-[#1E2E52] text-[#FFC700]"
+                  />
+                  <label htmlFor="annPinnedAdmin" className="text-xs text-[#E6ECFA] cursor-pointer flex items-center gap-1">
+                    <Pin className="w-3 h-3 text-[#FFC700]" />
+                    <span>Pin to Top</span>
+                  </label>
+                </div>
               </div>
 
               <div>

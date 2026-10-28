@@ -14,8 +14,11 @@ import { GpaCalculator } from './GpaCalculator';
 import { StudyPlanner } from './StudyPlanner';
 import { ExamCountdownCard } from './ExamCountdownCard';
 import { StudentResourcesView } from './StudentResourcesView';
+import { CommunitiesLinksView } from './CommunitiesLinksView';
+import { NotificationsPopover, DashboardNotificationItem } from './NotificationsPopover';
 import { PWAInstallRow } from './PWAInstallRow';
 import { useSiteSettings } from '../hooks/useSiteSettings';
+import { LinkItem } from '../types';
 import {
   LayoutDashboard,
   Building2,
@@ -55,7 +58,10 @@ import {
   Flame,
   Trash2,
   Calculator,
-  ListTodo
+  ListTodo,
+  Link2,
+  Pin,
+  CheckCheck
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -74,6 +80,7 @@ type TabType =
   | 'timetables'
   | 'announcements'
   | 'bookmarks'
+  | 'links'
   | 'gpa'
   | 'study-planner'
   | 'my-messages'
@@ -248,6 +255,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Department uploaded resources from Course Reps
   const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
 
+  // Communities & Links State
+  const [links, setLinks] = useState<LinkItem[]>([]);
+
+  // Comprehensive Notifications State
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationsLastSeen, setNotificationsLastSeen] = useState<string>(() => {
+    return (profile as any)?.notificationsLastSeen || localStorage.getItem('sot_notifications_last_seen') || '';
+  });
+
+  // Course Rep Announcement Pinned State
+  const [repPinned, setRepPinned] = useState(false);
+
   // Profile edit states (Full Name, Level, Password)
   const [editFullName, setEditFullName] = useState(profile?.fullName || '');
   const [editLevel, setEditLevel] = useState<string>(profile?.level || 'ND1');
@@ -353,12 +372,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           });
           setTimetables(list);
         } else {
-          const defaults = INITIAL_TIMETABLES.filter(t => t.department === studentDept);
-          setTimetables(defaults.length > 0 ? defaults : INITIAL_TIMETABLES);
+          setTimetables([]);
         }
       } catch (err) {
-        const defaults = INITIAL_TIMETABLES.filter(t => t.department === studentDept);
-        setTimetables(defaults.length > 0 ? defaults : INITIAL_TIMETABLES);
+        console.warn('Timetables load note:', err);
+        setTimetables([]);
       }
     };
 
@@ -393,12 +411,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           });
           setCourses(list);
         } else {
-          const defaults = INITIAL_COURSES.filter(c => c.department === studentDept);
-          setCourses(defaults.length > 0 ? defaults : INITIAL_COURSES);
+          setCourses([]);
         }
       } catch (err) {
-        const defaults = INITIAL_COURSES.filter(c => c.department === studentDept);
-        setCourses(defaults.length > 0 ? defaults : INITIAL_COURSES);
+        console.warn('Courses load note:', err);
+        setCourses([]);
       } finally {
         setLoadingCourses(false);
       }
@@ -495,28 +512,190 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   }, [activeTab, user?.uid]);
 
+  // Fetch Communities & Links
+  useEffect(() => {
+    const fetchLinks = async () => {
+      try {
+        const snap = await getDocs(collection(db, 'links'));
+        if (!snap.empty) {
+          const list: LinkItem[] = [];
+          snap.forEach(d => {
+            list.push({ id: d.id, ...d.data() } as LinkItem);
+          });
+          setLinks(list);
+        }
+      } catch (e) {
+        console.warn('Links fetch error:', e);
+      }
+    };
+    fetchLinks();
+  }, []);
+
   // Filter announcements for student (matches 'All' or student's department)
-  const relevantAnnouncements = announcements.filter(a => {
-    const matchDept = a.department === 'All' || a.department === profile?.department;
-    const matchCategory = annFilter === 'All' || a.category === annFilter;
-    return matchDept && matchCategory;
-  });
+  // Max 3 pinned announcements appear first
+  const relevantAnnouncements = useMemo(() => {
+    const matched = announcements.filter(a => {
+      const matchDept = a.department === 'All' || a.department === profile?.department;
+      const matchCategory = annFilter === 'All' || a.category === annFilter;
+      return matchDept && matchCategory;
+    });
 
-  // Calculate unread announcements count
-  const lastSeenIso = profile?.lastSeenAnnouncements;
+    const pinned = matched.filter(a => a.pinned).slice(0, 3);
+    const nonPinned = matched.filter(a => !pinned.some(p => p.id === a.id));
+    return [...pinned, ...nonPinned];
+  }, [announcements, profile?.department, annFilter]);
+
+  // Comprehensive notifications aggregation (Announcements, Materials, Past Questions, Courses, Timetables, Links, Study Tasks)
+  const lastSeenIso = notificationsLastSeen || (profile as any)?.notificationsLastSeen;
   const lastSeenMs = lastSeenIso ? new Date(lastSeenIso).getTime() : 0;
-  const unreadAnnouncementsCount = announcements.filter(a => {
-    const matchDept = a.department === 'All' || a.department === profile?.department;
-    const annTime = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-    return matchDept && annTime > lastSeenMs;
-  }).length;
 
-  // Mark announcements as seen
-  const markAnnouncementsSeen = async () => {
+  const dashboardNotifications: DashboardNotificationItem[] = useMemo(() => {
+    const items: DashboardNotificationItem[] = [];
+
+    // 1. Announcements
+    announcements.forEach(a => {
+      const matchDept = a.department === 'All' || a.department === profile?.department;
+      if (matchDept) {
+        const ts = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+        items.push({
+          id: 'ann_' + a.id,
+          type: 'announcement',
+          title: a.title,
+          subtitle: `${a.department === 'All' ? 'School-Wide' : a.department} • ${a.category}`,
+          timeStr: a.createdAt ? new Date(a.createdAt).toLocaleDateString() : 'Recent',
+          timestamp: ts,
+          isUnread: ts > lastSeenMs,
+          actionTab: 'announcements',
+          badge: a.pinned ? 'Pinned Notice' : 'Notice',
+          isPinned: Boolean(a.pinned)
+        });
+      }
+    });
+
+    // 2. Learning Materials & Past Questions (resources)
+    deptResources.forEach(r => {
+      const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
+      items.push({
+        id: 'mat_' + r.id,
+        type: 'material',
+        title: `${r.courseCode}: ${r.title}`,
+        subtitle: `New ${r.category} for ${r.level} • ${r.semester}`,
+        timeStr: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Recent',
+        timestamp: ts,
+        isUnread: ts > lastSeenMs,
+        actionTab: 'resources',
+        badge: r.category
+      });
+    });
+
+    // 3. Courses
+    courses.forEach(c => {
+      if (c.createdAt && c.department === profile?.department) {
+        const ts = new Date(c.createdAt).getTime();
+        items.push({
+          id: 'crs_' + c.id,
+          type: 'course',
+          title: `${c.code}: ${c.title}`,
+          subtitle: `Enrolled Course • ${c.level} ${c.semester}`,
+          timeStr: new Date(c.createdAt).toLocaleDateString(),
+          timestamp: ts,
+          isUnread: ts > lastSeenMs,
+          actionTab: 'resources',
+          badge: 'Course'
+        });
+      }
+    });
+
+    // 4. Timetables
+    timetables.forEach(t => {
+      if (t.createdAt && t.department === profile?.department) {
+        const ts = new Date(t.createdAt).getTime();
+        items.push({
+          id: 'tt_' + t.id,
+          type: 'timetable',
+          title: `${t.type === 'exam' ? 'Exam' : 'Class'}: ${t.courseCode}`,
+          subtitle: `${t.day} • ${t.startTime} (${t.venue})`,
+          timeStr: new Date(t.createdAt).toLocaleDateString(),
+          timestamp: ts,
+          isUnread: ts > lastSeenMs,
+          actionTab: 'timetables',
+          badge: t.type === 'exam' ? 'Exam Timetable' : 'Timetable'
+        });
+      }
+    });
+
+    // 5. Links & Communities
+    links.forEach(l => {
+      if (l.active !== false && (l.audience === 'All' || l.audience === profile?.department)) {
+        const ts = l.createdAt ? new Date(l.createdAt).getTime() : 0;
+        items.push({
+          id: 'lnk_' + l.id,
+          type: 'link',
+          title: l.name,
+          subtitle: `${l.category} • ${l.audience}`,
+          timeStr: l.createdAt ? new Date(l.createdAt).toLocaleDateString() : 'Recent',
+          timestamp: ts,
+          isUnread: ts > lastSeenMs,
+          actionTab: 'links',
+          badge: 'Community'
+        });
+      }
+    });
+
+    // 6. To-Do Reminders (due today, due tomorrow, overdue)
+    const todayStr = getLagosDateString();
+    const tomorrowStr = getLagosDateString(new Date(Date.now() + 86400000));
+    (profile?.studyPlanner || []).forEach(task => {
+      if (!task.done && task.dueDate) {
+        let badge = 'Task';
+        let isUrgent = false;
+        if (task.dueDate === todayStr) {
+          badge = 'Due Today';
+          isUrgent = true;
+        } else if (task.dueDate === tomorrowStr) {
+          badge = 'Due Tomorrow';
+          isUrgent = true;
+        } else if (task.dueDate < todayStr) {
+          badge = 'Overdue Task';
+          isUrgent = true;
+        }
+        if (isUrgent) {
+          items.push({
+            id: 'task_' + task.id,
+            type: 'todo',
+            title: task.title,
+            subtitle: `${task.courseCode ? `${task.courseCode} • ` : ''}Due: ${task.dueDate}`,
+            timeStr: badge,
+            timestamp: Date.now() + (badge === 'Overdue Task' ? 1000 : 500),
+            isUnread: true,
+            actionTab: 'study-planner',
+            badge
+          });
+        }
+      }
+    });
+
+    items.sort((a, b) => b.timestamp - a.timestamp);
+    return items;
+  }, [announcements, deptResources, courses, timetables, links, profile?.studyPlanner, profile?.department, lastSeenMs]);
+
+  const unreadNotificationsCount = useMemo(() => {
+    return dashboardNotifications.filter(n => n.isUnread).length;
+  }, [dashboardNotifications]);
+
+  const unreadAnnouncementsCount = useMemo(() => {
+    return relevantAnnouncements.filter(a => a.createdAt && new Date(a.createdAt).getTime() > lastSeenMs).length;
+  }, [relevantAnnouncements, lastSeenMs]);
+
+  // Mark all notifications as seen
+  const handleMarkAllNotificationsRead = async () => {
     const nowIso = new Date().toISOString();
+    setNotificationsLastSeen(nowIso);
+    localStorage.setItem('sot_notifications_last_seen', nowIso);
     if (auth.currentUser) {
       try {
         await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+          notificationsLastSeen: nowIso,
           lastSeenAnnouncements: nowIso
         });
       } catch (err) {
@@ -524,7 +703,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       }
     }
     if (profile) {
-      const updated = { ...profile, lastSeenAnnouncements: nowIso };
+      const updated = { ...profile, notificationsLastSeen: nowIso, lastSeenAnnouncements: nowIso };
       localStorage.setItem('sot_local_profile', JSON.stringify(updated));
     }
   };
@@ -532,7 +711,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const handleOpenAnnouncements = () => {
     setActiveTab('announcements');
     setSidebarOpen(false);
-    markAnnouncementsSeen();
+    handleMarkAllNotificationsRead();
   };
 
   const studentDepartment = DEPARTMENTS.find((d) => d.name === profile?.department) || DEPARTMENTS[1];
@@ -546,6 +725,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       return namePart.charAt(0).toUpperCase() + namePart.slice(1);
     }
     return 'Student';
+  }, [profile?.fullName, user?.email]);
+
+  const studentInitial = useMemo(() => {
+    if (profile?.fullName?.trim()) {
+      return profile.fullName.trim().charAt(0).toUpperCase();
+    }
+    if (user?.email) {
+      return user.email.charAt(0).toUpperCase();
+    }
+    return 'S';
   }, [profile?.fullName, user?.email]);
 
   // Universal Search across Courses, Materials, Past Questions, and Announcements
@@ -653,6 +842,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       category: repCategory,
       department: studentDept, // STRICTLY LOCKED to own department
       urgent: repUrgent,
+      pinned: repPinned,
       author: `${profile?.fullName || 'Student'} (Course Rep)`,
       uploadedBy: user?.uid || '',
       uploadedByEmail: user?.email || '',
@@ -674,6 +864,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       setRepTitle('');
       setRepContent('');
       setRepUrgent(false);
+      setRepPinned(false);
       setTimeout(() => setRepSuccess(null), 4000);
       fetchAnnouncements();
     } catch (err: any) {
@@ -706,18 +897,45 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Mobile Bell Icon with Unread Count (Single Bell) */}
+          {/* Notification Bell Dropdown (Single Bell) */}
+          <div className="relative">
+            <button
+              onClick={() => setShowNotifications(!showNotifications)}
+              title="Notifications"
+              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
+            >
+              <Bell className="w-4 h-4" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                </span>
+              )}
+            </button>
+
+            <NotificationsPopover
+              isOpen={showNotifications}
+              onClose={() => setShowNotifications(false)}
+              notifications={dashboardNotifications}
+              unreadCount={unreadNotificationsCount}
+              onMarkAllAsRead={handleMarkAllNotificationsRead}
+              onSelectNotification={(tab) => {
+                setActiveTab(tab);
+                setSidebarOpen(false);
+              }}
+            />
+          </div>
+
+          {/* Student Avatar Icon */}
           <button
-            onClick={handleOpenAnnouncements}
-            title="Announcements"
-            className="relative p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer"
+            onClick={() => setActiveTab('profile')}
+            title="Profile & Settings"
+            className={`w-8 h-8 rounded-full border flex items-center justify-center font-bold text-xs transition-all cursor-pointer ${
+              activeTab === 'profile'
+                ? 'bg-[#2F52FF] text-white border-[#FFC700] ring-2 ring-[#FFC700]/30 shadow-sm'
+                : 'bg-[#121C36] text-[#FFC700] border-[#24315A] hover:border-[#2F52FF]'
+            }`}
           >
-            <Bell className="w-4 h-4" />
-            {unreadAnnouncementsCount > 0 && (
-              <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
-                {unreadAnnouncementsCount}
-              </span>
-            )}
+            {studentInitial}
           </button>
         </div>
       </div>
@@ -861,6 +1079,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
               <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A] font-bold">
                 {(profile?.bookmarks || []).length}
+              </span>
+            </button>
+
+            {/* Communities & Links Tab */}
+            <button
+              onClick={() => { setActiveTab('links'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
+                activeTab === 'links'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Link2 className="w-4 h-4 text-[#FFC700]" />
+                <span>Communities &amp; Links</span>
+              </div>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#25D366] border border-[#24315A] font-bold">
+                Hub
               </span>
             </button>
 
@@ -1073,22 +1309,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         )}
         
         {/* PAGE HEADER */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-[#24315A]">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#24315A]">
           <div>
             <div className="flex items-center gap-2 text-[11px] text-[#9AA8C7]">
               <span>School of Technology</span>
               <span>/</span>
               <span className="text-[#FFC700] font-semibold capitalize">
-                {activeTab === 'rep-announcement' ? 'Course Rep Announcement' : activeTab === 'my-messages' ? 'Complaint & Message Tracking' : activeTab === 'gpa' ? 'GPA Calculator' : activeTab === 'study-planner' ? 'Study Planner' : activeTab}
+                {activeTab === 'rep-announcement' ? 'Course Rep Announcement' : activeTab === 'my-messages' ? 'Complaint & Message Tracking' : activeTab === 'gpa' ? 'GPA Calculator' : activeTab === 'study-planner' ? 'Study Planner' : activeTab === 'links' ? 'Communities & Links' : activeTab}
               </span>
             </div>
             <h1 className="font-heading font-bold text-xl sm:text-[22px] text-[#E6ECFA] mt-0.5">
               {activeTab === 'overview' && 'Student Portal Overview'}
               {activeTab === 'department' && 'My Enrolled Department'}
+              {activeTab === 'resources' && 'Curriculum & Study Materials'}
               {activeTab === 'courses' && 'Department Courses & Learning Materials'}
               {activeTab === 'timetables' && 'Department Timetables & Exam Schedules'}
               {activeTab === 'announcements' && 'Student Bulletins & Notices'}
               {activeTab === 'bookmarks' && 'My Bookmarked Items'}
+              {activeTab === 'links' && 'Communities & Essential Links'}
               {activeTab === 'gpa' && 'GPA & CGPA Calculator'}
               {activeTab === 'study-planner' && 'Study Planner & To-Dos'}
               {activeTab === 'my-messages' && 'My Complaints & Message Tracking'}
@@ -1096,6 +1334,53 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {activeTab === 'ask-ai' && 'Ask AI Academic Tutor'}
               {activeTab === 'profile' && 'Student Profile Settings'}
             </h1>
+          </div>
+
+          {/* Desktop Top Bar: Single Bell + Avatar */}
+          <div className="hidden md:flex items-center gap-2.5">
+            {/* Notification Bell Dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                title="Notifications"
+                className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
+              >
+                <Bell className="w-4 h-4" />
+                {unreadNotificationsCount > 0 && (
+                  <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
+                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                  </span>
+                )}
+              </button>
+
+              <NotificationsPopover
+                isOpen={showNotifications}
+                onClose={() => setShowNotifications(false)}
+                notifications={dashboardNotifications}
+                unreadCount={unreadNotificationsCount}
+                onMarkAllAsRead={handleMarkAllNotificationsRead}
+                onSelectNotification={(tab) => {
+                  setActiveTab(tab);
+                  setSidebarOpen(false);
+                }}
+              />
+            </div>
+
+            {/* Student Avatar */}
+            <button
+              onClick={() => setActiveTab('profile')}
+              title="Profile & Settings"
+              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                activeTab === 'profile'
+                  ? 'bg-[#2F52FF] text-white border-[#FFC700]'
+                  : 'bg-[#121C36] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+              }`}
+            >
+              <div className="w-6 h-6 rounded-full bg-[#0A1224] text-[#FFC700] font-bold text-xs flex items-center justify-center border border-[#FFC700]/30">
+                {studentInitial}
+              </div>
+              <span className="text-xs font-semibold max-w-[120px] truncate">{studentFirstName}</span>
+            </button>
           </div>
         </div>
 
@@ -1336,8 +1621,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </span>
                     )}
                   </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-1">
-                    {relevantAnnouncements[0]?.title || 'Latest Bulletins'}
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-1 flex items-center gap-1.5">
+                    {relevantAnnouncements[0]?.pinned && (
+                      <Pin className="w-3.5 h-3.5 text-[#FFC700] fill-[#FFC700] shrink-0" />
+                    )}
+                    <span>{relevantAnnouncements[0]?.title || 'Latest Bulletins'}</span>
                   </h3>
                   <p className="text-xs text-[#9AA8C7] line-clamp-2 leading-relaxed">
                     {relevantAnnouncements[0]?.content || 'Faculty notices and urgent updates for your department.'}
@@ -1507,6 +1795,33 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </button>
               </div>
 
+              {/* Card 7: Communities & Essential Links */}
+              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
+                      <Link2 className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Communities &amp; Links</span>
+                    </span>
+                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#60A5FA] border border-[#24315A] font-bold">
+                      Directory
+                    </span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                    Join Communities &amp; Portals
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
+                    Verified WhatsApp groups, portal registration links, and student associations.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('links')}
+                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                >
+                  Browse Directory &rarr;
+                </button>
+              </div>
+
             </div>
 
           </div>
@@ -1589,6 +1904,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             isBookmarked={isBookmarked}
             toggleBookmark={toggleBookmark}
             bookmarks={profile?.bookmarks || []}
+            onNavigateLinks={() => setActiveTab('links')}
           />
         )}
 
@@ -1805,11 +2121,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <div
                       key={ann.id}
                       className={`p-6 rounded-2xl bg-[#121C36] border space-y-3 transition-colors ${
-                        isUnread ? 'border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.15)]' : 'border-[#24315A] hover:border-[#2F52FF]'
+                        ann.pinned
+                          ? 'border-[#FFC700]/70 bg-gradient-to-r from-[#121C36] via-[#121C36] to-[#FFC700]/5 shadow-[0_0_20px_rgba(255,199,0,0.1)]'
+                          : isUnread
+                          ? 'border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.15)]'
+                          : 'border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex items-center gap-2">
+                          {ann.pinned && (
+                            <span className="px-2.5 py-0.5 rounded text-[11px] font-bold bg-[#FFC700] text-[#0A1224] flex items-center gap-1 shadow-sm">
+                              <Pin className="w-3 h-3 fill-[#0A1224]" />
+                              <span>PINNED</span>
+                            </span>
+                          )}
                           <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold ${
                             ann.urgent ? 'bg-rose-950 text-rose-300 border border-rose-500/40' : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
                           }`}>
@@ -2086,8 +2412,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </select>
                 </div>
 
-                <div className="flex items-center pt-6">
-                  <label className="flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-[#E6ECFA]">
+                <div className="flex items-center gap-5 pt-6 flex-wrap">
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#E6ECFA]">
                     <input
                       type="checkbox"
                       checked={repUrgent}
@@ -2095,6 +2421,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       className="w-4 h-4 rounded text-[#2F52FF] focus:ring-0 bg-[#0A1224] border-[#24315A]"
                     />
                     <span className="text-rose-400">Mark as Urgent Notice</span>
+                  </label>
+
+                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#E6ECFA]">
+                    <input
+                      type="checkbox"
+                      checked={repPinned}
+                      onChange={(e) => setRepPinned(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#FFC700] focus:ring-0 bg-[#0A1224] border-[#24315A]"
+                    />
+                    <span className="text-[#FFC700] flex items-center gap-1 font-bold">
+                      <Pin className="w-3.5 h-3.5 fill-[#FFC700]" />
+                      <span>Pin Announcement</span>
+                    </span>
                   </label>
                 </div>
               </div>
@@ -2330,6 +2669,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <StudyPlanner />
         )}
 
+        {/* ======================================================== */}
+        {/* VIEW 11: COMMUNITIES & LINKS                             */}
+        {/* ======================================================== */}
+        {activeTab === 'links' && (
+          <CommunitiesLinksView />
+        )}
+
       </main>
 
       {/* Mobile Bottom Tab Bar (Students: Home, Resources, Timetable, Ask AI, Profile) */}
@@ -2394,19 +2740,19 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <span className="text-[10px]">Ask AI</span>
         </button>
 
-        {/* 5. Profile */}
+        {/* 5. Links */}
         <button
-          onClick={() => setActiveTab('profile')}
+          onClick={() => setActiveTab('links')}
           className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'profile'
+            activeTab === 'links'
               ? 'text-[#FFC700] font-bold'
               : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
-          <div className={`p-1 rounded-lg ${activeTab === 'profile' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <User className="w-5 h-5" />
+          <div className={`p-1 rounded-lg ${activeTab === 'links' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <Link2 className="w-5 h-5" />
           </div>
-          <span className="text-[10px]">Profile</span>
+          <span className="text-[10px]">Links</span>
         </button>
       </nav>
 

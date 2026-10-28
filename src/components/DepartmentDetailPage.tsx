@@ -46,14 +46,11 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
           });
           setCourses(list);
         } else {
-          // Fallback to default curriculum seed
-          const defaultList = INITIAL_COURSES.filter(c => c.department === department.name);
-          setCourses(defaultList);
+          setCourses([]);
         }
       } catch (err) {
         console.warn('Courses fetch notice:', err);
-        const defaultList = INITIAL_COURSES.filter(c => c.department === department.name);
-        setCourses(defaultList);
+        setCourses([]);
       } finally {
         setLoadingCourses(false);
       }

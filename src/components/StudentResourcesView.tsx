@@ -17,7 +17,8 @@ import {
   FolderOpen,
   HelpCircle,
   FileQuestion,
-  UserCheck
+  UserCheck,
+  Link2
 } from 'lucide-react';
 
 interface StudentResourcesViewProps {
@@ -28,6 +29,7 @@ interface StudentResourcesViewProps {
   isBookmarked: (type: 'course' | 'material' | 'announcement', id: string) => boolean;
   toggleBookmark: (item: Omit<BookmarkItem, 'createdAt'> & { createdAt?: string }) => void;
   bookmarks: BookmarkItem[];
+  onNavigateLinks?: () => void;
 }
 
 type ResourceTab = 'courses' | 'materials' | 'past-questions' | 'bookmarks';
@@ -39,7 +41,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   department,
   isBookmarked,
   toggleBookmark,
-  bookmarks
+  bookmarks,
+  onNavigateLinks
 }) => {
   const [activeTab, setActiveTab] = useState<ResourceTab>('courses');
 
@@ -307,6 +310,16 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
           <Bookmark className="w-3.5 h-3.5 text-[#FFC700]" />
           <span>Bookmarks ({bookmarkedItems.length})</span>
         </button>
+
+        {onNavigateLinks && (
+          <button
+            onClick={onNavigateLinks}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all cursor-pointer text-[#9AA8C7] hover:text-[#FFC700] hover:bg-[#121C36] ml-auto border border-[#24315A]/60"
+          >
+            <Link2 className="w-3.5 h-3.5 text-[#FFC700]" />
+            <span>Communities &amp; Links &rarr;</span>
+          </button>
+        )}
       </div>
 
       {/* Filter Row: Level & Semester */}

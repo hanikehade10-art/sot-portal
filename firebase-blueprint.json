@@ -151,6 +151,22 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["question", "answer"]
+    },
+    "CourseSheet": {
+      "title": "CourseSheet",
+      "description": "Department course curriculum PDF sheet for a specific academic level and semester",
+      "type": "object",
+      "properties": {
+        "department": { "type": "string", "maxLength": 64 },
+        "level": { "type": "string", "enum": ["ND1", "ND2", "HND1", "HND2"] },
+        "semester": { "type": "string", "enum": ["First", "Second"] },
+        "title": { "type": "string", "maxLength": 255 },
+        "url": { "type": "string", "maxLength": 2048 },
+        "fileName": { "type": "string", "maxLength": 255 },
+        "uploadedBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["department", "level", "semester", "title", "url", "fileName", "uploadedBy", "createdAt"]
     }
   },
   "firestore": {
@@ -189,6 +205,10 @@
     "/faqs/{faqId}": {
       "schema": "FaqItem",
       "description": "Frequently asked questions for chatbot knowledge and student queries"
+    },
+    "/courseSheets/{id}": {
+      "schema": "CourseSheet",
+      "description": "Official course sheet PDFs per department, level, and semester. Read by students; Managed by admins"
     }
   }
 }

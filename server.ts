@@ -14,34 +14,36 @@ const PORT = Number(process.env.PORT) || 3000;
 
 app.use(express.json());
 
-// In-memory sliding window rate limiter: max 30 requests per 24 hours per IP / user
+// In-memory sliding window rate limiter: default 60 requests per 24 hours per IP / user
 const rateLimitMap = new Map<string, number[]>();
-const MAX_REQUESTS_PER_DAY = 30;
+const DEFAULT_MAX_REQUESTS_PER_DAY = 60;
 const RATE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-function checkRateLimitReadOnly(key: string): { allowed: boolean; remaining: number; resetHours: number } {
+function checkRateLimitReadOnly(key: string, limit: number = DEFAULT_MAX_REQUESTS_PER_DAY): { allowed: boolean; remaining: number; resetHours: number } {
   const now = Date.now();
   const timestamps = rateLimitMap.get(key) || [];
   const validTimestamps = timestamps.filter(ts => now - ts < RATE_WINDOW_MS);
   rateLimitMap.set(key, validTimestamps);
 
-  if (validTimestamps.length >= MAX_REQUESTS_PER_DAY) {
+  const effectiveLimit = limit > 0 ? limit : DEFAULT_MAX_REQUESTS_PER_DAY;
+  if (validTimestamps.length >= effectiveLimit) {
     const oldest = validTimestamps[0];
     const resetHours = Math.max(1, Math.ceil((oldest + RATE_WINDOW_MS - now) / 3600000));
     return { allowed: false, remaining: 0, resetHours };
   }
 
-  const remaining = MAX_REQUESTS_PER_DAY - validTimestamps.length;
+  const remaining = effectiveLimit - validTimestamps.length;
   return { allowed: true, remaining, resetHours: 24 };
 }
 
-function commitRateLimit(key: string): number {
+function commitRateLimit(key: string, limit: number = DEFAULT_MAX_REQUESTS_PER_DAY): number {
   const now = Date.now();
   const timestamps = rateLimitMap.get(key) || [];
   const validTimestamps = timestamps.filter(ts => now - ts < RATE_WINDOW_MS);
   validTimestamps.push(now);
   rateLimitMap.set(key, validTimestamps);
-  return Math.max(0, MAX_REQUESTS_PER_DAY - validTimestamps.length);
+  const effectiveLimit = limit > 0 ? limit : DEFAULT_MAX_REQUESTS_PER_DAY;
+  return Math.max(0, effectiveLimit - validTimestamps.length);
 }
 
 // Health & Gemini Key Status Route
@@ -145,21 +147,23 @@ STRICT ACADEMIC INTEGRITY & SAFETY RULES:
 // Chat API Route
 app.post('/api/chat', async (req: Request, res: Response) => {
   try {
-    const { message, history, faqs, clientUid, mode = 'portal', department, studentName } = req.body;
+    const { message, history, faqs, clientUid, mode = 'portal', department, studentName, maxDailyLimit } = req.body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Message text is required.' });
     }
+
+    const effectiveLimit = typeof maxDailyLimit === 'number' && maxDailyLimit > 0 ? maxDailyLimit : DEFAULT_MAX_REQUESTS_PER_DAY;
 
     // Rate limiting key: use clientUid or IP
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
     const rateLimitKey = clientUid ? `uid_${clientUid}` : `ip_${clientIp}`;
 
     // Read-only rate limit check: do NOT consume quota before a successful response
-    const rateResult = checkRateLimitReadOnly(rateLimitKey);
+    const rateResult = checkRateLimitReadOnly(rateLimitKey, effectiveLimit);
     if (!rateResult.allowed) {
       return res.status(429).json({
-        error: "You've reached your daily limit of 30 AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.",
+        error: `You've reached your daily limit of ${effectiveLimit} AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.`,
         remaining: 0,
         resetHours: rateResult.resetHours
       });
@@ -258,14 +262,21 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     }
 
     if (!replyText || !replyText.trim()) {
-      const errorMsg = lastError?.message || 'High server demand or network timeout';
+      const errorMsg = String(lastError?.message || lastError || 'High server demand or network timeout');
+      const isBusyOrQuota = /429|quota|resource_exhausted|too many requests|overloaded/i.test(errorMsg);
+      if (isBusyOrQuota) {
+        return res.status(429).json({
+          error: 'The AI is busy right now. Please try again in a few minutes.',
+          isBusy: true
+        });
+      }
       return res.status(503).json({
         error: `AI is unavailable, try again. (${errorMsg})`
       });
     }
 
-    // Only commit against the 30 daily message limit upon successful reply generation
-    const remaining = commitRateLimit(rateLimitKey);
+    // Only commit against daily message limit upon successful reply generation
+    const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
 
     return res.json({ reply: replyText.trim(), remaining, mode });
   } catch (error: any) {
