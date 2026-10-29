@@ -113,8 +113,8 @@ export interface ContactMessage {
 
 export type AcademicLevel = 'ND1' | 'ND2' | 'HND1' | 'HND2' | 'ND I' | 'ND II' | 'HND I' | 'HND II';
 
-export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
-export type ResourceCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Assignment' | 'Other';
+export type CourseMaterialCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
+export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Video' | 'Assignment' | 'Other';
 
 export interface CourseMaterial {
   id?: string;

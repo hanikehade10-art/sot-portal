@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { collection, onSnapshot, doc, setDoc, deleteDoc, addDoc } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import {
   CourseSheetItem,
   CourseSheetLevel,
-  CourseSheetSemester
+  CourseSheetSemester,
+  ResourceCategory
 } from '../types';
 import {
   getCourseSheetDocId,
@@ -48,6 +49,8 @@ export const AdminCoursePdfsView: React.FC = () => {
   const [formTitle, setFormTitle] = useState('');
   const [formUrl, setFormUrl] = useState('');
   const [formFileName, setFormFileName] = useState('');
+  const [formType, setFormType] = useState<ResourceCategory>('Course Outline');
+  const [formCourseCode, setFormCourseCode] = useState('');
   const [isReplacing, setIsReplacing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -82,6 +85,22 @@ export const AdminCoursePdfsView: React.FC = () => {
     return () => unsub();
   }, []);
 
+  const openUploadNew = () => {
+    setSelectedDept(SOT_DEPARTMENTS_LIST[0]);
+    setSelectedLevel('ND1');
+    setSelectedSem('First');
+    setFormTitle('');
+    setFormUrl('');
+    setFormFileName('');
+    setFormCourseCode('');
+    setFormType('Course Outline');
+    setIsReplacing(true);
+    setSaveSuccess(null);
+    setSaveError(null);
+    setStorageNotice(null);
+    setShowManageModal(true);
+  };
+
   const openManageCell = (dept: string, level: CourseSheetLevel, sem: CourseSheetSemester) => {
     setSelectedDept(dept);
     setSelectedLevel(level);
@@ -89,6 +108,8 @@ export const AdminCoursePdfsView: React.FC = () => {
     setSaveSuccess(null);
     setSaveError(null);
     setStorageNotice(null);
+    setFormCourseCode('');
+    setFormType('Course Outline');
 
     const docId = getCourseSheetDocId(dept, level, sem);
     const existing = sheets[docId];
@@ -99,7 +120,7 @@ export const AdminCoursePdfsView: React.FC = () => {
       setFormFileName(existing.fileName);
       setIsReplacing(false);
     } else {
-      setFormTitle(`${dept} ${level} ${sem} Semester Course Sheet`);
+      setFormTitle(`${dept} ${level} ${sem} Semester Course Outline`);
       setFormUrl('');
       setFormFileName(`${dept}_${level}_${sem}.pdf`);
       setIsReplacing(true);
@@ -161,30 +182,76 @@ export const AdminCoursePdfsView: React.FC = () => {
       return;
     }
 
-    const docId = getCourseSheetDocId(selectedDept, selectedLevel, selectedSem);
-    const formattedUrl = formatPdfUrl(trimmedUrl);
+    try {
+      new URL(trimmedUrl);
+    } catch {
+      setSaveError('Please enter a valid web link (e.g. https://drive.google.com/file/d/...).');
+      setSaving(false);
+      return;
+    }
 
-    const payload: Omit<CourseSheetItem, 'id'> = {
-      department: selectedDept,
-      level: selectedLevel,
-      semester: selectedSem,
-      title: formTitle.trim() || `${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Sheet`,
-      url: formattedUrl,
-      fileName: formFileName.trim() || `${selectedDept}_${selectedLevel}_${selectedSem}.pdf`,
-      uploadedBy: auth.currentUser?.email || auth.currentUser?.uid || 'Admin',
-      createdAt: new Date().toISOString()
-    };
+    const formattedUrl = formatPdfUrl(trimmedUrl);
+    const now = new Date().toISOString();
+    const courseCodeVal = formCourseCode.trim() ? formCourseCode.trim().toUpperCase() : '';
 
     try {
-      await setDoc(doc(db, 'courseSheets', docId), payload);
-      setSaveSuccess('Saved successfully! The PDF is now live for all students and reps.');
+      if (formType === 'Course Outline') {
+        const docId = getCourseSheetDocId(selectedDept, selectedLevel, selectedSem);
+        const payload: Omit<CourseSheetItem, 'id'> = {
+          department: selectedDept,
+          level: selectedLevel,
+          semester: selectedSem,
+          title: formTitle.trim() || `${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Outline`,
+          url: formattedUrl,
+          fileName: formFileName.trim() || `${selectedDept}_${selectedLevel}_${selectedSem}.pdf`,
+          uploadedBy: auth.currentUser?.email || auth.currentUser?.uid || 'Admin',
+          createdAt: now
+        };
+        await setDoc(doc(db, 'courseSheets', docId), payload);
+
+        // Also sync to resources so it appears under Courses tab
+        await addDoc(collection(db, 'resources'), {
+          department: selectedDept,
+          level: selectedLevel,
+          semester: selectedSem === 'First' ? 'First Semester' : 'Second Semester',
+          courseCode: courseCodeVal,
+          title: formTitle.trim() || `${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Outline`,
+          category: 'Course Outline',
+          url: formattedUrl,
+          description: `${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Outline`,
+          uploadedBy: auth.currentUser?.uid || 'admin',
+          uploadedByEmail: auth.currentUser?.email || 'admin@portal',
+          uploadedByRole: 'Admin',
+          createdAt: now,
+          updatedAt: now
+        });
+      } else {
+        // Other types saved directly to resources, where Type decides where it shows
+        await addDoc(collection(db, 'resources'), {
+          department: selectedDept,
+          level: selectedLevel,
+          semester: selectedSem === 'First' ? 'First Semester' : 'Second Semester',
+          courseCode: courseCodeVal,
+          title: formTitle.trim(),
+          category: formType,
+          url: formattedUrl,
+          description: '',
+          uploadedBy: auth.currentUser?.uid || 'admin',
+          uploadedByEmail: auth.currentUser?.email || 'admin@portal',
+          uploadedByRole: 'Admin',
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+
+      setSaveSuccess('Saved successfully! The item is now live in the student portal.');
       setIsReplacing(false);
       setTimeout(() => {
         setSaveSuccess(null);
       }, 4000);
     } catch (err: any) {
-      console.error('Error saving courseSheet:', err);
-      setSaveError(err.message || 'Failed to save course sheet to Firestore.');
+      console.error('Error saving:', err);
+      setSaveError(err.message || 'Failed to save item to Firestore.');
     } finally {
       setSaving(false);
     }
@@ -202,16 +269,16 @@ export const AdminCoursePdfsView: React.FC = () => {
     setSaveError(null);
     try {
       await deleteDoc(doc(db, 'courseSheets', docId));
-      setSaveSuccess('Course sheet deleted successfully.');
+      setSaveSuccess('Course outline deleted successfully.');
       setIsReplacing(true);
       setFormUrl('');
-      setFormTitle(`${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Sheet`);
+      setFormTitle(`${selectedDept} ${selectedLevel} ${selectedSem} Semester Course Outline`);
       setTimeout(() => {
         setShowManageModal(false);
         setSaveSuccess(null);
       }, 1500);
     } catch (err: any) {
-      setSaveError('Failed to delete course sheet: ' + err.message);
+      setSaveError('Failed to delete course outline: ' + err.message);
     } finally {
       setDeleting(false);
     }
@@ -228,21 +295,30 @@ export const AdminCoursePdfsView: React.FC = () => {
         <div>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#FFC700] text-[#0A1224] text-[10px] font-extrabold uppercase mb-1">
             <FileText className="w-3.5 h-3.5" />
-            <span>Official Curriculum Sheets</span>
+            <span>Course Outlines</span>
           </div>
           <h2 className="font-display font-bold text-2xl text-[#E6ECFA]">
-            Department Course PDFs
+            Department Course Outlines &amp; Materials
           </h2>
           <p className="text-xs text-[#9AA8C7] mt-0.5">
-            Manage the official single PDF curriculum sheet for each of the 6 departments across ND I, ND II, HND I, and HND II (First &amp; Second Semesters).
+            Manage course outlines, lecture notes, and past questions for each of the 6 departments across ND I, ND II, HND I, and HND II.
           </p>
         </div>
 
-        <div className="flex items-center gap-2 self-start md:self-auto">
+        <div className="flex items-center gap-3 self-start md:self-auto flex-wrap">
           <span className="text-xs text-[#9AA8C7] px-3 py-1.5 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 inline-block"></span>
-            <span>{Object.keys(sheets).length} / 48 Sheets Active</span>
+            <span>{Object.keys(sheets).length} / 48 Outlines Active</span>
           </span>
+
+          <button
+            type="button"
+            onClick={openUploadNew}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2542D9] text-white font-bold text-xs shadow-[0_0_15px_rgba(47,82,255,0.4)] transition-all cursor-pointer"
+          >
+            <UploadCloud className="w-4 h-4 text-[#FFC700]" />
+            <span>Upload</span>
+          </button>
         </div>
       </div>
 
@@ -477,17 +553,95 @@ export const AdminCoursePdfsView: React.FC = () => {
             {(isReplacing || !currentSheet) && (
               <form onSubmit={handleSaveSheet} className="space-y-4">
                 
+                {/* Department, Level, Semester Selectors */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Department
+                    </label>
+                    <select
+                      value={selectedDept || ''}
+                      onChange={(e) => setSelectedDept(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      {SOT_DEPARTMENTS_LIST.map(d => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Level
+                    </label>
+                    <select
+                      value={selectedLevel}
+                      onChange={(e) => setSelectedLevel(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      {LEVELS.map(l => (
+                        <option key={l} value={l}>{l}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Semester
+                    </label>
+                    <select
+                      value={selectedSem}
+                      onChange={(e) => setSelectedSem(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      {SEMESTERS.map(s => (
+                        <option key={s} value={s}>{s} Semester</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Course Code (Optional) & Type */}
+                <div className="grid grid-cols-2 gap-2.5">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
+                      Course Code <span className="text-[10px] text-[#9AA8C7]/60 lowercase">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={formCourseCode}
+                      onChange={(e) => setFormCourseCode(e.target.value)}
+                      placeholder="e.g. COM 111"
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs sm:text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
+                      Type
+                    </label>
+                    <select
+                      value={formType}
+                      onChange={(e) => setFormType(e.target.value as any)}
+                      className="w-full px-3.5 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs sm:text-sm text-[#FFC700] font-semibold focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      <option value="Course Outline">Course Outline</option>
+                      <option value="Lecture Note">Lecture Note</option>
+                      <option value="Past Question">Past Question</option>
+                      <option value="Video">Video</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </div>
+                </div>
+
                 {/* Title */}
                 <div>
                   <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                    Course Sheet Title *
+                    Title *
                   </label>
                   <input
                     type="text"
                     required
                     value={formTitle}
                     onChange={(e) => setFormTitle(e.target.value)}
-                    placeholder="e.g. Computer Technology ND1 First Semester Curriculum"
+                    placeholder="e.g. Computer Technology ND1 First Semester Course Outline"
                     className="w-full px-3.5 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs sm:text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                   />
                 </div>
@@ -572,9 +726,10 @@ export const AdminCoursePdfsView: React.FC = () => {
                     <button
                       type="submit"
                       disabled={saving}
-                      className="px-6 py-2 rounded-xl bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] transition-all cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.3)] disabled:opacity-50"
+                      className="px-6 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold transition-all cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.4)] disabled:opacity-50 flex items-center gap-2"
                     >
-                      {saving ? 'Saving...' : 'Save Course PDF'}
+                      {saving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                      <span>{saving ? 'Saving...' : 'Upload & Save'}</span>
                     </button>
                   </div>
                 </div>

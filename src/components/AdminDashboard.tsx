@@ -19,6 +19,7 @@ import {
   CourseItem,
   CourseMaterial,
   CourseMaterialCategory,
+  ResourceCategory,
   ResourceItem,
   TimetableEntry,
   GradingScaleEntry
@@ -28,7 +29,9 @@ import {
   INITIAL_COURSES,
   INITIAL_TIMETABLES,
   normalizeCourseLevel,
-  normalizeCourseSemester
+  normalizeCourseSemester,
+  formatPdfUrl,
+  getCourseSheetDocId
 } from '../data/coursesAndTimetables';
 import { DEFAULT_GRADING_SCALE } from '../config/gradingScale';
 import { WhatsAppIcon } from './WhatsAppIcon';
@@ -69,7 +72,9 @@ import {
   Link2,
   Pin,
   PinOff,
-  FileText
+  FileText,
+  UploadCloud,
+  CheckCircle2
 } from 'lucide-react';
 import { AdminRepActivityView } from './AdminRepActivityView';
 import { AdminLinksView } from './AdminLinksView';
@@ -127,6 +132,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [materialsSubTab, setMaterialsSubTab] = useState<'materials' | 'announcements'>('materials');
   const [materialsDeptFilter, setMaterialsDeptFilter] = useState<string>('All');
   const [materialsSearch, setMaterialsSearch] = useState('');
+
+  // Admin Upload Material Modal state
+  const [showMaterialUploadModal, setShowMaterialUploadModal] = useState(false);
+  const [uploadDept, setUploadDept] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [uploadLevel, setUploadLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
+  const [uploadSem, setUploadSem] = useState<'First Semester' | 'Second Semester'>('First Semester');
+  const [uploadCourseCode, setUploadCourseCode] = useState('');
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadType, setUploadType] = useState<ResourceCategory>('Course Outline');
+  const [uploadUrl, setUploadUrl] = useState('');
+  const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadSaving, setUploadSaving] = useState(false);
+  const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // COURSES MANAGEMENT STATE
@@ -233,6 +252,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [savingScale, setSavingScale] = useState(false);
   const [scaleSuccess, setScaleSuccess] = useState<string | null>(null);
   const [scaleError, setScaleError] = useState<string | null>(null);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const handleConfirmLogout = async () => {
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem('sot_local_user');
+      localStorage.removeItem('sot_local_profile');
+      localStorage.removeItem('sot_admin_view_choice');
+      localStorage.removeItem('sot_notifications_last_seen');
+      localStorage.removeItem('sot_daily_ai_timestamps');
+      localStorage.removeItem('sot_ai_chat_session');
+      await logout();
+    } catch (err) {
+      console.warn('Logout error:', err);
+    } finally {
+      setShowLogoutConfirm(false);
+      onNavigateHome();
+    }
+  };
 
   // -------------------------------------------------------------
   // DATA FETCHING
@@ -1138,6 +1176,90 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     });
   }, [repAnnouncements, materialsDeptFilter, materialsSearch]);
 
+  const handleAdminUploadMaterial = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUploadError(null);
+    setUploadSuccess(null);
+
+    if (!uploadTitle.trim()) {
+      setUploadError('Title is required.');
+      return;
+    }
+    if (!uploadUrl.trim()) {
+      setUploadError('PDF or file link is required.');
+      return;
+    }
+
+    try {
+      new URL(uploadUrl.trim());
+    } catch {
+      setUploadError('Please provide a valid web link (e.g. Google Drive link or direct file URL).');
+      return;
+    }
+
+    setUploadSaving(true);
+    const now = new Date().toISOString();
+    const formattedUrl = formatPdfUrl(uploadUrl.trim());
+    const courseCodeVal = uploadCourseCode.trim() ? uploadCourseCode.trim().toUpperCase() : '';
+
+    const payload: Omit<ResourceItem, 'id'> = {
+      department: uploadDept,
+      level: uploadLevel,
+      semester: uploadSem,
+      courseCode: courseCodeVal,
+      title: uploadTitle.trim(),
+      category: uploadType,
+      url: formattedUrl,
+      description: uploadDescription.trim(),
+      uploadedBy: user?.uid || 'admin',
+      uploadedByEmail: user?.email || 'admin@portal',
+      uploadedByRole: 'Admin',
+      createdAt: now,
+      updatedAt: now
+    };
+
+    try {
+      const docRef = await addDoc(collection(db, 'resources'), payload);
+      const newRes: ResourceItem = {
+        id: docRef.id,
+        ...payload
+      };
+      setResources(prev => [newRes, ...prev]);
+
+      // If Type is 'Course Outline', also sync to courseSheets collection
+      if (uploadType === 'Course Outline') {
+        const sheetLevel = normalizeCourseLevel(uploadLevel);
+        const sheetSem = uploadSem.includes('First') ? 'First' : 'Second';
+        const docId = getCourseSheetDocId(uploadDept, sheetLevel, sheetSem);
+        await setDoc(doc(db, 'courseSheets', docId), {
+          department: uploadDept,
+          level: sheetLevel,
+          semester: sheetSem,
+          title: uploadTitle.trim(),
+          url: formattedUrl,
+          fileName: `${uploadDept}_${sheetLevel}_${sheetSem}.pdf`,
+          uploadedBy: user?.email || 'Admin',
+          createdAt: now
+        }, { merge: true });
+      }
+
+      setUploadSuccess('Saved successfully! Item is now live in the student portal.');
+      setUploadTitle('');
+      setUploadCourseCode('');
+      setUploadUrl('');
+      setUploadDescription('');
+      setTimeout(() => {
+        setShowMaterialUploadModal(false);
+        setUploadSuccess(null);
+      }, 2000);
+    } catch (err: any) {
+      console.error('Failed to upload material:', err);
+      setUploadError(err.message || 'Failed to save material to Firestore.');
+    } finally {
+      setUploadSaving(false);
+    }
+  };
+
   const handleDeleteUploadedResource = async (id: string, title: string) => {
     if (!confirm(`Permanently delete uploaded material "${title}"?`)) return;
     try {
@@ -1163,6 +1285,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     overview: 'Overview',
     students: 'Students',
     'rep-activity': 'Rep Activity',
+    'course-sheets': 'Course PDFs',
     courses: 'Courses',
     materials: 'Materials',
     timetables: 'Timetables',
@@ -1482,11 +1605,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             <span>Public Website</span>
           </button>
           <button
-            onClick={() => { logout(); onNavigateHome(); }}
-            className="w-full flex items-center gap-2 px-2.5 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/30 cursor-pointer"
+            type="button"
+            onClick={() => setShowLogoutConfirm(true)}
+            className="w-full py-2.5 px-3 rounded-xl border border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 hover:border-rose-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm group"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
+            <LogOut className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+            <span>Log out</span>
           </button>
         </div>
       </aside>
@@ -1696,6 +1820,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </div>
 
             </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB: COURSE PDFS (COLLECTION courseSheets)               */}
+          {/* ======================================================== */}
+          {activeTab === 'course-sheets' && (
+            <AdminCoursePdfsView />
           )}
 
           {/* ======================================================== */}
@@ -1941,8 +2072,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     </button>
                   </div>
 
-                  {/* Department Filter */}
-                  <div className="flex items-center gap-2">
+                  {/* Department Filter & Prominent Upload Button */}
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs text-[#9AA8C7] font-semibold">Department:</span>
                     <select
                       value={materialsDeptFilter}
@@ -1954,6 +2085,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                         <option key={dept} value={dept}>{dept}</option>
                       ))}
                     </select>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowMaterialUploadModal(true);
+                        setUploadSuccess(null);
+                        setUploadError(null);
+                      }}
+                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white font-bold text-xs shadow-[0_0_15px_rgba(47,82,255,0.4)] transition-all cursor-pointer"
+                    >
+                      <UploadCloud className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Upload</span>
+                    </button>
                   </div>
 
                 </div>
@@ -3403,6 +3547,199 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       )}
 
       {/* ======================================================== */}
+      {/* MODAL: ADMIN UPLOAD MATERIAL / RESOURCE                  */}
+      {/* ======================================================== */}
+      {showMaterialUploadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm overflow-y-auto">
+          <div className="relative w-full max-w-lg bg-[#0A1224] border border-[#1F2C4C] rounded-2xl p-5 sm:p-6 space-y-4 shadow-[0_0_50px_rgba(0,0,0,0.85)] my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1F2C4C]">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-[#2F52FF]/20 text-[#2F52FF] border border-[#2F52FF]/30">
+                  <UploadCloud className="w-5 h-5 text-[#FFC700]" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-base text-[#E6ECFA]">
+                    Upload Material
+                  </h3>
+                  <p className="text-[11px] text-[#9AA8C7]">
+                    Upload course outlines, lecture notes, or past questions
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowMaterialUploadModal(false)}
+                className="p-1 rounded-lg text-[#9AA8C7] hover:text-white cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {uploadSuccess && (
+              <div className="p-3 rounded-xl bg-emerald-950/70 border border-emerald-500/50 text-emerald-300 text-xs font-semibold flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                <span>{uploadSuccess}</span>
+              </div>
+            )}
+
+            {uploadError && (
+              <div className="p-3 rounded-xl bg-rose-950/70 border border-rose-500/50 text-rose-300 text-xs font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{uploadError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleAdminUploadMaterial} className="space-y-3.5">
+              {/* Department */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                  Department
+                </label>
+                <select
+                  value={uploadDept}
+                  onChange={(e) => setUploadDept(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                >
+                  {SOT_DEPARTMENTS_LIST.map(dept => (
+                    <option key={dept} value={dept}>{dept}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Level & Semester */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                    Level
+                  </label>
+                  <select
+                    value={uploadLevel}
+                    onChange={(e) => setUploadLevel(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    <option value="ND1">ND1</option>
+                    <option value="ND2">ND2</option>
+                    <option value="HND1">HND1</option>
+                    <option value="HND2">HND2</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                    Semester
+                  </label>
+                  <select
+                    value={uploadSem}
+                    onChange={(e) => setUploadSem(e.target.value as any)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    <option value="First Semester">First Semester</option>
+                    <option value="Second Semester">Second Semester</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Course Code (Optional) & Type */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                    Course Code <span className="text-[10px] text-[#9AA8C7]/60 lowercase">(optional)</span>
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="e.g. COM 111"
+                    value={uploadCourseCode}
+                    onChange={(e) => setUploadCourseCode(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                    Type
+                  </label>
+                  <select
+                    value={uploadType}
+                    onChange={(e) => setUploadType(e.target.value as ResourceCategory)}
+                    className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#FFC700] font-semibold focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    <option value="Course Outline">Course Outline</option>
+                    <option value="Lecture Note">Lecture Note</option>
+                    <option value="Past Question">Past Question</option>
+                    <option value="Video">Video</option>
+                    <option value="Other">Other</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Title */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                  Title <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Introduction to Programming Lecture Notes"
+                  value={uploadTitle}
+                  onChange={(e) => setUploadTitle(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              {/* PDF or File Link */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                  PDF or File Link <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://drive.google.com/... or file URL (auto-converted to preview)"
+                  value={uploadUrl}
+                  onChange={(e) => setUploadUrl(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
+                <span className="text-[10px] text-[#9AA8C7]/80 mt-1 block">
+                  Google Drive /view links are automatically converted to in-app /preview links.
+                </span>
+              </div>
+
+              {/* Description (Optional) */}
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] uppercase mb-1">
+                  Description / Note <span className="text-[10px] text-[#9AA8C7]/60 lowercase">(optional)</span>
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Brief note or instructions for students..."
+                  value={uploadDescription}
+                  onChange={(e) => setUploadDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
+                <button
+                  type="button"
+                  onClick={() => setShowMaterialUploadModal(false)}
+                  className="px-4 py-2 rounded-xl bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={uploadSaving}
+                  className="px-5 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold shadow-[0_0_15px_rgba(47,82,255,0.4)] flex items-center gap-2 cursor-pointer transition-all disabled:opacity-50"
+                >
+                  {uploadSaving && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
+                  <span>{uploadSaving ? 'Saving...' : 'Upload Material'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ======================================================== */}
       {/* MODAL: ADD / EDIT TIMETABLE ENTRY                        */}
       {/* ======================================================== */}
       {showTtModal && (
@@ -3738,6 +4075,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Small Confirmation Sheet: "Log out of SOT?" */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-sm rounded-2xl bg-[#0E1A38] border border-[#24315A] shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-5 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-base text-[#E6ECFA]">
+                  Log out of SOT?
+                </h3>
+                <p className="text-xs text-[#9AA8C7]">
+                  Your session and chat history on this device will be cleared.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                className="w-full py-2.5 px-4 rounded-xl border border-[#24315A] bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_15px_rgba(225,29,72,0.3)]"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log out</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

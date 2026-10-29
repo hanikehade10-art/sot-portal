@@ -1,6 +1,21 @@
-import React, { useState, useMemo } from 'react';
-import { CourseItem, ResourceItem, BookmarkItem } from '../types';
-import { normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
+import React, { useState, useMemo, useEffect } from 'react';
+import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import { db } from '../lib/firebase';
+import {
+  CourseItem,
+  ResourceItem,
+  BookmarkItem,
+  CourseSheetItem,
+  CourseSheetLevel,
+  CourseSheetSemester
+} from '../types';
+import {
+  normalizeCourseLevel,
+  normalizeCourseSemester,
+  getCourseSheetDocId,
+  formatPdfUrl,
+  getPdfDownloadUrl
+} from '../data/coursesAndTimetables';
 import {
   BookOpen,
   FileText,
@@ -18,7 +33,9 @@ import {
   HelpCircle,
   FileQuestion,
   UserCheck,
-  Link2
+  Link2,
+  Eye,
+  X
 } from 'lucide-react';
 
 interface StudentResourcesViewProps {
@@ -45,6 +62,47 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   onNavigateLinks
 }) => {
   const [activeTab, setActiveTab] = useState<ResourceTab>('courses');
+
+  // Course Outlines & Sheets State
+  const defaultSheetLevel: CourseSheetLevel = userLevel ? normalizeCourseLevel(userLevel) : 'ND1';
+  const [sheetLevel, setSheetLevel] = useState<CourseSheetLevel>(defaultSheetLevel);
+  const [sheetSem, setSheetSem] = useState<CourseSheetSemester>('First');
+  const [courseSheets, setCourseSheets] = useState<Record<string, CourseSheetItem>>({});
+  const [loadingSheets, setLoadingSheets] = useState(true);
+  const [selectedOutlineId, setSelectedOutlineId] = useState<string | null>(null);
+
+  // In-App PDF Viewer Modal state
+  const [viewerItem, setViewerItem] = useState<{ title: string; url: string; courseCode?: string; category?: string } | null>(null);
+
+  // Sync sheetLevel when userLevel changes
+  useEffect(() => {
+    if (userLevel) {
+      setSheetLevel(normalizeCourseLevel(userLevel));
+    }
+  }, [userLevel]);
+
+  // Real-time listener for department courseSheets
+  useEffect(() => {
+    if (!department) return;
+    setLoadingSheets(true);
+    const q = query(collection(db, 'courseSheets'), where('department', '==', department));
+    const unsub = onSnapshot(
+      q,
+      (snapshot) => {
+        const map: Record<string, CourseSheetItem> = {};
+        snapshot.forEach((docSnap) => {
+          map[docSnap.id] = { id: docSnap.id, ...(docSnap.data() as Omit<CourseSheetItem, 'id'>) };
+        });
+        setCourseSheets(map);
+        setLoadingSheets(false);
+      },
+      (error) => {
+        console.warn('courseSheets onSnapshot error:', error);
+        setLoadingSheets(false);
+      }
+    );
+    return () => unsub();
+  }, [department]);
 
   // Pre-filter with student level if set, else 'All'
   const initialLevel = userLevel ? normalizeCourseLevel(userLevel) : 'All';
@@ -144,10 +202,84 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
     return list;
   }, [courses, resources, department]);
 
-  // 2. FILTERED MATERIALS (excluding Past Questions)
+  // Course Outlines list (from courseSheets + resources where category === 'Course Outline')
+  const departmentOutlines = useMemo(() => {
+    const list: Array<{
+      id: string;
+      title: string;
+      courseCode: string;
+      category: 'Course Outline';
+      url: string;
+      fileName: string;
+      level: string;
+      semester: string;
+      author?: string;
+      createdAt?: string;
+    }> = [];
+
+    // 1. From courseSheets
+    Object.values(courseSheets).forEach(sheet => {
+      if (sheet.department === department && sheet.url) {
+        list.push({
+          id: sheet.id,
+          title: sheet.title || `${department} ${sheet.level} ${sheet.semester} Semester Course Outline`,
+          courseCode: 'OUTLINE',
+          category: 'Course Outline',
+          url: sheet.url,
+          fileName: sheet.fileName || `${department}_${sheet.level}_${sheet.semester}.pdf`,
+          level: sheet.level,
+          semester: sheet.semester === 'First' ? 'First Semester' : sheet.semester === 'Second' ? 'Second Semester' : sheet.semester,
+          author: sheet.uploadedBy,
+          createdAt: sheet.createdAt
+        });
+      }
+    });
+
+    // 2. From resources where category === 'Course Outline'
+    resources.forEach(r => {
+      if (r.department === department && r.category === 'Course Outline') {
+        const duplicate = list.some(item => item.url === r.url || item.id === r.id);
+        if (!duplicate) {
+          list.push({
+            id: r.id,
+            title: r.title,
+            courseCode: r.courseCode || 'OUTLINE',
+            category: 'Course Outline',
+            url: r.url,
+            fileName: `${r.title}.pdf`,
+            level: r.level,
+            semester: r.semester,
+            author: r.uploadedByRole ? `${r.uploadedByRole} (${r.uploadedByEmail || ''})` : r.uploadedByEmail,
+            createdAt: r.createdAt
+          });
+        }
+      }
+    });
+
+    return list;
+  }, [courseSheets, resources, department]);
+
+  // Outlines matching student's active sheetLevel & sheetSem
+  const currentOutlines = useMemo(() => {
+    return departmentOutlines.filter(item => {
+      const matchLvl = normalizeCourseLevel(item.level) === normalizeCourseLevel(sheetLevel);
+      const matchSem = normalizeCourseSemester(item.semester) === normalizeCourseSemester(sheetSem);
+      if (!matchLvl || !matchSem) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        return (
+          item.title.toLowerCase().includes(q) ||
+          item.courseCode.toLowerCase().includes(q)
+        );
+      }
+      return true;
+    });
+  }, [departmentOutlines, sheetLevel, sheetSem, searchQuery]);
+
+  // 2. FILTERED MATERIALS (excluding Past Questions AND Course Outlines)
   const filteredMaterials = useMemo(() => {
     return allMaterials.filter(m => {
-      if (m.category === 'Past Question') return false;
+      if (m.category === 'Past Question' || m.category === 'Course Outline') return false;
 
       if (levelFilter !== 'All') {
         if (normalizeCourseLevel(m.level) !== normalizeCourseLevel(levelFilter)) {
@@ -236,7 +368,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
             Academic Resources
           </h2>
           <p className="text-xs text-[#9AA8C7]">
-            {department} curriculum syllabus, course notes, and past examination papers.
+            {department} course outlines, lecture notes, and past examination papers.
           </p>
         </div>
 
@@ -272,7 +404,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
           }`}
         >
           <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
-          <span>Courses ({filteredCourses.length})</span>
+          <span>Courses ({currentOutlines.length})</span>
         </button>
 
         <button
@@ -322,8 +454,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
         )}
       </div>
 
-      {/* Filter Row: Level & Semester */}
-      {activeTab !== 'bookmarks' && (
+      {/* Filter Row: Level & Semester (for Materials & Past Questions) */}
+      {activeTab !== 'bookmarks' && activeTab !== 'courses' && (
         <div className="flex flex-wrap items-center justify-between gap-2.5 p-2.5 rounded-xl bg-[#0F1E36]/60 border border-[#1F2C4C]">
           <div className="flex items-center gap-1.5 text-xs text-[#9AA8C7]">
             <Filter className="w-3.5 h-3.5 text-[#FFC700]" />
@@ -375,149 +507,233 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
       )}
 
       {/* ======================================================== */}
-      {/* TAB 1: COURSES                                           */}
+      {/* TAB 1: COURSES (Course Outline for Department & Level)   */}
       {/* ======================================================== */}
-      {activeTab === 'courses' && (
-        <div className="space-y-2.5">
-          {filteredCourses.length === 0 ? (
-            <div className="p-8 text-center rounded-2xl bg-[#0F1E36] border border-[#24315A] space-y-2">
-              <BookOpen className="w-8 h-8 text-[#9AA8C7] mx-auto opacity-40" />
-              <p className="text-sm font-semibold text-[#E6ECFA]">No courses match your filter</p>
-              <p className="text-xs text-[#9AA8C7]">
-                Try switching the level ({levelFilter}) or semester ({semesterFilter}) filter above.
-              </p>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {filteredCourses.map(course => {
-                const bookmarked = isBookmarked('course', course.id);
-                const isExpanded = expandedCourseId === course.id;
+      {activeTab === 'courses' && (() => {
+        const activeOutline = (selectedOutlineId && currentOutlines.find(o => o.id === selectedOutlineId)) || currentOutlines[0];
+        const isSheetBookmarked = activeOutline ? isBookmarked('material', activeOutline.id) : false;
 
-                return (
-                  <div
-                    key={course.id}
-                    className="p-3.5 rounded-xl bg-[#0F1E36] border border-[#1F2C4C] hover:border-[#2F52FF]/60 transition-all flex flex-col justify-between gap-3"
-                  >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-1.5">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-2 py-0.5 rounded-md bg-[#2F52FF]/20 text-[#2F52FF] border border-[#2F52FF]/40 text-xs font-bold">
-                            {course.code}
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
-                            {course.units} Units
-                          </span>
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-[#121C36] text-[#FFC700] border border-[#24315A]">
-                            {course.level} • {normalizeCourseSemester(course.semester) === 'First Semester' ? 'Sem 1' : 'Sem 2'}
-                          </span>
-                        </div>
-
-                        {/* Bookmark Button */}
-                        <button
-                          onClick={() =>
-                            toggleBookmark({
-                              id: course.id,
-                              type: 'course',
-                              title: `${course.code}: ${course.title}`,
-                              code: course.code,
-                              category: course.type,
-                              department: course.department
-                            })
-                          }
-                          title={bookmarked ? 'Remove bookmark' : 'Bookmark course'}
-                          className={`p-1.5 rounded-lg border transition-colors cursor-pointer shrink-0 ${
-                            bookmarked
-                              ? 'bg-[#FFC700]/10 border-[#FFC700] text-[#FFC700]'
-                              : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                          }`}
-                        >
-                          {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-
-                      <h3 className="font-display font-bold text-sm text-[#E6ECFA] leading-snug">
-                        {course.title}
-                      </h3>
-
-                      {course.description && (
-                        <p className={`text-xs text-[#9AA8C7] mt-1.5 ${isExpanded ? '' : 'line-clamp-2'}`}>
-                          {course.description}
-                        </p>
-                      )}
-                    </div>
-
-                    {/* Materials accordion or preview */}
-                    {course.materials && course.materials.length > 0 && (
-                      <div className="pt-2.5 border-t border-[#1F2C4C] space-y-1.5">
-                        <div className="flex items-center justify-between text-[11px] text-[#9AA8C7]">
-                          <span className="font-semibold text-[#E6ECFA] flex items-center gap-1.5">
-                            <FolderOpen className="w-3 h-3 text-[#FFC700]" />
-                            {course.materials.length} Resource{course.materials.length > 1 ? 's' : ''} Attached
-                          </span>
-                          <button
-                            onClick={() => setExpandedCourseId(isExpanded ? null : course.id)}
-                            className="text-[#2F52FF] hover:underline text-[11px] font-medium cursor-pointer"
-                          >
-                            {isExpanded ? 'Hide' : 'View'}
-                          </button>
-                        </div>
-
-                        {isExpanded && (
-                          <div className="space-y-1.5 pt-1">
-                            {course.materials.map((m, idx) => {
-                              const matBookmarked = isBookmarked('material', m.id || `${course.code}_m_${idx}`);
-                              return (
-                                <div
-                                  key={idx}
-                                  className="flex items-center justify-between gap-2 p-2 rounded-lg bg-[#121C36] border border-[#24315A] text-xs"
-                                >
-                                  <div className="min-w-0">
-                                    <p className="text-[#E6ECFA] truncate font-medium">{m.title}</p>
-                                    <span className="text-[10px] text-[#FFC700]">{m.category}</span>
-                                  </div>
-                                  <div className="flex items-center gap-1 shrink-0">
-                                    <button
-                                      onClick={() =>
-                                        toggleBookmark({
-                                          id: m.id || `${course.code}_m_${idx}`,
-                                          type: 'material',
-                                          title: `${course.code} - ${m.title}`,
-                                          code: course.code,
-                                          category: m.category,
-                                          link: m.url,
-                                          department: course.department
-                                        })
-                                      }
-                                      className={`p-1 rounded border transition-colors cursor-pointer ${
-                                        matBookmarked
-                                          ? 'border-[#FFC700] text-[#FFC700]'
-                                          : 'border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                                      }`}
-                                    >
-                                      {matBookmarked ? <BookmarkCheck className="w-3 h-3" /> : <Bookmark className="w-3 h-3" />}
-                                    </button>
-                                    <button
-                                      onClick={() => openLink(m.url)}
-                                      className="p-1 rounded bg-[#2F52FF] text-white hover:bg-[#2544DD] cursor-pointer"
-                                      title="Open Material"
-                                    >
-                                      <Download className="w-3 h-3" />
-                                    </button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-                    )}
+        return (
+          <div className="space-y-4">
+            
+            {/* Level & Semester Selectors Bar */}
+            <div className="p-4 rounded-2xl bg-[#0F1E36] border border-[#1F2C4C] space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/30 text-[10px] font-bold uppercase mb-1">
+                    <FileText className="w-3 h-3 text-[#FFC700]" />
+                    <span>Course Outline</span>
                   </div>
-                );
-              })}
+                  <h3 className="font-display font-bold text-base sm:text-lg text-[#E6ECFA]">
+                    {department} Course Outline
+                  </h3>
+                  <p className="text-xs text-[#9AA8C7]">
+                    Course outline and curriculum guide for {department}.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2 self-start sm:self-auto">
+                  <span className="text-xs font-bold px-3 py-1 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A]">
+                    {sheetLevel} • {sheetSem} Semester
+                  </span>
+                </div>
+              </div>
+
+              {/* Selectors Row */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-[#1F2C4C]">
+                
+                {/* Level Selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#9AA8C7]">Level:</span>
+                  <div className="flex items-center gap-1 bg-[#121C36] p-1 rounded-xl border border-[#24315A]">
+                    {(['ND1', 'ND2', 'HND1', 'HND2'] as const).map(lvl => (
+                      <button
+                        key={lvl}
+                        type="button"
+                        onClick={() => {
+                          setSheetLevel(lvl);
+                          setSelectedOutlineId(null);
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          sheetLevel === lvl
+                            ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0A1224]'
+                        }`}
+                      >
+                        {lvl}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Semester Selector */}
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-[#9AA8C7]">Semester:</span>
+                  <div className="flex items-center gap-1 bg-[#121C36] p-1 rounded-xl border border-[#24315A]">
+                    {(['First', 'Second'] as const).map(sem => (
+                      <button
+                        key={sem}
+                        type="button"
+                        onClick={() => {
+                          setSheetSem(sem);
+                          setSelectedOutlineId(null);
+                        }}
+                        className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                          sheetSem === sem
+                            ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_12px_rgba(255,199,0,0.3)]'
+                            : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0A1224]'
+                        }`}
+                      >
+                        {sem === 'First' ? '1st Semester' : '2nd Semester'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
             </div>
-          )}
-        </div>
-      )}
+
+            {/* Multiple outlines selector if > 1 */}
+            {currentOutlines.length > 1 && (
+              <div className="flex items-center gap-2 overflow-x-auto p-2 rounded-xl bg-[#0F1E36] border border-[#1F2C4C] no-scrollbar">
+                <span className="text-[11px] text-[#9AA8C7] font-semibold shrink-0">Available Outlines ({currentOutlines.length}):</span>
+                {currentOutlines.map(outline => (
+                  <button
+                    key={outline.id}
+                    onClick={() => setSelectedOutlineId(outline.id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all whitespace-nowrap cursor-pointer ${
+                      activeOutline?.id === outline.id
+                        ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
+                        : 'bg-[#121C36] text-[#9AA8C7] hover:text-[#E6ECFA] border border-[#24315A]'
+                    }`}
+                  >
+                    {outline.courseCode && outline.courseCode !== 'OUTLINE' && (
+                      <span className="text-[#FFC700] mr-1">[{outline.courseCode}]</span>
+                    )}
+                    <span>{outline.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Content: Loading / PDF Viewer / Not uploaded yet */}
+            {loadingSheets ? (
+              <div className="p-16 text-center text-xs text-[#9AA8C7] rounded-2xl bg-[#0F1E36] border border-[#1F2C4C] animate-pulse">
+                Checking course curriculum database...
+              </div>
+            ) : activeOutline ? (
+              <div className="space-y-3">
+                
+                {/* Header Action Bar */}
+                <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1F2C4C] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-emerald-950/60 text-emerald-400 border border-emerald-500/40">
+                      <FileText className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h4 className="font-display font-bold text-sm sm:text-base text-[#E6ECFA] leading-tight">
+                        {activeOutline.title}
+                      </h4>
+                      <p className="text-[11px] text-[#9AA8C7] mt-0.5">
+                        {activeOutline.fileName} • {activeOutline.createdAt ? new Date(activeOutline.createdAt).toLocaleDateString() : 'Recently uploaded'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap">
+                    {/* Bookmark */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        toggleBookmark({
+                          id: activeOutline.id,
+                          type: 'material',
+                          title: activeOutline.title,
+                          category: 'Course Outline',
+                          link: activeOutline.url,
+                          department
+                        })
+                      }
+                      title={isSheetBookmarked ? 'Remove Bookmark' : 'Bookmark Outline'}
+                      className={`p-2 rounded-xl border transition-colors cursor-pointer ${
+                        isSheetBookmarked
+                          ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
+                          : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
+                      }`}
+                    >
+                      {isSheetBookmarked ? (
+                        <BookmarkCheck className="w-4 h-4 fill-[#FFC700]" />
+                      ) : (
+                        <Bookmark className="w-4 h-4" />
+                      )}
+                    </button>
+
+                    {/* Open Button */}
+                    <a
+                      href={activeOutline.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-3.5 py-2 rounded-xl bg-[#121C36] text-[#E6ECFA] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Open</span>
+                    </a>
+
+                    {/* Download Button */}
+                    <a
+                      href={getPdfDownloadUrl(activeOutline.url)}
+                      download={activeOutline.fileName}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-4 py-2 rounded-xl bg-[#2F52FF] text-white hover:bg-[#2545df] text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.3)]"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      <span>Download</span>
+                    </a>
+                  </div>
+                </div>
+
+                {/* Embedded In-App PDF Viewer */}
+                <div className="w-full h-[650px] sm:h-[750px] rounded-2xl overflow-hidden border border-[#24315A] bg-[#0A1224] shadow-2xl relative">
+                  <iframe
+                    src={formatPdfUrl(activeOutline.url)}
+                    title={activeOutline.title}
+                    className="w-full h-full border-0"
+                    allow="autoplay"
+                  />
+                </div>
+
+              </div>
+            ) : (
+              /* Friendly Empty State */
+              <div className="p-12 sm:p-16 text-center rounded-2xl bg-[#0F1E36] border border-[#1F2C4C] space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] mx-auto opacity-75">
+                  <FileText className="w-7 h-7" />
+                </div>
+                <h4 className="font-display font-bold text-lg text-[#E6ECFA]">
+                  Not uploaded yet
+                </h4>
+                <p className="text-xs text-[#9AA8C7] max-w-md mx-auto leading-relaxed">
+                  No course outline has been uploaded yet for <strong className="text-[#FFC700]">{department}</strong> ({sheetLevel} - {sheetSem} Semester).
+                </p>
+                <div className="pt-2 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSheetSem(sheetSem === 'First' ? 'Second' : 'First');
+                      setSelectedOutlineId(null);
+                    }}
+                    className="px-4 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#E6ECFA] hover:border-[#2F52FF] cursor-pointer"
+                  >
+                    Check {sheetSem === 'First' ? '2nd Semester' : '1st Semester'} &rarr;
+                  </button>
+                </div>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {/* ======================================================== */}
       {/* TAB 2: MATERIALS (Lecture Notes, Textbooks, Slides)       */}
@@ -597,14 +813,35 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                       )}
                     </div>
 
-                    <div className="pt-2 border-t border-[#1F2C4C] flex items-center justify-end">
+                    <div className="pt-2 border-t border-[#1F2C4C] flex items-center justify-end gap-2 flex-wrap">
                       <button
-                        onClick={() => openLink(item.url)}
-                        className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2544DD] text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        onClick={() => setViewerItem(item)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#2F52FF] text-[#E6ECFA] hover:text-white border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="View PDF inside app"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-[#FFC700]" />
+                        <span>View</span>
+                      </button>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1E2E52] text-[#9AA8C7] hover:text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="Open external link"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open</span>
+                      </a>
+                      <a
+                        href={getPdfDownloadUrl(item.url)}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2544DD] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_10px_rgba(47,82,255,0.3)]"
                       >
                         <Download className="w-3.5 h-3.5 text-[#FFC700]" />
-                        <span>Download / View</span>
-                      </button>
+                        <span>Download</span>
+                      </a>
                     </div>
                   </div>
                 );
@@ -686,14 +923,34 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                       )}
                     </div>
 
-                    <div className="pt-2 border-t border-[#1F2C4C] flex items-center justify-end">
+                    <div className="pt-2 border-t border-[#1F2C4C] flex items-center justify-end gap-2 flex-wrap">
                       <button
-                        onClick={() => openLink(item.url)}
-                        className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2544DD] text-white text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        onClick={() => setViewerItem(item)}
+                        className="px-2.5 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#2F52FF] text-[#E6ECFA] hover:text-white border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                        title="View PDF inside app"
+                      >
+                        <Eye className="w-3.5 h-3.5 text-[#FFC700]" />
+                        <span>View</span>
+                      </button>
+                      <a
+                        href={item.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-2.5 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1E2E52] text-[#9AA8C7] hover:text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>Open</span>
+                      </a>
+                      <a
+                        href={getPdfDownloadUrl(item.url)}
+                        download
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2544DD] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_10px_rgba(47,82,255,0.3)]"
                       >
                         <Download className="w-3.5 h-3.5 text-[#FFC700]" />
-                        <span>Download Questions</span>
-                      </button>
+                        <span>Download</span>
+                      </a>
                     </div>
                   </div>
                 );
@@ -738,13 +995,23 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                       {item.title}
                     </h4>
                     {item.link && (
-                      <button
-                        onClick={() => openLink(item.link)}
-                        className="text-[11px] text-[#2F52FF] hover:underline flex items-center gap-1 cursor-pointer pt-0.5"
-                      >
-                        <ExternalLink className="w-3 h-3" />
-                        <span>Open Resource</span>
-                      </button>
+                      <div className="flex items-center gap-2 pt-0.5">
+                        <button
+                          onClick={() => setViewerItem({ title: item.title, url: item.link || '', courseCode: item.code, category: item.category })}
+                          className="text-[11px] text-[#FFC700] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <Eye className="w-3 h-3" />
+                          <span>View in App</span>
+                        </button>
+                        <span className="text-[#62759F]">•</span>
+                        <button
+                          onClick={() => openLink(item.link)}
+                          className="text-[11px] text-[#2F52FF] hover:underline flex items-center gap-1 cursor-pointer"
+                        >
+                          <ExternalLink className="w-3 h-3" />
+                          <span>Open</span>
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -759,6 +1026,82 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ======================================================== */}
+      {/* IN-APP PDF VIEWER MODAL                                  */}
+      {/* ======================================================== */}
+      {viewerItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md">
+          <div className="relative w-full max-w-5xl h-[90vh] bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.9)]">
+            {/* Modal Header */}
+            <div className="px-4 py-3 sm:px-5 sm:py-3.5 bg-[#0F1E36] border-b border-[#24315A] flex items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-1.5 rounded-lg bg-[#2F52FF]/20 text-[#2F52FF] border border-[#2F52FF]/30 shrink-0">
+                  <FileText className="w-4 h-4 text-[#FFC700]" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    {viewerItem.courseCode && viewerItem.courseCode !== 'OUTLINE' && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-[#2F52FF]/20 text-[#2F52FF] border border-[#2F52FF]/30">
+                        {viewerItem.courseCode}
+                      </span>
+                    )}
+                    <h3 className="font-display font-bold text-xs sm:text-sm text-[#E6ECFA] truncate">
+                      {viewerItem.title}
+                    </h3>
+                  </div>
+                  {viewerItem.category && (
+                    <span className="text-[10px] text-[#9AA8C7]">
+                      {viewerItem.category}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href={viewerItem.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-[#121C36] text-[#E6ECFA] border border-[#24315A] hover:border-[#2F52FF] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <span className="hidden sm:inline">Open</span>
+                </a>
+
+                <a
+                  href={getPdfDownloadUrl(viewerItem.url)}
+                  download
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.4)]"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Download</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setViewerItem(null)}
+                  className="p-1.5 rounded-lg text-[#9AA8C7] hover:text-white hover:bg-[#121C36] cursor-pointer ml-1"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Body / Iframe */}
+            <div className="flex-1 w-full bg-[#070D1A] relative">
+              <iframe
+                src={formatPdfUrl(viewerItem.url)}
+                title={viewerItem.title}
+                className="w-full h-full border-0"
+                allow="autoplay"
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

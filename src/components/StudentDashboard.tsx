@@ -9,10 +9,9 @@ import { INITIAL_COURSES, INITIAL_TIMETABLES, normalizeCourseLevel, normalizeCou
 import { AskAiView } from './AskAiView';
 import { DailyStreakCard } from './DailyStreakCard';
 import { StudentBookmarksView } from './StudentBookmarksView';
-import { WhatsAppChannelButton } from './WhatsAppChannelButton';
 import { GpaCalculator } from './GpaCalculator';
 import { StudyPlanner } from './StudyPlanner';
-import { ExamCountdownCard } from './ExamCountdownCard';
+import { WhatsAppIcon } from './WhatsAppIcon';
 import { StudentResourcesView } from './StudentResourcesView';
 import { CommunitiesLinksView } from './CommunitiesLinksView';
 import { NotificationsPopover, DashboardNotificationItem } from './NotificationsPopover';
@@ -174,6 +173,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const { settings } = useSiteSettings();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const handleConfirmLogout = async () => {
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem('sot_local_user');
+      localStorage.removeItem('sot_local_profile');
+      localStorage.removeItem('sot_admin_view_choice');
+      localStorage.removeItem('sot_notifications_last_seen');
+      localStorage.removeItem('sot_daily_ai_timestamps');
+      localStorage.removeItem('sot_ai_chat_session');
+      await logout();
+    } catch (err) {
+      console.warn('Logout error:', err);
+    } finally {
+      setShowLogoutConfirm(false);
+      onNavigateHome();
+    }
+  };
 
   // Bookmarks toast
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
@@ -544,6 +562,31 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     const nonPinned = matched.filter(a => !pinned.some(p => p.id === a.id));
     return [...pinned, ...nonPinned];
   }, [announcements, profile?.department, annFilter]);
+
+  // Home announcements: pinned announcements first, then latest, max 2 items
+  const homeAnnouncements = useMemo(() => {
+    const matched = announcements.filter(a => a.department === 'All' || a.department === (profile?.department || studentDept));
+    const pinned = matched.filter(a => a.pinned);
+    const nonPinned = matched.filter(a => !a.pinned);
+    return [...pinned, ...nonPinned].slice(0, 2);
+  }, [announcements, profile?.department, studentDept]);
+
+  // Next exam calculation for the timetable card
+  const nextExamInfo = useMemo(() => {
+    const todayStr = getLagosDateString();
+    const todayDate = new Date(todayStr);
+    const examEntries = timetables
+      .filter(t => t.department === studentDept && t.type === 'exam' && !!t.date)
+      .map(t => {
+        const examDate = new Date(t.date!);
+        const diffMs = examDate.getTime() - todayDate.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+        return { entry: t, diffDays };
+      })
+      .filter(e => e.diffDays >= 0)
+      .sort((a, b) => a.diffDays - b.diffDays);
+    return examEntries[0] || null;
+  }, [timetables, studentDept]);
 
   // Comprehensive notifications aggregation (Announcements, Materials, Past Questions, Courses, Timetables, Links, Study Tasks)
   const lastSeenIso = notificationsLastSeen || (profile as any)?.notificationsLastSeen;
@@ -1265,8 +1308,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <span>Public Site</span>
           </button>
           <button
-            onClick={() => { logout(); onNavigateHome(); }}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/20 cursor-pointer"
+            type="button"
+            onClick={() => setShowLogoutConfirm(true)}
+            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/20 cursor-pointer transition-colors"
           >
             <LogOut className="w-4 h-4" />
             <span>Log out</span>
@@ -1401,103 +1445,85 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 1: OVERVIEW                                         */}
+        {/* VIEW 1: OVERVIEW (Simplified Student Home)                */}
         {/* ======================================================== */}
         {activeTab === 'overview' && (
-          <div className="space-y-4">
+          <div className="space-y-2 sm:space-y-2.5 max-w-2xl mx-auto">
 
-            {/* WhatsApp Broadcast Banner if enabled by Admin */}
-            {settings.whatsappChannelUrl && (
-              <WhatsAppChannelButton
-                url={settings.whatsappChannelUrl}
-                variant="banner"
-              />
-            )}
+            {/* 1. Compact Greeting Card */}
+            <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-r from-[#0E1A38] via-[#12224A] to-[#1A2E63] border border-[#24315A] shadow-[0_4px_20px_rgba(47,82,255,0.12)] space-y-2.5">
+              <div>
+                <h2 className="font-heading font-bold text-base sm:text-lg text-[#E6ECFA] tracking-tight flex items-center gap-1.5">
+                  <span>{lagosGreetingData.greeting}, {studentFirstName}!</span>
+                  {lagosGreetingData.period === 'morning' && <span className="text-amber-400">☀️</span>}
+                  {lagosGreetingData.period === 'afternoon' && <span className="text-[#FFC700]">⛅</span>}
+                  {lagosGreetingData.period === 'evening' && <span className="text-indigo-400">🌅</span>}
+                  {lagosGreetingData.period === 'night' && <span className="text-blue-300">🌙</span>}
+                </h2>
+                <p className="text-xs text-[#9AA8C7] mt-0.5">
+                  {lagosGreetingData.messages[greetingMsgIdx % lagosGreetingData.messages.length]}
+                </p>
+              </div>
 
-            {/* 1. Compact Navy-to-Cobalt Greeting Card with Lagos Time Auto-Update */}
-            <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#0E1A38] via-[#12224A] to-[#1A2E63] border border-[#24315A] shadow-[0_4px_20px_rgba(47,82,255,0.12)] space-y-3">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
-                <div>
-                  <h2 className="font-display font-bold text-lg sm:text-xl text-[#E6ECFA] tracking-tight flex items-center gap-2">
-                    <span>{lagosGreetingData.greeting}, {studentFirstName}!</span>
-                    {lagosGreetingData.period === 'morning' && <span className="text-amber-400">☀️</span>}
-                    {lagosGreetingData.period === 'afternoon' && <span className="text-[#FFC700]">⛅</span>}
-                    {lagosGreetingData.period === 'evening' && <span className="text-indigo-400">🌅</span>}
-                    {lagosGreetingData.period === 'night' && <span className="text-blue-300">🌙</span>}
-                  </h2>
-                  <p className="text-xs text-[#9AA8C7] mt-0.5">
-                    {lagosGreetingData.messages[greetingMsgIdx % lagosGreetingData.messages.length]}
-                  </p>
+              {/* Department & Level Chips + GPA & Tasks Shortcuts */}
+              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#24315A]/60 flex-wrap">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] text-[#FFC700] text-[11px] font-semibold flex items-center gap-1">
+                    <GraduationCap className="w-3 h-3 text-[#FFC700]" />
+                    <span>{profile?.department || studentDept}</span>
+                  </span>
+
+                  {(profile?.level || editLevel) && (
+                    <span className="px-2 py-0.5 rounded-md bg-[#2F52FF]/20 border border-[#2F52FF]/40 text-[#E6ECFA] text-[11px] font-semibold flex items-center gap-1">
+                      <span className="text-[10px] text-[#FFC700] uppercase font-bold">Level:</span>
+                      <span>{profile?.level || editLevel}</span>
+                    </span>
+                  )}
                 </div>
 
-                {/* Quick Shortcuts */}
-                <div className="flex items-center gap-2 self-start sm:self-auto">
+                <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                   <button
                     onClick={() => setActiveTab('gpa')}
-                    className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] hover:border-[#FFC700] text-[#FFC700] text-xs font-semibold transition-all cursor-pointer"
+                    className="px-2.5 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] hover:border-[#FFC700] text-[#FFC700] text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1"
                   >
-                    GPA Calc
+                    <Calculator className="w-3 h-3" />
+                    <span>GPA</span>
                   </button>
                   <button
                     onClick={() => setActiveTab('study-planner')}
-                    className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] hover:border-[#2F52FF] text-[#60A5FA] text-xs font-semibold transition-all cursor-pointer"
+                    className="px-2.5 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] hover:border-[#2F52FF] text-[#60A5FA] text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1"
                   >
-                    Tasks
+                    <ListTodo className="w-3 h-3" />
+                    <span>Tasks</span>
                   </button>
                 </div>
-              </div>
-
-              {/* Small chips for Department, Role and Level (if set) */}
-              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-[#24315A]/60 text-xs">
-                <span className="px-2.5 py-1 rounded-lg bg-[#0A1224]/80 border border-[#24315A] text-[#FFC700] font-semibold flex items-center gap-1.5">
-                  <GraduationCap className="w-3.5 h-3.5 text-[#FFC700]" />
-                  <span>{profile?.department || studentDept}</span>
-                </span>
-
-                <span className={`px-2.5 py-1 rounded-lg border font-semibold flex items-center gap-1.5 ${
-                  isRep
-                    ? 'bg-[#FFC700]/15 border-[#FFC700]/50 text-[#FFC700]'
-                    : isAdmin
-                    ? 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-                    : 'bg-[#2F52FF]/20 border-[#2F52FF]/40 text-[#60A5FA]'
-                }`}>
-                  <User className="w-3.5 h-3.5" />
-                  <span>{isAdmin ? 'Admin' : isRep ? 'Course Rep' : 'Student'}</span>
-                </span>
-
-                {(profile?.level || editLevel) && (
-                  <span className="px-2.5 py-1 rounded-lg bg-[#2F52FF]/20 border border-[#2F52FF]/40 text-white font-bold flex items-center gap-1.5">
-                    <span className="text-[10px] text-[#FFC700] uppercase font-bold">Level:</span>
-                    <span>{profile?.level || editLevel}</span>
-                  </span>
-                )}
               </div>
             </div>
 
             {/* 2. Universal Search Bar */}
             <div className="relative">
               <div className="relative">
-                <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
                   value={homeSearchQuery}
                   onChange={e => setHomeSearchQuery(e.target.value)}
                   placeholder="Search courses, notes, past questions"
-                  className="w-full pl-10 pr-9 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#62759F] focus:outline-none focus:border-[#2F52FF] transition-all"
+                  className="w-full pl-9 pr-8 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#62759F] focus:outline-none focus:border-[#2F52FF] transition-all"
                 />
                 {homeSearchQuery && (
                   <button
                     onClick={() => setHomeSearchQuery('')}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#9AA8C7] hover:text-white"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-[#9AA8C7] hover:text-white"
                   >
                     &times;
                   </button>
                 )}
               </div>
 
-              {/* Universal Search Results Popover / Card */}
+              {/* Universal Search Results Popover */}
               {universalSearchResults && (
-                <div className="mt-2 p-3 rounded-xl bg-[#0F1E36] border border-[#24315A] shadow-2xl space-y-3">
+                <div className="mt-2 p-3 rounded-xl bg-[#0F1E36] border border-[#24315A] shadow-2xl space-y-2.5">
                   <div className="flex items-center justify-between text-xs text-[#9AA8C7] pb-1 border-b border-[#1F2C4C]">
                     <span>Results for &ldquo;{homeSearchQuery}&rdquo;</span>
                     <button
@@ -1515,7 +1541,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       No matches found. Try searching by course code (e.g. COM 111) or title.
                     </p>
                   ) : (
-                    <div className="space-y-3">
+                    <div className="space-y-2">
                       {universalSearchResults.courses.length > 0 && (
                         <div>
                           <p className="text-[10px] uppercase font-bold text-[#FFC700] mb-1">Courses</p>
@@ -1552,7 +1578,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                     href={m.url}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="px-2 py-1 rounded bg-[#2F52FF] text-white text-[10px] font-semibold shrink-0 hover:bg-[#2544DD]"
+                                    className="px-2 py-0.5 rounded bg-[#2F52FF] text-white text-[10px] font-semibold shrink-0 hover:bg-[#2544DD]"
                                   >
                                     Open
                                   </a>
@@ -1586,243 +1612,154 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               )}
             </div>
 
-            {/* 3. Daily Streak Activity Card (Slim Single-Row) */}
+            {/* 3. Slim One-Row Streak Card */}
             <DailyStreakCard
               streakCount={profile?.streakCount || 1}
               longestStreak={profile?.longestStreak || profile?.streakCount || 1}
               lastActiveDate={profile?.lastActiveDate}
             />
 
-            {/* 4. Exam Countdown Card */}
-            <ExamCountdownCard
-              department={studentDept}
-              timetables={timetables}
-              onViewTimetable={() => setActiveTab('timetables')}
-            />
-
-            {/* Tidy Grid of Small Cards (12-16px padding, smaller gaps) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4">
-              
-              {/* Card 1: Announcements */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <Bell className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Announcements</span>
+            {/* 4. Announcements (Pinned first, max 2 items, single compact row with See All) */}
+            <div className="p-3 sm:p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-[#E6ECFA]">
+                  <Bell className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <span>Announcements</span>
+                  {unreadAnnouncementsCount > 0 && (
+                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-rose-600 text-white">
+                      {unreadAnnouncementsCount}
                     </span>
-                    {unreadAnnouncementsCount > 0 ? (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-rose-600 text-white">
-                        {unreadAnnouncementsCount} new
-                      </span>
-                    ) : (
-                      <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
-                        {relevantAnnouncements.length} total
-                      </span>
-                    )}
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-1 flex items-center gap-1.5">
-                    {relevantAnnouncements[0]?.pinned && (
-                      <Pin className="w-3.5 h-3.5 text-[#FFC700] fill-[#FFC700] shrink-0" />
-                    )}
-                    <span>{relevantAnnouncements[0]?.title || 'Latest Bulletins'}</span>
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] line-clamp-2 leading-relaxed">
-                    {relevantAnnouncements[0]?.content || 'Faculty notices and urgent updates for your department.'}
-                  </p>
+                  )}
                 </div>
                 <button
                   onClick={handleOpenAnnouncements}
-                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                  className="text-[11px] font-semibold text-[#FFC700] hover:underline cursor-pointer"
                 >
-                  Read Bulletins &rarr;
+                  See all &rarr;
                 </button>
               </div>
 
-              {/* Card 2: Timetable Today */}
-              {(() => {
-                const todayLagosDay = new Intl.DateTimeFormat('en-US', {
-                  timeZone: 'Africa/Lagos',
-                  weekday: 'long'
-                }).format(new Date());
-
-                const todayClasses = timetables.filter(t =>
-                  t.department === studentDept &&
-                  t.day === todayLagosDay &&
-                  t.type === 'class'
-                );
-
-                return (
-                  <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                          <Calendar className="w-3.5 h-3.5 text-[#FFC700]" />
-                          <span>Today ({todayLagosDay})</span>
-                        </span>
-                        <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A] font-bold">
-                          {todayClasses.length} {todayClasses.length === 1 ? 'class' : 'classes'}
+              {homeAnnouncements.length === 0 ? (
+                <p className="text-xs text-[#9AA8C7]">No announcements posted yet.</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {homeAnnouncements.map((a) => (
+                    <button
+                      key={a.id}
+                      onClick={handleOpenAnnouncements}
+                      className="w-full text-left p-2 rounded-lg bg-[#0A1224]/70 hover:bg-[#1A2E63] border border-[#24315A]/60 flex items-center justify-between gap-2 cursor-pointer transition-colors group"
+                    >
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        {a.pinned && (
+                          <Pin className="w-3 h-3 text-[#FFC700] fill-[#FFC700] shrink-0" />
+                        )}
+                        <span className="text-xs font-semibold text-[#E6ECFA] truncate group-hover:text-white">
+                          {a.title}
                         </span>
                       </div>
-                      <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
-                        {todayClasses.length > 0
-                          ? `${todayClasses[0].courseCode} • ${todayClasses[0].startTime}`
-                          : 'No lectures scheduled today'}
-                      </h3>
-                      <p className="text-xs text-[#9AA8C7] truncate">
-                        {todayClasses.length > 0
-                          ? `Venue: ${todayClasses[0].venue}`
-                          : 'Enjoy your free study or laboratory session.'}
-                      </p>
-                    </div>
+                      <span className="text-[10px] text-[#FFC700] shrink-0 font-medium">Read &rarr;</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 5. Today's Timetable (Compact card with today's classes and next exam line) */}
+            {(() => {
+              const todayLagosDay = new Intl.DateTimeFormat('en-US', {
+                timeZone: 'Africa/Lagos',
+                weekday: 'long'
+              }).format(new Date());
+
+              const todayClasses = timetables.filter(t =>
+                t.department === studentDept &&
+                t.day === todayLagosDay &&
+                t.type === 'class'
+              );
+
+              return (
+                <div className="p-3 sm:p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#E6ECFA] flex items-center gap-1.5">
+                      <Calendar className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <span>Today ({todayLagosDay})</span>
+                    </span>
                     <button
                       onClick={() => setActiveTab('timetables')}
-                      className="text-left text-xs font-semibold text-[#2F52FF] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
+                      className="text-[11px] font-semibold text-[#FFC700] hover:underline cursor-pointer"
                     >
-                      View Full Week &rarr;
+                      Full timetable &rarr;
                     </button>
                   </div>
-                );
-              })()}
 
-              {/* Card 3: Academic Resources */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Resources</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
-                      {courses.length} courses
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
-                    Curriculum &amp; Notes
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
-                    Lecture notes, syllabus outlines, and past exam questions.
-                  </p>
+                  {todayClasses.length === 0 ? (
+                    <p className="text-xs text-[#9AA8C7]">No classes scheduled today.</p>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {todayClasses.map(c => (
+                        <div
+                          key={c.id}
+                          className="p-2 rounded-lg bg-[#0A1224]/70 border border-[#24315A]/60 flex items-center justify-between text-xs"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="font-bold text-[#FFC700] truncate">{c.courseCode}</span>
+                            <span className="text-[#9AA8C7] truncate text-[11px]">• {c.venue}</span>
+                          </div>
+                          <span className="text-[10px] font-semibold text-[#E6ECFA] shrink-0 bg-[#2F52FF]/20 px-2 py-0.5 rounded border border-[#2F52FF]/30">
+                            {c.startTime}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Next exam integrated line */}
+                  {nextExamInfo && (
+                    <div className="pt-2 border-t border-[#24315A]/60 flex items-center justify-between text-[11px]">
+                      <span className="text-[#9AA8C7] flex items-center gap-1.5 truncate">
+                        <Clock className="w-3 h-3 text-[#FFC700] shrink-0" />
+                        <span className="truncate">
+                          {nextExamInfo.diffDays === 0
+                            ? `Next exam today (${nextExamInfo.entry.courseCode})`
+                            : nextExamInfo.diffDays === 1
+                            ? `Next exam tomorrow (${nextExamInfo.entry.courseCode})`
+                            : `Next exam in ${nextExamInfo.diffDays} days (${nextExamInfo.entry.courseCode})`}
+                        </span>
+                      </span>
+                      <button
+                        onClick={() => setActiveTab('timetables')}
+                        className="text-[#60A5FA] hover:underline font-medium shrink-0 ml-2 cursor-pointer"
+                      >
+                        View
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <button
-                  onClick={() => setActiveTab('resources')}
-                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
-                >
-                  Explore Resources &rarr;
-                </button>
-              </div>
+              );
+            })()}
 
-              {/* Card 4: Bookmarks */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <Bookmark className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Bookmarks</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#FFC700] border border-[#24315A] font-bold">
-                      {(profile?.bookmarks || []).length} saved
-                    </span>
+            {/* 6. Slim One-Row "Join our WhatsApp channel" button (only if link saved in Settings) */}
+            {settings.whatsappChannelUrl && (
+              <a
+                href={settings.whatsappChannelUrl.trim()}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="w-full p-2.5 sm:p-3 rounded-xl bg-[#121C36] border border-[#25D366]/40 hover:border-[#25D366] text-[#E6ECFA] hover:text-white flex items-center justify-between gap-2.5 transition-all cursor-pointer shadow-sm group"
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-6 h-6 rounded-lg bg-[#25D366] text-white flex items-center justify-center shrink-0 shadow-[0_0_8px_rgba(37,211,102,0.4)]">
+                    <WhatsAppIcon className="w-3.5 h-3.5 text-white" />
                   </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                    Saved Library
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
-                    {(profile?.bookmarks || []).length > 0
-                      ? 'Quick access to your starred lecture handouts and announcements.'
-                      : 'Bookmark any course, note, or announcement to view it here.'}
-                  </p>
+                  <span className="text-xs font-semibold truncate">
+                    Join our WhatsApp channel
+                  </span>
                 </div>
-                <button
-                  onClick={() => setActiveTab('bookmarks')}
-                  className="text-left text-xs font-semibold text-[#2F52FF] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
-                >
-                  Open Bookmarks &rarr;
-                </button>
-              </div>
-
-              {/* Card 5: Ask AI Tutor */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Ask AI Tutor</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/30 font-bold">
-                      24/7
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                    Study Helper &amp; FAQs
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
-                    Get instant concept summaries, exam quiz drills, and faculty assistance.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveTab('ask-ai')}
-                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
-                >
-                  Launch Assistant &rarr;
-                </button>
-              </div>
-
-              {/* Card 6: Study Planner Quick Link */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <ListTodo className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Study Tasks</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#60A5FA] border border-[#24315A] font-bold">
-                      {(profile?.studyPlanner || []).filter(t => !t.done).length} pending
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                    Personal To-Do List
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
-                    Manage assignments, project deliverables, and study targets.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveTab('study-planner')}
-                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
-                >
-                  Manage Planner &rarr;
-                </button>
-              </div>
-
-              {/* Card 7: Communities & Essential Links */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col justify-between space-y-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-[#9AA8C7] flex items-center gap-1.5">
-                      <Link2 className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Communities &amp; Links</span>
-                    </span>
-                    <span className="text-[10px] px-2 py-0.2 rounded-full bg-[#0A1224] text-[#60A5FA] border border-[#24315A] font-bold">
-                      Directory
-                    </span>
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                    Join Communities &amp; Portals
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed line-clamp-2">
-                    Verified WhatsApp groups, portal registration links, and student associations.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setActiveTab('links')}
-                  className="text-left text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer pt-1 border-t border-[#24315A]/70"
-                >
-                  Browse Directory &rarr;
-                </button>
-              </div>
-
-            </div>
+                <span className="text-[11px] font-bold text-[#25D366] flex items-center gap-1 shrink-0 group-hover:translate-x-0.5 transition-transform">
+                  <span>Join</span>
+                  <ExternalLink className="w-3 h-3" />
+                </span>
+              </a>
+            )}
 
           </div>
         )}
@@ -2645,6 +2582,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
             </div>
 
+            {/* Very bottom of Profile Page: Full-Width Outlined Red Log out button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(true)}
+                className="w-full py-3.5 px-4 rounded-xl border border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 hover:border-rose-400 font-bold text-xs flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-sm group"
+              >
+                <LogOut className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                <span>Log out</span>
+              </button>
+            </div>
+
           </div>
         )}
 
@@ -2755,6 +2704,49 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <span className="text-[10px]">Links</span>
         </button>
       </nav>
+
+      {/* Small Confirmation Sheet: "Log out of SOT?" */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-sm rounded-2xl bg-[#0E1A38] border border-[#24315A] shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-5 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-base text-[#E6ECFA]">
+                  Log out of SOT?
+                </h3>
+                <p className="text-xs text-[#9AA8C7]">
+                  Your session and chat history on this device will be cleared.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                className="w-full py-2.5 px-4 rounded-xl border border-[#24315A] bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_15px_rgba(225,29,72,0.3)]"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log out</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

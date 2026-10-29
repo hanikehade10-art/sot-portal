@@ -5,6 +5,7 @@ import {
   collection,
   getDocs,
   doc,
+  setDoc,
   addDoc,
   updateDoc,
   deleteDoc,
@@ -12,7 +13,13 @@ import {
   where
 } from 'firebase/firestore';
 import { ResourceItem, ResourceCategory, AnnouncementItem, AcademicLevel, CourseItem } from '../types';
-import { INITIAL_COURSES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
+import {
+  INITIAL_COURSES,
+  normalizeCourseLevel,
+  normalizeCourseSemester,
+  formatPdfUrl,
+  getCourseSheetDocId
+} from '../data/coursesAndTimetables';
 import { PWAInstallRow } from './PWAInstallRow';
 import {
   LayoutDashboard,
@@ -50,10 +57,10 @@ type RepTab = 'overview' | 'upload' | 'announcement' | 'my-uploads';
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
 const RESOURCE_CATEGORIES: ResourceCategory[] = [
+  'Course Outline',
   'Lecture Note',
   'Past Question',
   'Video',
-  'Assignment',
   'Other'
 ];
 
@@ -66,6 +73,25 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [activeTab, setActiveTab] = useState<RepTab>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  const handleConfirmLogout = async () => {
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem('sot_local_user');
+      localStorage.removeItem('sot_local_profile');
+      localStorage.removeItem('sot_admin_view_choice');
+      localStorage.removeItem('sot_notifications_last_seen');
+      localStorage.removeItem('sot_daily_ai_timestamps');
+      localStorage.removeItem('sot_ai_chat_session');
+      await logout();
+    } catch (err) {
+      console.warn('Logout error:', err);
+    } finally {
+      setShowLogoutConfirm(false);
+      onNavigateHome();
+    }
+  };
 
   // Rep's locked department
   const repDepartment = profile?.department || 'Computer Technology';
@@ -214,8 +240,8 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     setUploadError(null);
     setUploadSuccess(null);
 
-    if (!uploadCourseCode.trim() || !uploadTitle.trim() || !uploadUrl.trim()) {
-      setUploadError('Course code, material title, and resource URL are required.');
+    if (!uploadTitle.trim() || !uploadUrl.trim()) {
+      setUploadError('Material title and resource URL are required.');
       return;
     }
 
@@ -223,20 +249,23 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     try {
       new URL(uploadUrl.trim());
     } catch {
-      setUploadError('Please provide a valid web link (e.g. https://drive.google.com/... or https://youtube.com/...)');
+      setUploadError('Please provide a valid web link (e.g. https://drive.google.com/... or direct file link)');
       return;
     }
 
     setUploadSaving(true);
     const now = new Date().toISOString();
+    const formattedUrl = formatPdfUrl(uploadUrl.trim());
+    const courseCodeVal = uploadCourseCode.trim() ? uploadCourseCode.trim().toUpperCase() : '';
+
     const payload = {
       department: repDepartment,
       level: uploadLevel,
       semester: uploadSemester,
-      courseCode: uploadCourseCode.trim().toUpperCase(),
+      courseCode: courseCodeVal,
       title: uploadTitle.trim(),
       category: uploadCategory,
-      url: uploadUrl.trim(),
+      url: formattedUrl,
       description: uploadDescription.trim(),
       uploadedBy: user?.uid || '',
       uploadedByEmail: user?.email || '',
@@ -252,9 +281,28 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
         ...payload
       };
       setMyResources(prev => [newResource, ...prev]);
-      setUploadSuccess(`"${uploadTitle.trim()}" published successfully to ${repDepartment} students!`);
+
+      // If category is Course Outline, sync to courseSheets as well
+      if (uploadCategory === 'Course Outline') {
+        const sheetLevel = normalizeCourseLevel(uploadLevel);
+        const sheetSem = uploadSemester.includes('First') ? 'First' : 'Second';
+        const docId = getCourseSheetDocId(repDepartment, sheetLevel, sheetSem);
+        setDoc(doc(db, 'courseSheets', docId), {
+          department: repDepartment,
+          level: sheetLevel,
+          semester: sheetSem,
+          title: uploadTitle.trim(),
+          url: formattedUrl,
+          fileName: `${repDepartment}_${sheetLevel}_${sheetSem}.pdf`,
+          uploadedBy: user?.email || 'Course Rep',
+          createdAt: now
+        }, { merge: true }).catch(() => {});
+      }
+
+      setUploadSuccess(`Saved successfully! "${uploadTitle.trim()}" published to ${repDepartment} students.`);
       // Reset form
       setUploadTitle('');
+      setUploadCourseCode('');
       setUploadUrl('');
       setUploadDescription('');
       setTimeout(() => setUploadSuccess(null), 5000);
@@ -560,11 +608,12 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
 
           {/* Logout */}
           <button
-            onClick={logout}
-            className="w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-medium text-rose-400 hover:bg-rose-950/40 transition-colors cursor-pointer"
+            type="button"
+            onClick={() => setShowLogoutConfirm(true)}
+            className="w-full py-2.5 px-3 rounded-xl border border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 hover:border-rose-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm group"
           >
-            <LogOut className="w-4 h-4" />
-            <span>Sign Out</span>
+            <LogOut className="w-3.5 h-3.5 group-hover:-translate-x-0.5 transition-transform" />
+            <span>Log out</span>
           </button>
         </div>
       </aside>
@@ -586,6 +635,14 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
           </div>
 
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => setActiveTab('upload')}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white font-bold text-xs shadow-[0_0_12px_rgba(47,82,255,0.4)] cursor-pointer transition-all"
+            >
+              <UploadCloud className="w-3.5 h-3.5 text-[#FFC700]" />
+              <span>Upload</span>
+            </button>
+
             <button
               onClick={fetchRepData}
               disabled={loading}
@@ -861,12 +918,11 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                     {/* Course Code */}
                     <div className="space-y-1">
                       <label className="text-[11px] font-bold text-[#9AA8C7] uppercase tracking-wider block">
-                        Course Code
+                        Course Code <span className="text-[10px] text-[#9AA8C7]/60 font-normal lowercase">(optional)</span>
                       </label>
                       <input
                         type="text"
-                        required
-                        placeholder="e.g. COM 111"
+                        placeholder="e.g. COM 111 (or leave blank)"
                         value={uploadCourseCode}
                         onChange={(e) => setUploadCourseCode(e.target.value.toUpperCase())}
                         className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700]  font-bold focus:outline-none focus:border-[#2F52FF]"
@@ -1400,6 +1456,49 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               </div>
 
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Small Confirmation Sheet: "Log out of SOT?" */}
+      {showLogoutConfirm && (
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div
+            className="w-full max-w-sm rounded-2xl bg-[#0E1A38] border border-[#24315A] shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-5 space-y-4"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-rose-500/15 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                <LogOut className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="font-heading font-bold text-base text-[#E6ECFA]">
+                  Log out of SOT?
+                </h3>
+                <p className="text-xs text-[#9AA8C7]">
+                  Your session and chat history on this device will be cleared.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(false)}
+                className="w-full py-2.5 px-4 rounded-xl border border-[#24315A] bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] font-semibold text-xs transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmLogout}
+                className="w-full py-2.5 px-4 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_15px_rgba(225,29,72,0.3)]"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Log out</span>
+              </button>
+            </div>
           </div>
         </div>
       )}

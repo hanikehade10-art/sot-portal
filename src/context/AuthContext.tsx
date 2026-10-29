@@ -613,8 +613,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (e) {
       // ignore
     }
-    localStorage.removeItem('sot_local_user');
-    localStorage.removeItem('sot_local_profile');
+    try {
+      sessionStorage.clear();
+      localStorage.removeItem('sot_local_user');
+      localStorage.removeItem('sot_local_profile');
+      localStorage.removeItem('sot_admin_view_choice');
+      localStorage.removeItem('sot_notifications_last_seen');
+      localStorage.removeItem('sot_daily_ai_timestamps');
+      localStorage.removeItem('sot_ai_chat_session');
+    } catch (e) {
+      // ignore
+    }
     setUser(null);
     setProfile(null);
     setRoleReadError(null);
