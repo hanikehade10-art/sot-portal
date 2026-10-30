@@ -152,7 +152,7 @@ export const INITIAL_ANNOUNCEMENTS: AnnouncementItem[] = [
   {
     id: 'ann-1',
     title: 'First Semester Course Registration Guide',
-    content: 'Student portal registrations for the first semester are currently active. Ensure your matric number and department are correctly updated before joining study groups.',
+    content: 'Student portal registrations for the first semester are currently active. Ensure your matric number or JAMB registration number and department are correctly updated before joining study groups.',
     category: 'Academic',
     department: 'All',
     urgent: true,
@@ -186,11 +186,11 @@ export const FAQS = [
   },
   {
     q: 'How does student registration work?',
-    a: 'Sign-up is a straightforward 2-step flow: in Step 1 you create your account with your email and password, and in Step 2 you select your department and unique matric number to immediately access your dashboard.'
+    a: 'Sign-up is a straightforward 2-step flow: in Step 1 you create your account with your email and password, and in Step 2 you select your department and unique matric number or JAMB registration number to immediately access your dashboard.'
   },
   {
-    q: 'Can I change my matriculation number after completing registration?',
-    a: 'No. For security and record integrity, matriculation numbers are unique and permanently locked once registered. If you made an error, submit a message through the Contact page.'
+    q: 'Can I change my matric number or JAMB registration number after completing registration?',
+    a: 'Matric numbers are unique and permanently locked once saved. If you registered with a JAMB registration number, you can upgrade to your official matric number in Profile settings as soon as you receive it.'
   },
   {
     q: 'Who can access the Admin Dashboard?',

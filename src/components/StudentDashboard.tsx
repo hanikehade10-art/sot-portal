@@ -27,6 +27,7 @@ import {
   GraduationCap,
   Menu,
   X,
+  Loader2,
   ShieldCheck,
   Calendar,
   Lock,
@@ -60,7 +61,8 @@ import {
   ListTodo,
   Link2,
   Pin,
-  CheckCheck
+  CheckCheck,
+  FileBadge2
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -169,7 +171,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateAdmin,
   onNavigateRep
 }) => {
-  const { user, profile, isAdmin, roleReadError, refreshProfile, logout, updateStudentProfile } = useAuth();
+  const { user, profile, isAdmin, roleReadError, refreshProfile, logout, updateStudentProfile, upgradeJambToMatric } = useAuth();
   const { settings } = useSiteSettings();
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -293,6 +295,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
   const [profileError, setProfileError] = useState<string | null>(null);
+
+  // JAMB -> Matric Upgrade state
+  const [upgradeMatricInput, setUpgradeMatricInput] = useState('');
+  const [upgradeSaving, setUpgradeSaving] = useState(false);
+  const [upgradeSuccess, setUpgradeSuccess] = useState<string | null>(null);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+
+  const handleUpgradeMatric = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setUpgradeError(null);
+    setUpgradeSuccess(null);
+    const clean = upgradeMatricInput.trim().toUpperCase().replace(/\s+/g, '');
+    if (!clean) {
+      setUpgradeError('Please enter your official matriculation number.');
+      return;
+    }
+    const matricRegex = /^[A-Z0-9_\-\/]{4,30}$/;
+    if (!matricRegex.test(clean)) {
+      setUpgradeError('Matric number format must be 4 to 30 characters (e.g. F/ND/25/3210001).');
+      return;
+    }
+
+    setUpgradeSaving(true);
+    try {
+      await upgradeJambToMatric(clean);
+      setUpgradeSuccess(`Matriculation number "${clean}" saved successfully! Your profile is now permanent.`);
+      setUpgradeMatricInput('');
+      setTimeout(() => setUpgradeSuccess(null), 5000);
+    } catch (err: any) {
+      setUpgradeError(err.message || 'Failed to update matric number. Please check your connection.');
+    } finally {
+      setUpgradeSaving(false);
+    }
+  };
 
   // Home Dynamic Greeting with Lagos time auto-update
   const [lagosGreetingData, setLagosGreetingData] = useState<LagosGreetingResult>(() => getLagosPeriodGreeting());
@@ -484,9 +520,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     if (courseSearchQuery.trim()) {
       const q = courseSearchQuery.toLowerCase();
       return (
-        r.courseCode.toLowerCase().includes(q) ||
+        (r.courseCode ? r.courseCode.toLowerCase().includes(q) : false) ||
         r.title.toLowerCase().includes(q) ||
-        r.category.toLowerCase().includes(q)
+        (r.category ? r.category.toLowerCase().includes(q) : false)
       );
     }
     return true;
@@ -621,13 +657,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       items.push({
         id: 'mat_' + r.id,
         type: 'material',
-        title: `${r.courseCode}: ${r.title}`,
-        subtitle: `New ${r.category} for ${r.level} • ${r.semester}`,
+        title: `${r.courseCode || ''}: ${r.title}`,
+        subtitle: `New ${r.category || r.type || 'Resource'} for ${r.level} • ${r.semester}`,
         timeStr: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Recent',
         timestamp: ts,
         isUnread: ts > lastSeenMs,
         actionTab: 'resources',
-        badge: r.category
+        badge: r.category || (r.type as any) || 'Material'
       });
     });
 
@@ -807,12 +843,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     });
 
     deptResources.forEach(r => {
-      if (r.department === studentDept && (r.title.toLowerCase().includes(q) || r.courseCode.toLowerCase().includes(q))) {
+      const codeMatch = r.courseCode ? r.courseCode.toLowerCase().includes(q) : false;
+      if (r.department === studentDept && (r.title.toLowerCase().includes(q) || codeMatch)) {
         matchedMaterials.push({
           id: r.id,
           title: r.title,
-          courseCode: r.courseCode,
-          category: r.category,
+          courseCode: r.courseCode || '',
+          category: r.category || (r.type as any) || 'Note',
           url: r.url
         });
       }
@@ -1022,7 +1059,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
             <div className="mt-1.5 flex items-center gap-1.5 text-[11px]  text-[#9AA8C7]">
               <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-[#FFC700]' : isRep ? 'bg-[#2F52FF]' : 'bg-emerald-400'}`} />
-              <span>{isAdmin ? 'CLEARANCE: ADMIN' : (profile?.matricNumber || 'MATRIC PENDING')}</span>
+              <span>{isAdmin ? 'CLEARANCE: ADMIN' : (profile?.matricNumber ? profile.matricNumber : profile?.jambNumber ? `JAMB: ${profile.jambNumber}` : 'ID PENDING')}</span>
             </div>
           </div>
 
@@ -2456,26 +2493,107 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   />
                 </div>
 
-                {/* Matric Number (Permanently Locked / Immutable as required) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-[#9AA8C7]">
-                      Matriculation Number (Permanent)
-                    </label>
-                    <span className="text-[10px]  text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
-                      Locked &amp; Immutable
-                    </span>
+                {/* Student Identification: Permanent Matric OR Temporary JAMB + Upgrade Notice */}
+                {profile?.matricNumber ? (
+                  <div>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-xs font-semibold text-[#9AA8C7]">
+                        Matriculation Number (Permanent)
+                      </label>
+                      <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
+                        Locked &amp; Immutable
+                      </span>
+                    </div>
+                    <input
+                      type="text"
+                      disabled
+                      value={profile.matricNumber}
+                      className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm font-bold text-[#FFC700] cursor-not-allowed opacity-80"
+                    />
+                    <p className="text-[11px] text-[#9AA8C7] mt-1">
+                      Matric numbers are unique and cannot be updated once saved. Contact the student desk if your record contains an error.
+                    </p>
                   </div>
-                  <input
-                    type="text"
-                    disabled
-                    value={profile?.matricNumber || 'NOT ASSIGNED'}
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm  font-bold text-[#FFC700] cursor-not-allowed opacity-80"
-                  />
-                  <p className="text-[11px] text-[#9AA8C7] mt-1">
-                    Matric numbers are unique and cannot be updated once saved. Contact the student desk if your record contains an error.
-                  </p>
-                </div>
+                ) : (
+                  <div className="space-y-3">
+                    {/* JAMB Registration Number */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-[#9AA8C7]">
+                          JAMB Registration Number (Temporary ID)
+                        </label>
+                        <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#FFC700]/30 font-semibold">
+                          JAMB Student
+                        </span>
+                      </div>
+                      <input
+                        type="text"
+                        disabled
+                        value={profile?.jambNumber || 'NOT ASSIGNED'}
+                        className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm font-bold text-[#FFC700] cursor-not-allowed opacity-80"
+                      />
+                    </div>
+
+                    {/* Notice: Add your matric number when you get it */}
+                    <div className="p-4 rounded-xl bg-[#0A1224] border border-[#2F52FF]/40 space-y-3">
+                      <div className="flex items-start gap-2.5">
+                        <FileBadge2 className="w-5 h-5 text-[#FFC700] shrink-0 mt-0.5" />
+                        <div>
+                          <h4 className="text-xs font-bold text-[#E6ECFA]">
+                            Add your matric number when you get it
+                          </h4>
+                          <p className="text-[11px] text-[#9AA8C7] mt-0.5 leading-relaxed">
+                            Once your department assigns your official matric number, save it below. Your temporary JAMB registration will be cleared and your permanent matric ID will be locked.
+                          </p>
+                        </div>
+                      </div>
+
+                      {upgradeError && (
+                        <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                          <span>{upgradeError}</span>
+                        </div>
+                      )}
+
+                      {upgradeSuccess && (
+                        <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                          <span>{upgradeSuccess}</span>
+                        </div>
+                      )}
+
+                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                        <input
+                          type="text"
+                          value={upgradeMatricInput}
+                          onChange={(e) => setUpgradeMatricInput(e.target.value.toUpperCase().replace(/\s+/g, ''))}
+                          placeholder="e.g. F/ND/25/3210001"
+                          maxLength={30}
+                          disabled={upgradeSaving}
+                          className="flex-1 px-3.5 py-2 rounded-lg bg-[#121C36] border border-[#24315A] text-sm text-[#E6ECFA] placeholder-[#5A6E85] focus:outline-none focus:border-[#2F52FF] font-mono uppercase"
+                        />
+                        <button
+                          type="button"
+                          onClick={(e) => handleUpgradeMatric(e)}
+                          disabled={upgradeSaving || !upgradeMatricInput.trim()}
+                          className="px-4 py-2 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shrink-0"
+                        >
+                          {upgradeSaving ? (
+                            <>
+                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              <span>Saving...</span>
+                            </>
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-3.5 h-3.5 text-[#FFC700]" />
+                              <span>Save matric number</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Department (Read-only) */}
                 <div>

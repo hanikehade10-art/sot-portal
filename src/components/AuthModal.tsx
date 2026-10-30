@@ -76,6 +76,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [selectedDept, setSelectedDept] = useState<SotDepartmentName | ''>(
     (initialDepartment as SotDepartmentName) || ''
   );
+  const [idType, setIdType] = useState<'matric' | 'jamb'>('matric');
   const [matricNumber, setMatricNumber] = useState('');
 
   // Status & error tracking
@@ -165,21 +166,29 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    const cleanMatric = matricNumber.trim().toUpperCase();
-    if (!cleanMatric) {
-      setErrorMsg('Matriculation number is required.');
+    const cleanNumber = matricNumber.trim().toUpperCase().replace(/\s+/g, '');
+    if (!cleanNumber) {
+      setErrorMsg(idType === 'matric' ? 'Matric number is required.' : 'JAMB registration number is required.');
       return;
     }
 
-    const matricFormat = /^[A-Z0-9_\-\/]{4,25}$/;
-    if (!matricFormat.test(cleanMatric)) {
-      setErrorMsg('Matric number format must be 4 to 25 characters (e.g. F/ND/25/3210001).');
-      return;
+    if (idType === 'matric') {
+      const matricFormat = /^[A-Z0-9_\-\/]{4,25}$/;
+      if (!matricFormat.test(cleanNumber)) {
+        setErrorMsg('Matric number format must be 4 to 25 characters (e.g. F/ND/25/3210001).');
+        return;
+      }
+    } else {
+      const jambFormat = /^[A-Z0-9]{8,15}$/;
+      if (!jambFormat.test(cleanNumber)) {
+        setErrorMsg('JAMB registration number must be letters and digits only, 8 to 15 characters long (e.g. 2025123456AB).');
+        return;
+      }
     }
 
     setLoading(true);
     try {
-      await completeStep2(selectedDept as SotDepartmentName, cleanMatric);
+      await completeStep2(selectedDept as SotDepartmentName, cleanNumber, idType);
       setSuccessMsg('Sign-up complete! Directing you straight to the dashboard...');
       setTimeout(() => {
         onSuccessRedirect();
@@ -187,8 +196,8 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       }, 1000);
     } catch (err: any) {
       if (err.message && err.message.includes('already been claimed')) {
-        setMatricConflict(cleanMatric);
-        setErrorMsg(`Matriculation number "${cleanMatric}" has already been claimed by another student account. Please verify your number or contact the faculty administration.`);
+        setMatricConflict(cleanNumber);
+        setErrorMsg(err.message);
       } else {
         console.warn('Step 2 completion notice:', err?.message || err);
         setErrorMsg(err.message || 'Failed to complete registration.');
@@ -223,7 +232,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
       // If user is not admin and profile is incomplete, send to Step 2
       if (!isUserAdmin && (!userProfile || !userProfile.profileComplete)) {
-        setSuccessMsg('Login successful. Please complete Step 2 (Department & Matric Number).');
+        setSuccessMsg('Login successful. Please complete Step 2 (Department & matric number or JAMB registration number).');
         setMode('step2');
       } else {
         setSuccessMsg(
@@ -321,7 +330,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             <div className="flex items-center justify-between text-xs font-semibold mb-2">
               <span className="text-[#FFC700] flex items-center gap-1.5">
                 <FileBadge2 className="w-4 h-4" />
-                {mode === 'signup' ? 'Step 1 of 2: Account Creation' : 'Step 2 of 2: Department & Matric Number'}
+                {mode === 'signup' ? 'Step 1 of 2: Account Creation' : 'Step 2 of 2: Department & Matric or JAMB Number'}
               </span>
               <span className="text-[#9AA8C7]">
                 {mode === 'signup' ? 'Step 1 of 2' : 'Final Step'}
@@ -521,14 +530,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         )}
 
         {/* ======================================================== */}
-        {/* STEP 2: STUDENT DETAILS (Department & Unique Matric)     */}
+        {/* STEP 2: STUDENT DETAILS (Department & Matric or JAMB)    */}
         {/* ======================================================== */}
         {mode === 'step2' && (
           <form onSubmit={handleStep2Submit} className="space-y-4">
             
             <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] leading-relaxed">
               <span className="font-semibold text-[#FFC700]">Final Step:</span>{' '}
-              Select your department and enter your unique matriculation number. Once submitted, you will be taken straight to your student dashboard.
+              Select your department and enter your unique matric number or JAMB registration number. Once submitted, you will be taken straight to your student dashboard.
             </div>
 
             {/* Department Dropdown (contains all 6 departments) */}
@@ -554,14 +563,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
             </div>
 
-            {/* Matric Number Field */}
+            {/* Two-Option Switch: Matric vs JAMB */}
+            <div>
+              <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                Identification Type *
+              </label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 p-1 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdType('matric');
+                    if (matricConflict) setMatricConflict(null);
+                    if (errorMsg) setErrorMsg(null);
+                  }}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    idType === 'matric'
+                      ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
+                      : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+                  }`}
+                >
+                  <span>I have a matric number</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIdType('jamb');
+                    if (matricConflict) setMatricConflict(null);
+                    if (errorMsg) setErrorMsg(null);
+                  }}
+                  className={`py-2 px-3 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                    idType === 'jamb'
+                      ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_12px_rgba(255,199,0,0.35)]'
+                      : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
+                  }`}
+                >
+                  <span>I don't have one yet (use JAMB registration number)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Matric or JAMB Number Field */}
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-semibold text-[#9AA8C7]">
-                  Matriculation Number *
+                  {idType === 'matric' ? 'Matric number *' : 'JAMB registration number *'}
                 </label>
-                <span className="text-[11px] text-[#FFC700] ">
-                  e.g. F/ND/25/3210001
+                <span className="text-[11px] text-[#FFC700]">
+                  {idType === 'matric' ? 'e.g. F/ND/25/3210001' : 'e.g. 2025123456AB'}
                 </span>
               </div>
               <div className="relative">
@@ -570,27 +618,34 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   required
                   value={matricNumber}
                   onChange={(e) => {
-                    setMatricNumber(e.target.value.toUpperCase());
+                    const clean = e.target.value.toUpperCase().replace(/\s+/g, '');
+                    setMatricNumber(clean);
                     if (matricConflict) setMatricConflict(null);
                     if (errorMsg) setErrorMsg(null);
                   }}
-                  placeholder="F/ND/25/3210001"
+                  placeholder={idType === 'matric' ? 'F/ND/25/3210001' : '2025123456AB'}
                   className={`w-full pl-10 pr-4 py-2.5 rounded-lg bg-[#0A1224] border ${
                     matricConflict
                       ? 'border-rose-500 ring-1 ring-rose-500/50 focus:border-rose-500'
                       : 'border-[#24315A] focus:border-[#2F52FF] focus:ring-2 focus:ring-[#2F52FF]/40 focus:shadow-[0_0_15px_rgba(47,82,255,0.25)]'
-                  } text-[#E6ECFA] uppercase placeholder-[#9AA8C7]/50  text-sm focus:outline-none transition-all tracking-wider`}
+                  } text-[#E6ECFA] uppercase placeholder-[#9AA8C7]/50 text-sm focus:outline-none transition-all tracking-wider`}
                 />
                 <FileBadge2 className={`w-4 h-4 ${matricConflict ? 'text-rose-400' : 'text-[#9AA8C7]'} absolute left-3.5 top-3`} />
               </div>
               {matricConflict ? (
                 <p className="text-[11px] text-rose-400 mt-1.5 flex items-center gap-1 font-medium">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0" />
-                  <span>Matriculation number already claimed. Please verify your number.</span>
+                  <span>
+                    {idType === 'matric'
+                      ? 'Matriculation number already claimed. Please verify your number.'
+                      : 'JAMB registration number already claimed. Please verify your number.'}
+                  </span>
                 </p>
               ) : (
                 <p className="text-[11px] text-[#9AA8C7] mt-1.5">
-                  Matric numbers must be unique across all student accounts.
+                  {idType === 'matric'
+                    ? 'Matric numbers must be unique across all student accounts.'
+                    : 'JAMB numbers must be letters and digits only (8-15 characters). You can add your matric number later.'}
                 </p>
               )}
             </div>
@@ -603,7 +658,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               {loading ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin text-[#0A1224]" />
-                  <span>Verifying Matric & Activating...</span>
+                  <span>Verifying {idType === 'matric' ? 'Matric' : 'JAMB'} & Activating...</span>
                 </>
               ) : (
                 <>

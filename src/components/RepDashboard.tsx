@@ -17,8 +17,7 @@ import {
   INITIAL_COURSES,
   normalizeCourseLevel,
   normalizeCourseSemester,
-  formatPdfUrl,
-  getCourseSheetDocId
+  formatPdfUrl
 } from '../data/coursesAndTimetables';
 import { PWAInstallRow } from './PWAInstallRow';
 import {
@@ -57,7 +56,6 @@ type RepTab = 'overview' | 'upload' | 'announcement' | 'my-uploads';
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
 const RESOURCE_CATEGORIES: ResourceCategory[] = [
-  'Course Outline',
   'Lecture Note',
   'Past Question',
   'Video',
@@ -258,6 +256,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     const formattedUrl = formatPdfUrl(uploadUrl.trim());
     const courseCodeVal = uploadCourseCode.trim() ? uploadCourseCode.trim().toUpperCase() : '';
 
+    const mappedType = uploadCategory === 'Lecture Note' ? 'Note' : uploadCategory;
     const payload = {
       department: repDepartment,
       level: uploadLevel,
@@ -265,6 +264,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       courseCode: courseCodeVal,
       title: uploadTitle.trim(),
       category: uploadCategory,
+      type: mappedType as any,
       url: formattedUrl,
       description: uploadDescription.trim(),
       uploadedBy: user?.uid || '',
@@ -281,23 +281,6 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
         ...payload
       };
       setMyResources(prev => [newResource, ...prev]);
-
-      // If category is Course Outline, sync to courseSheets as well
-      if (uploadCategory === 'Course Outline') {
-        const sheetLevel = normalizeCourseLevel(uploadLevel);
-        const sheetSem = uploadSemester.includes('First') ? 'First' : 'Second';
-        const docId = getCourseSheetDocId(repDepartment, sheetLevel, sheetSem);
-        setDoc(doc(db, 'courseSheets', docId), {
-          department: repDepartment,
-          level: sheetLevel,
-          semester: sheetSem,
-          title: uploadTitle.trim(),
-          url: formattedUrl,
-          fileName: `${repDepartment}_${sheetLevel}_${sheetSem}.pdf`,
-          uploadedBy: user?.email || 'Course Rep',
-          createdAt: now
-        }, { merge: true }).catch(() => {});
-      }
 
       setUploadSuccess(`Saved successfully! "${uploadTitle.trim()}" published to ${repDepartment} students.`);
       // Reset form
@@ -390,7 +373,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     setEditingResource(item);
     setEditTitle(item.title);
     setEditUrl(item.url);
-    setEditCategory(item.category);
+    setEditCategory(item.category || 'Lecture Note');
     setEditDescription(item.description || '');
     setEditError(null);
   };
@@ -433,8 +416,8 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     return myResources.filter(
       r =>
         r.title.toLowerCase().includes(q) ||
-        r.courseCode.toLowerCase().includes(q) ||
-        r.category.toLowerCase().includes(q)
+        (r.courseCode ? r.courseCode.toLowerCase().includes(q) : false) ||
+        (r.category ? r.category.toLowerCase().includes(q) : false)
     );
   }, [myResources, searchQuery]);
 

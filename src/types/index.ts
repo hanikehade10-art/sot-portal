@@ -2,12 +2,16 @@ export type UserRole = 'student' | 'rep' | 'admin';
 
 export interface BookmarkItem {
   id: string; // unique id (or target id)
-  type: 'course' | 'material' | 'announcement';
+  type: 'course' | 'topic' | 'material' | 'resource' | 'announcement';
   title: string;
   link?: string;
+  url?: string;
   code?: string;
   category?: string;
   department?: string;
+  courseId?: string;
+  topicId?: string;
+  itemType?: string;
   createdAt: string;
 }
 
@@ -53,6 +57,8 @@ export interface UserProfile {
   fullName?: string;
   department?: string;
   matricNumber?: string;
+  idType?: 'matric' | 'jamb';
+  jambNumber?: string;
   profileComplete: boolean;
   role: UserRole;
   disabled?: boolean;
@@ -113,8 +119,21 @@ export interface ContactMessage {
 
 export type AcademicLevel = 'ND1' | 'ND2' | 'HND1' | 'HND2' | 'ND I' | 'ND II' | 'HND I' | 'HND II';
 
-export type CourseMaterialCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
+export type ResourceType = 'Video' | 'Note' | 'Past Question' | 'Other';
+export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
 export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Video' | 'Assignment' | 'Other';
+
+export interface TopicItem {
+  id: string;
+  courseId: string;
+  department: string;
+  level: string; // 'ND1' | 'ND2' | 'HND1' | 'HND2'
+  semester: string; // 'First Semester' | 'Second Semester'
+  title: string;
+  order: number;
+  createdAt: string;
+  updatedAt?: string;
+}
 
 export interface CourseMaterial {
   id?: string;
@@ -125,16 +144,19 @@ export interface CourseMaterial {
 
 export interface ResourceItem {
   id: string;
+  courseId?: string;
+  topicId?: string;
+  type?: ResourceType;
   department: string;
   level: string; // 'ND1' | 'ND2' | 'HND1' | 'HND2'
   semester: string; // 'First Semester' | 'Second Semester'
-  courseCode: string;
+  courseCode?: string;
   title: string;
-  category: ResourceCategory;
+  category?: ResourceCategory;
   url: string;
   description?: string;
   uploadedBy: string; // uid
-  uploadedByEmail: string;
+  uploadedByEmail?: string;
   uploadedByRole?: string; // 'Course Rep' | 'admin' | string
   createdAt: string;
   updatedAt?: string;

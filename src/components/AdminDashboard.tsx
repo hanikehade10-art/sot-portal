@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useAuth, sanitizeMatricId } from '../context/AuthContext';
+import { useAuth, sanitizeMatricId, sanitizeJambId } from '../context/AuthContext';
 import { db } from '../lib/firebase';
 import {
   collection,
@@ -30,8 +30,7 @@ import {
   INITIAL_TIMETABLES,
   normalizeCourseLevel,
   normalizeCourseSemester,
-  formatPdfUrl,
-  getCourseSheetDocId
+  formatPdfUrl
 } from '../data/coursesAndTimetables';
 import { DEFAULT_GRADING_SCALE } from '../config/gradingScale';
 import { WhatsAppIcon } from './WhatsAppIcon';
@@ -78,7 +77,7 @@ import {
 } from 'lucide-react';
 import { AdminRepActivityView } from './AdminRepActivityView';
 import { AdminLinksView } from './AdminLinksView';
-import { AdminCoursePdfsView } from './AdminCoursePdfsView';
+import { AdminCoursesManager } from './AdminCoursesManager';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
@@ -88,9 +87,7 @@ type AdminTab =
   | 'overview'
   | 'students'
   | 'rep-activity'
-  | 'course-sheets'
   | 'courses'
-  | 'materials'
   | 'timetables'
   | 'announcements'
   | 'messages'
@@ -190,6 +187,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   // -------------------------------------------------------------
   const [studentSearch, setStudentSearch] = useState('');
   const [studentDeptFilter, setStudentDeptFilter] = useState<string>('All');
+  const [studentIdFilter, setStudentIdFilter] = useState<'All' | 'matric' | 'jamb'>('All');
 
   // -------------------------------------------------------------
   // TIMETABLES STATE
@@ -792,14 +790,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const filteredStudents = useMemo(() => {
     return students.filter(s => {
       const matchDept = studentDeptFilter === 'All' || s.department === studentDeptFilter;
-      const q = studentSearch.toLowerCase();
+      const matchIdType =
+        studentIdFilter === 'All' ||
+        (studentIdFilter === 'jamb'
+          ? (s.idType === 'jamb' || (!!s.jambNumber && !s.matricNumber))
+          : (s.idType === 'matric' || !!s.matricNumber));
+      const q = studentSearch.toLowerCase().trim();
       const matchSearch =
+        !q ||
         (s.email && s.email.toLowerCase().includes(q)) ||
         (s.fullName && s.fullName.toLowerCase().includes(q)) ||
-        (s.matricNumber && s.matricNumber.toLowerCase().includes(q));
-      return matchDept && matchSearch;
+        (s.matricNumber && s.matricNumber.toLowerCase().includes(q)) ||
+        (s.jambNumber && s.jambNumber.toLowerCase().includes(q));
+      return matchDept && matchIdType && matchSearch;
     });
-  }, [students, studentDeptFilter, studentSearch]);
+  }, [students, studentDeptFilter, studentIdFilter, studentSearch]);
 
   const handleToggleRepRole = async (student: UserProfile) => {
     const newRole: 'student' | 'rep' = student.role === 'rep' ? 'student' : 'rep';
@@ -822,9 +827,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   };
 
   const handleDeleteStudent = async (uid: string) => {
-    if (!confirm('Permanently delete this student account and release their matric number reservation?')) return;
+    if (!confirm('Permanently delete this student account and release their ID registration?')) return;
     const target = students.find(s => s.uid === uid);
     const matric = target?.matricNumber?.trim().toUpperCase();
+    const jamb = target?.jambNumber?.trim().toUpperCase();
 
     try {
       await deleteDoc(doc(db, 'users', uid));
@@ -840,17 +846,28 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       } catch (e) {}
     }
 
+    if (jamb) {
+      const jambDocId = `JAMB_${sanitizeJambId(jamb)}`;
+      try {
+        await deleteDoc(doc(db, 'matricNumbers', jambDocId));
+      } catch (e) {}
+      try {
+        await deleteDoc(doc(db, 'matric_registry', jambDocId));
+      } catch (e) {}
+    }
+
     setStudents(prev => prev.filter(s => s.uid !== uid));
   };
 
   const handleExportCSV = () => {
-    const headers = ['UID', 'Full Name', 'Email', 'Department', 'Matric Number', 'Role', 'Status', 'Date Joined'];
+    const headers = ['UID', 'Full Name', 'Email', 'Department', 'ID Type', 'Student ID', 'Role', 'Status', 'Date Joined'];
     const rows = filteredStudents.map(s => [
       `"${s.uid || ''}"`,
       `"${s.fullName || ''}"`,
       `"${s.email || ''}"`,
       `"${s.department || 'N/A'}"`,
-      `"${s.matricNumber || 'N/A'}"`,
+      `"${s.matricNumber ? 'Matric' : s.jambNumber ? 'JAMB' : 'N/A'}"`,
+      `"${s.matricNumber || s.jambNumber || 'N/A'}"`,
       s.role,
       s.disabled ? 'Disabled' : s.profileComplete ? 'Active' : 'Incomplete',
       `"${s.createdAt ? new Date(s.createdAt).toLocaleDateString() : 'N/A'}"`
@@ -1155,9 +1172,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         const q = materialsSearch.toLowerCase();
         return (
           r.title.toLowerCase().includes(q) ||
-          r.courseCode.toLowerCase().includes(q) ||
+          (r.courseCode ? r.courseCode.toLowerCase().includes(q) : false) ||
           (r.uploadedByEmail && r.uploadedByEmail.toLowerCase().includes(q)) ||
-          r.category.toLowerCase().includes(q)
+          (r.category ? r.category.toLowerCase().includes(q) : false)
         );
       }
       return true;
@@ -1226,22 +1243,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       };
       setResources(prev => [newRes, ...prev]);
 
-      // If Type is 'Course Outline', also sync to courseSheets collection
-      if (uploadType === 'Course Outline') {
-        const sheetLevel = normalizeCourseLevel(uploadLevel);
-        const sheetSem = uploadSem.includes('First') ? 'First' : 'Second';
-        const docId = getCourseSheetDocId(uploadDept, sheetLevel, sheetSem);
-        await setDoc(doc(db, 'courseSheets', docId), {
-          department: uploadDept,
-          level: sheetLevel,
-          semester: sheetSem,
-          title: uploadTitle.trim(),
-          url: formattedUrl,
-          fileName: `${uploadDept}_${sheetLevel}_${sheetSem}.pdf`,
-          uploadedBy: user?.email || 'Admin',
-          createdAt: now
-        }, { merge: true });
-      }
+
 
       setUploadSuccess('Saved successfully! Item is now live in the student portal.');
       setUploadTitle('');
@@ -1285,9 +1287,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     overview: 'Overview',
     students: 'Students',
     'rep-activity': 'Rep Activity',
-    'course-sheets': 'Course PDFs',
     courses: 'Courses',
-    materials: 'Materials',
     timetables: 'Timetables',
     announcements: 'Announcements',
     messages: 'Messages',
@@ -1426,24 +1426,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </span>
             </button>
 
-            {/* 2.8 Course PDFs */}
-            <button
-              onClick={() => { setActiveTab('course-sheets'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'course-sheets'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <FileText className="w-4 h-4 text-[#FFC700]" />
-                <span>Course PDFs</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#FFC700] font-bold">
-                PDFs
-              </span>
-            </button>
-
             {/* 3. Courses */}
             <button
               onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
@@ -1455,28 +1437,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             >
               <div className="flex items-center gap-2.5">
                 <BookOpen className="w-4 h-4 text-[#FFC700]" />
-                <span>Courses</span>
+                <span>Courses & Topics</span>
               </div>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
                 {courses.length}
-              </span>
-            </button>
-
-            {/* 3.5 Materials */}
-            <button
-              onClick={() => { setActiveTab('materials'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                activeTab === 'materials'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <FolderOpen className="w-4 h-4 text-[#FFC700]" />
-                <span>Materials</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
-                {resources.length + repAnnouncements.length}
               </span>
             </button>
 
@@ -1823,466 +1787,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           )}
 
           {/* ======================================================== */}
-          {/* TAB: COURSE PDFS (COLLECTION courseSheets)               */}
-          {/* ======================================================== */}
-          {activeTab === 'course-sheets' && (
-            <AdminCoursePdfsView />
-          )}
-
-          {/* ======================================================== */}
-          {/* TAB 2: COURSES SYSTEM                                    */}
+          {/* TAB 2: COURSES, TOPICS & MATERIALS (AdminCoursesManager) */}
           {/* ======================================================== */}
           {activeTab === 'courses' && (
-            <div className="space-y-4">
-              
-              {/* TOP ROW: Department dropdown, Level tabs, Semester toggle */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3">
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                  
-                  {/* Department Dropdown */}
-                  <div className="flex items-center gap-2 w-full lg:w-auto">
-                    <span className="text-xs font-semibold text-[#9AA8C7] shrink-0">Department:</span>
-                    <select
-                      value={courseDeptFilter}
-                      onChange={(e) => setCourseDeptFilter(e.target.value)}
-                      className="w-full lg:w-64 px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] font-medium focus:outline-none focus:border-[#2F52FF]"
-                    >
-                      {SOT_DEPARTMENTS_LIST.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Level Tabs (ND1, ND2, HND1, HND2) */}
-                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52] self-start sm:self-auto">
-                    {ACADEMIC_LEVELS.map(lvl => (
-                      <button
-                        key={lvl}
-                        onClick={() => setCourseLevelFilter(lvl)}
-                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                          courseLevelFilter === lvl
-                            ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
-                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                        }`}
-                      >
-                        {lvl}
-                      </button>
-                    ))}
-                  </div>
-
-                  {/* Semester Toggle (First Semester / Second Semester) */}
-                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52] self-start sm:self-auto">
-                    {SEMESTERS.map(sem => (
-                      <button
-                        key={sem}
-                        onClick={() => setCourseSemesterFilter(sem)}
-                        className={`px-3 py-1 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                          courseSemesterFilter === sem
-                            ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
-                            : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                        }`}
-                      >
-                        {sem}
-                      </button>
-                    ))}
-                  </div>
-
-                </div>
-
-                {/* Sub-row: Search box, Course count, Add course & Batch add buttons */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-[#1E2E52]/60">
-                  <div className="relative w-full sm:w-72">
-                    <input
-                      type="text"
-                      placeholder="Search by code or title..."
-                      value={courseSearch}
-                      onChange={(e) => setCourseSearch(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
-                    />
-                    <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
-                  </div>
-
-                  <div className="flex items-center gap-2.5 self-end sm:self-auto">
-                    <span className="text-xs text-[#9AA8C7] ">
-                      <strong className="text-[#FFC700]">{filteredCourses.length}</strong> {filteredCourses.length === 1 ? 'course' : 'courses'}
-                    </span>
-
-                    <button
-                      onClick={() => setShowBatchModal(true)}
-                      className="px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-[#E6ECFA] hover:border-[#2F52FF] text-xs font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
-                      title="Add multiple courses at once"
-                    >
-                      <Layers className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Add Multiple</span>
-                    </button>
-
-                    <button
-                      onClick={handleOpenAddCourse}
-                      className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] flex items-center gap-1.5 cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.3)] transition-all"
-                    >
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Add Course</span>
-                    </button>
-                  </div>
-                </div>
-
-              </div>
-
-              {/* COURSES TABLE */}
-              <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
-                      <tr>
-                        <th className="py-2.5 px-3.5">Code</th>
-                        <th className="py-2.5 px-3.5">Course Title</th>
-                        <th className="py-2.5 px-3.5">Units</th>
-                        <th className="py-2.5 px-3.5">Type</th>
-                        <th className="py-2.5 px-3.5">Learning Materials</th>
-                        <th className="py-2.5 px-3.5 text-right">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#1E2E52]">
-                      {filteredCourses.length === 0 ? (
-                        <tr>
-                          <td colSpan={6} className="py-12 text-center text-[#9AA8C7]">
-                            <div className="space-y-2 max-w-sm mx-auto">
-                              <BookOpen className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-                              <div className="text-sm font-semibold text-[#E6ECFA]">No courses found</div>
-                              <p className="text-[11px] text-[#9AA8C7]">
-                                No curriculum entries recorded for <strong className="text-[#FFC700]">{courseDeptFilter}</strong> ({courseLevelFilter} - {courseSemesterFilter}).
-                              </p>
-                              <div className="pt-2 flex items-center justify-center gap-2">
-                                <button
-                                  onClick={handleOpenAddCourse}
-                                  className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer inline-flex items-center gap-1.5"
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  <span>Add First Course</span>
-                                </button>
-                                <button
-                                  onClick={() => setShowBatchModal(true)}
-                                  className="px-3.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#E6ECFA] text-xs font-semibold hover:border-[#2F52FF] cursor-pointer inline-flex items-center gap-1.5"
-                                >
-                                  <Layers className="w-3.5 h-3.5 text-[#FFC700]" />
-                                  <span>Batch Add</span>
-                                </button>
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      ) : (
-                        filteredCourses.map(course => (
-                          <tr key={course.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                            <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
-                              {course.code}
-                            </td>
-                            <td className="py-2.5 px-3.5">
-                              <div className="font-semibold text-[#E6ECFA]">{course.title}</div>
-                              {course.description && (
-                                <div className="text-[11px] text-[#9AA8C7] line-clamp-1 mt-0.5">
-                                  {course.description}
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3.5  text-[#E6ECFA]">
-                              {course.units} {course.units === 1 ? 'Unit' : 'Units'}
-                            </td>
-                            <td className="py-2.5 px-3.5">
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                                course.type === 'Core'
-                                  ? 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40'
-                                  : 'bg-[#1E2E52] text-[#9AA8C7] border border-[#1E2E52]'
-                              }`}>
-                                {course.type}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-3.5">
-                              {course.materials && course.materials.length > 0 ? (
-                                <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span className="px-2 py-0.5 rounded text-[10px]  font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/30">
-                                    {course.materials.length} {course.materials.length === 1 ? 'material' : 'materials'}
-                                  </span>
-                                  <span className="text-[10px] text-[#9AA8C7]">
-                                    ({course.materials.map(m => m.category).slice(0, 2).join(', ')})
-                                  </span>
-                                </div>
-                              ) : (
-                                <span className="text-[11px] text-[#9AA8C7] italic">None added</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-3.5 text-right space-x-1.5">
-                              <button
-                                onClick={() => handleOpenEditCourse(course)}
-                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
-                                title="Edit course & materials"
-                              >
-                                <Edit2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => handleDeleteCourse(course.id, course.code)}
-                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
-                                title="Delete course"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-
-            </div>
-          )}
-
-          {/* ======================================================== */}
-          {/* TAB: MATERIALS (Uploaded Resources & Rep Announcements) */}
-          {/* ======================================================== */}
-          {activeTab === 'materials' && (
-            <div className="space-y-4">
-              
-              {/* Controls bar: Department filter, Sub-tab toggle, Search */}
-              <div className="p-3.5 sm:p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  
-                  {/* Sub-tab toggle: Materials vs Rep Announcements */}
-                  <div className="flex items-center gap-1 bg-[#070D1A] p-1 rounded-lg border border-[#1E2E52]">
-                    <button
-                      onClick={() => setMaterialsSubTab('materials')}
-                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                        materialsSubTab === 'materials'
-                          ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
-                          : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                      }`}
-                    >
-                      Uploaded Materials ({resources.length})
-                    </button>
-                    <button
-                      onClick={() => setMaterialsSubTab('announcements')}
-                      className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
-                        materialsSubTab === 'announcements'
-                          ? 'bg-[#FFC700] text-[#0A1224] shadow-[0_0_10px_rgba(255,199,0,0.3)]'
-                          : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                      }`}
-                    >
-                      Rep Announcements ({repAnnouncements.length})
-                    </button>
-                  </div>
-
-                  {/* Department Filter & Prominent Upload Button */}
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-[#9AA8C7] font-semibold">Department:</span>
-                    <select
-                      value={materialsDeptFilter}
-                      onChange={(e) => setMaterialsDeptFilter(e.target.value)}
-                      className="px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                    >
-                      <option value="All">All Departments</option>
-                      {SOT_DEPARTMENTS_LIST.map(dept => (
-                        <option key={dept} value={dept}>{dept}</option>
-                      ))}
-                    </select>
-
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMaterialUploadModal(true);
-                        setUploadSuccess(null);
-                        setUploadError(null);
-                      }}
-                      className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white font-bold text-xs shadow-[0_0_15px_rgba(47,82,255,0.4)] transition-all cursor-pointer"
-                    >
-                      <UploadCloud className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Upload</span>
-                    </button>
-                  </div>
-
-                </div>
-
-                {/* Sub-row: Search */}
-                <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#1E2E52]/60">
-                  <div className="relative w-full sm:w-80">
-                    <input
-                      type="text"
-                      placeholder="Search title, course code, uploader email..."
-                      value={materialsSearch}
-                      onChange={(e) => setMaterialsSearch(e.target.value)}
-                      className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
-                    />
-                    <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2" />
-                  </div>
-
-                  <span className="text-xs text-[#9AA8C7]  shrink-0">
-                    Showing <strong className="text-[#FFC700]">{materialsSubTab === 'materials' ? filteredResources.length : filteredRepAnnouncements.length}</strong> items
-                  </span>
-                </div>
-              </div>
-
-              {/* TABLE 1: UPLOADED MATERIALS */}
-              {materialsSubTab === 'materials' && (
-                <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
-                        <tr>
-                          <th className="py-2.5 px-3.5">Course</th>
-                          <th className="py-2.5 px-3.5">Title & Resource Link</th>
-                          <th className="py-2.5 px-3.5">Department</th>
-                          <th className="py-2.5 px-3.5">Category</th>
-                          <th className="py-2.5 px-3.5">Uploaded By</th>
-                          <th className="py-2.5 px-3.5">Date</th>
-                          <th className="py-2.5 px-3.5 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#1E2E52]">
-                        {filteredResources.length === 0 ? (
-                          <tr>
-                            <td colSpan={7} className="py-12 text-center text-[#9AA8C7]">
-                              <div className="space-y-1">
-                                <FolderOpen className="w-7 h-7 text-[#FFC700] mx-auto opacity-70" />
-                                <div className="text-sm font-semibold text-[#E6ECFA]">No uploaded materials found</div>
-                                <p className="text-[11px]">No resources match the selected department or query.</p>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredResources.map(res => (
-                            <tr key={res.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                              <td className="py-2.5 px-3.5">
-                                <div className=" font-bold text-[#FFC700]">{res.courseCode}</div>
-                                <div className="text-[10px] text-[#9AA8C7]">{res.level} • {res.semester}</div>
-                              </td>
-                              <td className="py-2.5 px-3.5 max-w-xs">
-                                <div className="font-semibold text-[#E6ECFA] truncate">{res.title}</div>
-                                {res.description && (
-                                  <div className="text-[11px] text-[#9AA8C7] line-clamp-1">{res.description}</div>
-                                )}
-                                <a
-                                  href={res.url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-[10px] text-[#2F52FF] hover:underline  truncate flex items-center gap-1 mt-0.5"
-                                >
-                                  <span>{res.url}</span>
-                                  <ExternalLink className="w-2.5 h-2.5 shrink-0" />
-                                </a>
-                              </td>
-                              <td className="py-2.5 px-3.5 text-[#E6ECFA]">
-                                {res.department}
-                              </td>
-                              <td className="py-2.5 px-3.5">
-                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#070D1A] text-[#FFC700] border border-[#1E2E52]">
-                                  {res.category}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3.5">
-                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#FFC700] text-[#0A1224] inline-block mb-0.5">
-                                  Course Rep
-                                </span>
-                                <div className="text-[11px] text-[#9AA8C7] truncate max-w-[140px] " title={res.uploadedByEmail}>
-                                  {res.uploadedByEmail || 'Rep'}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3.5  text-[10px] text-[#9AA8C7] whitespace-nowrap">
-                                {new Date(res.createdAt).toLocaleDateString()}
-                              </td>
-                              <td className="py-2.5 px-3.5 text-right">
-                                <button
-                                  onClick={() => handleDeleteUploadedResource(res.id, res.title)}
-                                  className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
-                                  title="Delete material"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {/* TABLE 2: REP ANNOUNCEMENTS */}
-              {materialsSubTab === 'announcements' && (
-                <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-left text-xs">
-                      <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
-                        <tr>
-                          <th className="py-2.5 px-3.5">Date</th>
-                          <th className="py-2.5 px-3.5">Department</th>
-                          <th className="py-2.5 px-3.5">Title & Content</th>
-                          <th className="py-2.5 px-3.5">Author</th>
-                          <th className="py-2.5 px-3.5">Urgent</th>
-                          <th className="py-2.5 px-3.5 text-right">Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-[#1E2E52]">
-                        {filteredRepAnnouncements.length === 0 ? (
-                          <tr>
-                            <td colSpan={6} className="py-12 text-center text-[#9AA8C7]">
-                              <div className="space-y-1">
-                                <Megaphone className="w-7 h-7 text-[#FFC700] mx-auto opacity-70" />
-                                <div className="text-sm font-semibold text-[#E6ECFA]">No rep announcements found</div>
-                                <p className="text-[11px]">No departmental notices posted by Course Reps match your filter.</p>
-                              </div>
-                            </td>
-                          </tr>
-                        ) : (
-                          filteredRepAnnouncements.map(ann => (
-                            <tr key={ann.id} className="hover:bg-[#070D1A]/50 transition-colors">
-                              <td className="py-2.5 px-3.5  text-[10px] text-[#9AA8C7] whitespace-nowrap">
-                                {new Date(ann.createdAt).toLocaleDateString()}
-                              </td>
-                              <td className="py-2.5 px-3.5 font-bold text-[#FFC700]">
-                                {ann.department}
-                              </td>
-                              <td className="py-2.5 px-3.5 max-w-sm">
-                                <div className="font-semibold text-[#E6ECFA] flex items-center gap-1.5">
-                                  <span>{ann.title}</span>
-                                </div>
-                                <div className="text-[11px] text-[#9AA8C7] line-clamp-1 mt-0.5">
-                                  {ann.content}
-                                </div>
-                              </td>
-                              <td className="py-2.5 px-3.5 text-[#E6ECFA]">
-                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-[#2F52FF] text-white">
-                                  {ann.author || 'Course Rep'}
-                                </span>
-                              </td>
-                              <td className="py-2.5 px-3.5">
-                                {ann.urgent ? (
-                                  <span className="px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-rose-600 text-white">
-                                    URGENT
-                                  </span>
-                                ) : (
-                                  <span className="text-[10px] text-[#9AA8C7]">Standard</span>
-                                )}
-                              </td>
-                              <td className="py-2.5 px-3.5 text-right">
-                                <button
-                                  onClick={() => handleDeleteRepAnnouncement(ann.id, ann.title)}
-                                  className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 cursor-pointer transition-colors"
-                                  title="Delete announcement"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </td>
-                            </tr>
-                          ))
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-            </div>
+            <AdminCoursesManager onNotify={fetchData} />
           )}
 
           {/* ======================================================== */}
@@ -2295,7 +1803,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 <div className="w-full sm:w-72 relative">
                   <input
                     type="text"
-                    placeholder="Search by name, email, matric..."
+                    placeholder="Search by name, email, matric or JAMB..."
                     value={studentSearch}
                     onChange={(e) => setStudentSearch(e.target.value)}
                     className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
@@ -2315,6 +1823,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     ))}
                   </select>
 
+                  <select
+                    value={studentIdFilter}
+                    onChange={(e) => setStudentIdFilter(e.target.value as any)}
+                    className="px-2.5 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                  >
+                    <option value="All">All IDs (Matric &amp; JAMB)</option>
+                    <option value="matric">Matric Students Only</option>
+                    <option value="jamb">JAMB Students Only</option>
+                  </select>
+
                   <button
                     onClick={handleExportCSV}
                     className="px-3 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(255,199,0,0.2)]"
@@ -2331,7 +1849,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     <thead className="bg-[#070D1A] text-[#9AA8C7] uppercase font-bold tracking-wider border-b border-[#1E2E52]">
                       <tr>
                         <th className="py-2.5 px-3.5">Student</th>
-                        <th className="py-2.5 px-3.5">Matric Number</th>
+                        <th className="py-2.5 px-3.5">Matric / JAMB ID</th>
                         <th className="py-2.5 px-3.5">Department</th>
                         <th className="py-2.5 px-3.5">Role</th>
                         <th className="py-2.5 px-3.5">Status</th>
@@ -2352,8 +1870,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                               <div className="font-semibold text-[#E6ECFA]">{student.fullName || 'Unnamed Student'}</div>
                               <div className="text-[11px] text-[#9AA8C7]">{student.email}</div>
                             </td>
-                            <td className="py-2.5 px-3.5  font-bold text-[#FFC700]">
-                              {student.matricNumber || <span className="text-[#9AA8C7] font-normal italic">Pending</span>}
+                            <td className="py-2.5 px-3.5 font-bold">
+                              {student.matricNumber ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40">
+                                    Matric
+                                  </span>
+                                  <span className="text-[#FFC700] font-mono">{student.matricNumber}</span>
+                                </div>
+                              ) : student.jambNumber ? (
+                                <div className="flex items-center gap-1.5">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/40">
+                                    JAMB
+                                  </span>
+                                  <span className="text-[#FFC700] font-mono">{student.jambNumber}</span>
+                                </div>
+                              ) : (
+                                <span className="text-[#9AA8C7] font-normal italic">Pending</span>
+                              )}
                             </td>
                             <td className="py-2.5 px-3.5 text-[#E6ECFA]">
                               {student.department || <span className="text-[#9AA8C7] italic">Unassigned</span>}

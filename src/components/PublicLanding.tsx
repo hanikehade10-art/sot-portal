@@ -149,7 +149,7 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
               Six Specialized Departments
             </h2>
             <p className="text-sm sm:text-base text-[#9AA8C7]">
-              Select your department to view curriculum highlights, course placeholders, and register with your matric number.
+              Select your department to view curriculum highlights, course placeholders, and register with your matric number or JAMB registration number.
             </p>
           </div>
 
@@ -223,7 +223,7 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                 </div>
                 <div className="flex items-center gap-3 text-sm text-[#E6ECFA]">
                   <CheckCircle2 className="w-5 h-5 text-[#FFC700] shrink-0" />
-                  <span>Secure matriculation verification preventing duplicate entries</span>
+                  <span>Secure matriculation or JAMB registration verification preventing duplicate entries</span>
                 </div>
               </div>
             </div>

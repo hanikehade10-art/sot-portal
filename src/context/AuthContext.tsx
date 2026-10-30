@@ -15,6 +15,7 @@ import {
   setDoc,
   updateDoc,
   deleteDoc,
+  deleteField,
   collection,
   query,
   where,
@@ -35,7 +36,8 @@ interface AuthContextType {
   clearRoleReadError: () => void;
   loginLockoutMinutesRemaining: number | null;
   registerStep1: (email: string, password: string, fullName?: string) => Promise<User>;
-  completeStep2: (department: SotDepartmentName, matricNumber: string) => Promise<void>;
+  completeStep2: (department: SotDepartmentName, identifier: string, idType?: 'matric' | 'jamb') => Promise<void>;
+  upgradeJambToMatric: (matricNumber: string) => Promise<void>;
   login: (email: string, password: string) => Promise<UserProfile | null>;
   logout: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
@@ -47,6 +49,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function sanitizeMatricId(matric: string): string {
   return matric.trim().toUpperCase().replace(/[\/\s]/g, '_');
+}
+
+export function sanitizeJambId(jamb: string): string {
+  return `JAMB_${jamb.trim().toUpperCase().replace(/\s+/g, '')}`;
 }
 
 export function checkIsAdminRole(roleValue: unknown): boolean {
@@ -323,44 +329,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  // Step 2: Complete student details (Department & Unique Matric)
-  const completeStep2 = async (department: SotDepartmentName, matricNumber: string): Promise<void> => {
+  // Step 2: Complete student details (Department & Unique Matric or JAMB Registration Number)
+  const completeStep2 = async (
+    department: SotDepartmentName,
+    identifier: string,
+    idType: 'matric' | 'jamb' = 'matric'
+  ): Promise<void> => {
     const currentUser = user || auth.currentUser;
     if (!currentUser) {
       throw new Error('No active user session found. Please sign in to complete registration.');
     }
 
-    const cleanMatric = matricNumber.trim().toUpperCase();
-    if (!cleanMatric) {
-      throw new Error('Matric number is required.');
+    const cleanIdentifier = identifier.trim().toUpperCase().replace(/\s+/g, '');
+    if (!cleanIdentifier) {
+      throw new Error(idType === 'matric' ? 'Matriculation number is required.' : 'JAMB registration number is required.');
     }
 
-    const matricRegex = /^[A-Z0-9_\-\/]{4,30}$/;
-    if (!matricRegex.test(cleanMatric)) {
-      throw new Error('Matric number must contain 4-30 alphanumeric characters (e.g. F/ND/25/3210001).');
+    if (idType === 'matric') {
+      const matricRegex = /^[A-Z0-9_\-\/]{4,30}$/;
+      if (!matricRegex.test(cleanIdentifier)) {
+        throw new Error('Matric number must contain 4-30 alphanumeric characters (e.g. F/ND/25/3210001).');
+      }
+    } else {
+      const jambRegex = /^[A-Z0-9]{8,15}$/;
+      if (!jambRegex.test(cleanIdentifier)) {
+        throw new Error('JAMB registration number must contain 8 to 15 alphanumeric characters with no spaces (e.g. 2025123456AB).');
+      }
     }
 
-    const matricDocId = sanitizeMatricId(cleanMatric);
+    const regDocId = idType === 'matric' ? sanitizeMatricId(cleanIdentifier) : `JAMB_${cleanIdentifier}`;
     const localMatrics = JSON.parse(localStorage.getItem('sot_matric_registry') || '{}');
 
     // Uniqueness verification
     if (auth.currentUser) {
       let activeReservedOwnerUid: string | null = null;
 
-      // Helper to verify if an owner user record actually still exists in Firestore
       const verifyOwnerActiveInFirebase = async (ownerUid: string): Promise<boolean> => {
         try {
           const userSnap = await getDoc(doc(db, 'users', ownerUid));
           return userSnap.exists();
         } catch {
-          // If read fails or doesn't exist, assume not active or verify via other methods
           return false;
         }
       };
 
       // 1. Check direct doc in matricNumbers
       try {
-        const snap = await getDoc(doc(db, 'matricNumbers', matricDocId));
+        const snap = await getDoc(doc(db, 'matricNumbers', regDocId));
         if (snap.exists()) {
           const data = snap.data();
           const docOwner = data?.uid || data?.userId || data?.studentId || data?.user_id || null;
@@ -370,12 +385,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (normalizedOwner === normalizedCurrent) {
               // Reserved by the current user - allow them to proceed!
             } else {
-              // Check if the user document still exists in Firebase
               const stillExists = await verifyOwnerActiveInFirebase(normalizedOwner);
               if (!stillExists) {
-                // Admin deleted student in Firebase! Release the orphaned reservation
-                await deleteDoc(doc(db, 'matricNumbers', matricDocId)).catch(() => {});
-                await deleteDoc(doc(db, 'matric_registry', matricDocId)).catch(() => {});
+                await deleteDoc(doc(db, 'matricNumbers', regDocId)).catch(() => {});
+                await deleteDoc(doc(db, 'matric_registry', regDocId)).catch(() => {});
               } else {
                 activeReservedOwnerUid = normalizedOwner;
               }
@@ -389,7 +402,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 2. Check query in matricNumbers
       if (!activeReservedOwnerUid) {
         try {
-          const qSnap = await getDocs(query(collection(db, 'matricNumbers'), where('matricNumber', '==', cleanMatric)));
+          const fieldToCheck = idType === 'matric' ? 'matricNumber' : 'jambNumber';
+          const qSnap = await getDocs(query(collection(db, 'matricNumbers'), where(fieldToCheck, '==', cleanIdentifier)));
           if (!qSnap.empty) {
             for (const docSnap of qSnap.docs) {
               const data = docSnap.data();
@@ -417,7 +431,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 3. Check legacy matric_registry
       if (!activeReservedOwnerUid) {
         try {
-          const snapReg = await getDoc(doc(db, 'matric_registry', matricDocId));
+          const snapReg = await getDoc(doc(db, 'matric_registry', regDocId));
           if (snapReg.exists()) {
             const data = snapReg.data();
             const docOwner = data?.uid || data?.userId || null;
@@ -427,7 +441,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (normalizedOwner !== normalizedCurrent) {
                 const stillExists = await verifyOwnerActiveInFirebase(normalizedOwner);
                 if (!stillExists) {
-                  await deleteDoc(doc(db, 'matric_registry', matricDocId)).catch(() => {});
+                  await deleteDoc(doc(db, 'matric_registry', regDocId)).catch(() => {});
                 } else {
                   activeReservedOwnerUid = normalizedOwner;
                 }
@@ -442,7 +456,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // 4. Check active students in users collection
       if (!activeReservedOwnerUid) {
         try {
-          const usersQ = query(collection(db, 'users'), where('matricNumber', '==', cleanMatric));
+          const userField = idType === 'matric' ? 'matricNumber' : 'jambNumber';
+          const usersQ = query(collection(db, 'users'), where(userField, '==', cleanIdentifier));
           const usersSnap = await getDocs(usersQ);
           if (!usersSnap.empty) {
             for (const uDoc of usersSnap.docs) {
@@ -457,71 +472,74 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
 
-      // If an active student in Firebase still owns this matric number and is NOT the current user:
-      // The admin has NOT deleted it in Firebase! Display already claimed.
       if (activeReservedOwnerUid && activeReservedOwnerUid !== currentUser.uid) {
-        throw new Error(`Matriculation number "${cleanMatric}" has already been claimed by another student account.`);
+        if (idType === 'matric') {
+          throw new Error(`Matriculation number "${cleanIdentifier}" has already been claimed by another student account.`);
+        } else {
+          throw new Error(`JAMB registration number "${cleanIdentifier}" has already been claimed by another student account.`);
+        }
       }
 
-      // If activeReservedOwnerUid is null, it means either:
-      // 1. It was never used before, OR
-      // 2. The admin has deleted all the information including matric number in Firebase!
-      // In that case: Delete it in the portal local storage as well and allow another person to use it!
-      if (localMatrics[cleanMatric] && localMatrics[cleanMatric] !== currentUser.uid) {
-        delete localMatrics[cleanMatric];
+      if (localMatrics[regDocId] && localMatrics[regDocId] !== currentUser.uid) {
+        delete localMatrics[regDocId];
         localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
       }
       try {
         const localStudentsRaw = localStorage.getItem('sot_local_students');
         if (localStudentsRaw) {
           const localStudents = JSON.parse(localStudentsRaw);
-          const filtered = localStudents.filter((s: any) => s.matricNumber !== cleanMatric || s.uid === currentUser.uid);
+          const filtered = localStudents.filter((s: any) =>
+            (idType === 'matric' ? s.matricNumber !== cleanIdentifier : s.jambNumber !== cleanIdentifier) ||
+            s.uid === currentUser.uid
+          );
           localStorage.setItem('sot_local_students', JSON.stringify(filtered));
         }
       } catch {
         // ignore
       }
     } else {
-      // Local / Offline fallback mode:
-      const localOwner = localMatrics[cleanMatric];
+      // Local fallback mode
+      const localOwner = localMatrics[regDocId];
       if (localOwner && String(localOwner).trim() !== String(currentUser.uid).trim()) {
-        const localStudentsRaw = localStorage.getItem('sot_local_students');
-        const localStudents = localStudentsRaw ? JSON.parse(localStudentsRaw) : [];
-        const studentStillExists = localStudents.some((s: any) => s.uid === localOwner);
-        if (!studentStillExists) {
-          // Deleted in portal, release it!
-          delete localMatrics[cleanMatric];
-          localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
-        } else {
-          throw new Error(`Matriculation number "${cleanMatric}" has already been claimed by another student account.`);
-        }
+        throw new Error(
+          idType === 'matric'
+            ? `Matriculation number "${cleanIdentifier}" has already been claimed by another student account.`
+            : `JAMB registration number "${cleanIdentifier}" has already been claimed by another student account.`
+        );
       }
     }
 
     if (auth.currentUser) {
       const now = new Date().toISOString();
-      const matricPayload = {
-        matricNumber: cleanMatric,
+      const registryPayload: Record<string, any> = {
+        idType,
         uid: currentUser.uid,
         userId: currentUser.uid,
         department,
         updatedAt: now
       };
 
+      if (idType === 'matric') {
+        registryPayload.matricNumber = cleanIdentifier;
+      } else {
+        registryPayload.jambNumber = cleanIdentifier;
+        registryPayload.matricNumber = regDocId;
+      }
+
       // Save/reserve in matricNumbers collection
       try {
-        await setDoc(doc(db, 'matricNumbers', matricDocId), {
-          ...matricPayload,
+        await setDoc(doc(db, 'matricNumbers', regDocId), {
+          ...registryPayload,
           createdAt: now
         }, { merge: true });
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `matricNumbers/${matricDocId}`);
+        handleFirestoreError(err, OperationType.WRITE, `matricNumbers/${regDocId}`);
       }
 
       // Also sync to legacy matric_registry
       try {
-        await setDoc(doc(db, 'matric_registry', matricDocId), {
-          ...matricPayload,
+        await setDoc(doc(db, 'matric_registry', regDocId), {
+          ...registryPayload,
           createdAt: now
         }, { merge: true });
       } catch (err) {
@@ -530,19 +548,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // Update student document in users collection
       const userDocRef = doc(db, 'users', currentUser.uid);
+      const userUpdatePayload: Record<string, any> = {
+        department,
+        idType,
+        profileComplete: true,
+        updatedAt: now
+      };
+      if (idType === 'matric') {
+        userUpdatePayload.matricNumber = cleanIdentifier;
+      } else {
+        userUpdatePayload.jambNumber = cleanIdentifier;
+      }
+
       try {
-        await updateDoc(userDocRef, {
-          department,
-          matricNumber: cleanMatric,
-          profileComplete: true,
-          updatedAt: now
-        });
+        await updateDoc(userDocRef, userUpdatePayload);
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `users/${currentUser.uid}`);
       }
     }
 
-    localMatrics[cleanMatric] = currentUser.uid;
+    localMatrics[regDocId] = currentUser.uid;
     localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
 
     const updatedProfile: UserProfile = {
@@ -550,7 +575,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       email: currentUser.email || '',
       fullName: profile?.fullName || '',
       department,
-      matricNumber: cleanMatric,
+      idType,
+      matricNumber: idType === 'matric' ? cleanIdentifier : undefined,
+      jambNumber: idType === 'jamb' ? cleanIdentifier : undefined,
       profileComplete: true,
       role: profile?.role || 'student',
       createdAt: profile?.createdAt || new Date().toISOString(),
@@ -559,6 +586,113 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     localStorage.setItem('sot_local_profile', JSON.stringify(updatedProfile));
     setProfile(updatedProfile);
+  };
+
+  // Upgrade student with JAMB number to permanent Matric number
+  const upgradeJambToMatric = async (matricNumber: string): Promise<void> => {
+    const currentUser = user || auth.currentUser;
+    if (!currentUser) {
+      throw new Error('No active user session found. Please sign in.');
+    }
+
+    const cleanMatric = matricNumber.trim().toUpperCase().replace(/\s+/g, '');
+    if (!cleanMatric) {
+      throw new Error('Matriculation number is required.');
+    }
+
+    const matricRegex = /^[A-Z0-9_\-\/]{4,30}$/;
+    if (!matricRegex.test(cleanMatric)) {
+      throw new Error('Matric number must contain 4-30 alphanumeric characters (e.g. F/ND/25/3210001).');
+    }
+
+    const matricDocId = sanitizeMatricId(cleanMatric);
+    const now = new Date().toISOString();
+
+    // Check uniqueness of matric number
+    if (auth.currentUser) {
+      const verifyOwnerActive = async (ownerUid: string): Promise<boolean> => {
+        try {
+          const userSnap = await getDoc(doc(db, 'users', ownerUid));
+          return userSnap.exists();
+        } catch {
+          return false;
+        }
+      };
+
+      const mSnap = await getDoc(doc(db, 'matricNumbers', matricDocId));
+      if (mSnap.exists()) {
+        const data = mSnap.data();
+        const docOwner = data?.uid || data?.userId;
+        if (docOwner && docOwner !== currentUser.uid) {
+          const active = await verifyOwnerActive(docOwner);
+          if (active) {
+            throw new Error(`Matriculation number "${cleanMatric}" has already been claimed by another student account.`);
+          }
+        }
+      }
+
+      const usersQ = query(collection(db, 'users'), where('matricNumber', '==', cleanMatric));
+      const uSnap = await getDocs(usersQ);
+      if (!uSnap.empty) {
+        for (const uDoc of uSnap.docs) {
+          if (uDoc.id !== currentUser.uid) {
+            throw new Error(`Matriculation number "${cleanMatric}" has already been claimed by another student account.`);
+          }
+        }
+      }
+
+      // 1. Reserve matric number
+      const matricPayload = {
+        matricNumber: cleanMatric,
+        idType: 'matric',
+        uid: currentUser.uid,
+        userId: currentUser.uid,
+        department: profile?.department || '',
+        createdAt: now,
+        updatedAt: now
+      };
+
+      await setDoc(doc(db, 'matricNumbers', matricDocId), matricPayload, { merge: true });
+      await setDoc(doc(db, 'matric_registry', matricDocId), matricPayload, { merge: true }).catch(() => {});
+
+      // 2. Update user doc: set idType to 'matric', save matricNumber, delete jambNumber
+      await updateDoc(doc(db, 'users', currentUser.uid), {
+        idType: 'matric',
+        matricNumber: cleanMatric,
+        jambNumber: deleteField(),
+        updatedAt: now
+      });
+
+      // 3. Delete old JAMB reservation
+      const oldJamb = profile?.jambNumber;
+      if (oldJamb) {
+        const jambClean = oldJamb.trim().toUpperCase().replace(/\s+/g, '');
+        const jambDocId = `JAMB_${jambClean}`;
+        await deleteDoc(doc(db, 'matricNumbers', jambDocId)).catch((err) => {
+          console.warn('Could not delete old JAMB reservation doc:', err);
+        });
+        await deleteDoc(doc(db, 'matric_registry', jambDocId)).catch(() => {});
+
+        const localMatrics = JSON.parse(localStorage.getItem('sot_matric_registry') || '{}');
+        delete localMatrics[jambDocId];
+        localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
+      }
+    }
+
+    const localMatrics = JSON.parse(localStorage.getItem('sot_matric_registry') || '{}');
+    localMatrics[matricDocId] = currentUser.uid;
+    localStorage.setItem('sot_matric_registry', JSON.stringify(localMatrics));
+
+    const updatedProfile: UserProfile = {
+      ...(profile || { uid: currentUser.uid, email: currentUser.email || '', role: 'student', profileComplete: true }),
+      idType: 'matric',
+      matricNumber: cleanMatric,
+      jambNumber: undefined,
+      updatedAt: now
+    };
+
+    setProfile(updatedProfile);
+    localStorage.setItem('sot_local_profile', JSON.stringify(updatedProfile));
   };
 
   // Login
@@ -680,6 +814,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         loginLockoutMinutesRemaining: lockoutRemaining,
         registerStep1,
         completeStep2,
+        upgradeJambToMatric,
         login,
         logout,
         sendPasswordReset,

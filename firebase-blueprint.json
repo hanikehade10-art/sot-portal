@@ -29,6 +29,14 @@
           "type": "string",
           "maxLength": 32
         },
+        "idType": {
+          "type": "string",
+          "enum": ["matric", "jamb"]
+        },
+        "jambNumber": {
+          "type": "string",
+          "maxLength": 32
+        },
         "profileComplete": {
           "type": "boolean"
         },
@@ -64,6 +72,21 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["department", "code", "title", "level", "semester"]
+    },
+    "TopicItem": {
+      "title": "TopicItem",
+      "description": "Syllabus topic belonging to a course, ordered sequentially",
+      "type": "object",
+      "properties": {
+        "courseId": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "level": { "type": "string" },
+        "semester": { "type": "string" },
+        "title": { "type": "string", "maxLength": 300 },
+        "order": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["courseId", "department", "level", "semester", "title", "order"]
     },
     "TimetableEntry": {
       "title": "TimetableEntry",
@@ -189,6 +212,10 @@
     "/courses/{courseId}": {
       "schema": "CourseItem",
       "description": "Department syllabus courses. Read by all students; Managed by admins"
+    },
+    "/topics/{topicId}": {
+      "schema": "TopicItem",
+      "description": "Topics belonging to courses with structured video and notes"
     },
     "/timetables/{timetableId}": {
       "schema": "TimetableEntry",

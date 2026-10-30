@@ -97,7 +97,7 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Matric Number Collections (For Uniqueness & Reservations)
+    // Matric & JAMB Number Collections (For Uniqueness & Reservations)
     match /matricNumbers/{matricId} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() &&
@@ -107,11 +107,11 @@ service cloud.firestore {
                         isAdmin() ||
                         (existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
                         (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))));
-      allow delete: if isAdmin() || (
-                       isSignedIn() &&
-                       ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
-                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))))
-                     );
+      allow delete: if isAdmin() ||
+                       (isSignedIn() && matricId.matches('^JAMB_.*') && (existing().uid == request.auth.uid || existing().userId == request.auth.uid)) ||
+                       (isSignedIn() &&
+                        ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                         (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId)))));
     }
 
     match /matric_registry/{matricId} {
@@ -121,11 +121,11 @@ service cloud.firestore {
                         isAdmin() ||
                         (existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
                         (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))));
-      allow delete: if isAdmin() || (
-                       isSignedIn() &&
-                       ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
-                        (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId))))
-                     );
+      allow delete: if isAdmin() ||
+                       (isSignedIn() && matricId.matches('^JAMB_.*') && (existing().uid == request.auth.uid || existing().userId == request.auth.uid)) ||
+                       (isSignedIn() &&
+                        ((existing().uid != null && !exists(/databases/$(database)/documents/users/$(existing().uid))) ||
+                         (existing().userId != null && !exists(/databases/$(database)/documents/users/$(existing().userId)))));
     }
 
     // Department Courses Collection
@@ -134,6 +134,12 @@ service cloud.firestore {
       allow read, list: if true;
       // Only admins can create, edit, or delete courses
       allow create, update, delete: if isAdmin();
+    }
+
+    // Topics Collection
+    match /topics/{id} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
     }
 
     // Timetables Collection (Class schedules & Exam timetables)
