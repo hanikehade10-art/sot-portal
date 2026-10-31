@@ -20,6 +20,7 @@ import {
   formatPdfUrl
 } from '../data/coursesAndTimetables';
 import { PWAInstallRow } from './PWAInstallRow';
+import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 import {
   LayoutDashboard,
   UploadCloud,
@@ -51,7 +52,7 @@ interface RepDashboardProps {
   onNavigateHome: () => void;
 }
 
-type RepTab = 'overview' | 'upload' | 'announcement' | 'my-uploads';
+type RepTab = 'overview' | 'upload' | 'past-questions' | 'announcement' | 'my-uploads';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
@@ -540,6 +541,19 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               <span>Upload Materials</span>
             </button>
 
+            {/* 2.5 Past Questions */}
+            <button
+              onClick={() => { setActiveTab('past-questions'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'past-questions'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <FileText className="w-4 h-4 text-[#FFC700]" />
+              <span>Past Questions</span>
+            </button>
+
             {/* 3. Post Announcement */}
             <button
               onClick={() => { setActiveTab('announcement'); setSidebarOpen(false); }}
@@ -1011,6 +1025,17 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               </div>
 
             </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* VIEW 2.5: PAST QUESTIONS                                 */}
+          {/* ======================================================== */}
+          {activeTab === 'past-questions' && (
+            <AdminPastQuestionsView
+              isRepMode={true}
+              repDepartment={repDepartment}
+              onNotify={fetchRepData}
+            />
           )}
 
           {/* ======================================================== */}

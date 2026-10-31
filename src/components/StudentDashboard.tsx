@@ -1,11 +1,35 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DEPARTMENTS, INITIAL_ANNOUNCEMENTS } from '../data/departments';
-import { DepartmentIcon } from './PublicLanding';
 import { auth, db } from '../lib/firebase';
-import { collection, getDocs, doc, updateDoc, addDoc, query, where } from 'firebase/firestore';
-import { AnnouncementItem, ContactMessage, TimetableEntry, CourseItem, CourseMaterial, ResourceItem, BookmarkItem } from '../types';
-import { INITIAL_COURSES, INITIAL_TIMETABLES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
+import {
+  collection,
+  getDocs,
+  doc,
+  updateDoc,
+  addDoc,
+  query,
+  where,
+  onSnapshot
+} from 'firebase/firestore';
+import {
+  AnnouncementItem,
+  ContactMessage,
+  TimetableEntry,
+  CourseItem,
+  CourseMaterial,
+  ResourceItem,
+  BookmarkItem,
+  TopicItem
+} from '../types';
+import {
+  INITIAL_COURSES,
+  INITIAL_TIMETABLES,
+  normalizeCourseLevel,
+  normalizeCourseSemester,
+  formatPdfUrl,
+  getPdfDownloadUrl
+} from '../data/coursesAndTimetables';
 import { AskAiView } from './AskAiView';
 import { DailyStreakCard } from './DailyStreakCard';
 import { StudentBookmarksView } from './StudentBookmarksView';
@@ -13,6 +37,7 @@ import { GpaCalculator } from './GpaCalculator';
 import { StudyPlanner } from './StudyPlanner';
 import { WhatsAppIcon } from './WhatsAppIcon';
 import { StudentResourcesView } from './StudentResourcesView';
+import { StudentPastQuestionsView } from './StudentPastQuestionsView';
 import { CommunitiesLinksView } from './CommunitiesLinksView';
 import { NotificationsPopover, DashboardNotificationItem } from './NotificationsPopover';
 import { PWAInstallRow } from './PWAInstallRow';
@@ -25,13 +50,11 @@ import {
   User,
   LogOut,
   GraduationCap,
-  Menu,
   X,
   Loader2,
   ShieldCheck,
   Calendar,
   Lock,
-  QrCode,
   FileText,
   KeyRound,
   CheckCircle2,
@@ -62,7 +85,11 @@ import {
   Link2,
   Pin,
   CheckCheck,
-  FileBadge2
+  FileBadge2,
+  ArrowLeft,
+  ChevronRight,
+  FileQuestion,
+  Download
 } from 'lucide-react';
 import { SITE_CONFIG } from '../config/site';
 
@@ -75,22 +102,21 @@ interface StudentDashboardProps {
 
 type TabType =
   | 'overview'
-  | 'resources'
-  | 'department'
   | 'courses'
+  | 'past-questions'
+  | 'ask-ai'
+  | 'profile'
   | 'timetables'
   | 'announcements'
-  | 'bookmarks'
-  | 'links'
   | 'gpa'
   | 'study-planner'
+  | 'bookmarks'
+  | 'links'
   | 'my-messages'
-  | 'rep-announcement'
-  | 'ask-ai'
-  | 'profile';
+  | 'rep-announcement';
 
 const DAYS_OF_WEEK = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-const ACADEMIC_LEVELS = ['ND I', 'ND II', 'HND I', 'HND II'];
+const ACADEMIC_LEVELS = ['ND1', 'ND2', 'HND1', 'HND2'] as const;
 
 export function getLagosDateString(d: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -127,9 +153,9 @@ export function getLagosPeriodGreeting(): LagosGreetingResult {
       greeting: 'Good morning',
       period: 'morning',
       messages: [
-        "Ready for a productive day ahead? Review today's classes and syllabus.",
-        "Start early, finish strong! Check your lecture timetable.",
-        "Great morning to learn something new. Stay focused today!"
+        "Review today's classes and syllabus topics.",
+        "Check your lecture schedule and plan your day.",
+        "Great morning to learn something new. Stay focused!"
       ]
     };
   } else if (hour >= 12 && hour < 17) {
@@ -137,9 +163,9 @@ export function getLagosPeriodGreeting(): LagosGreetingResult {
       greeting: 'Good afternoon',
       period: 'afternoon',
       messages: [
-        "Keep up the academic momentum! Take a short study break between lectures.",
-        "Afternoon check-in: Catch up on course notes, handouts and assignments.",
-        "Powering through the day. Stay hydrated and focused!"
+        "Powering through lectures and practicals.",
+        "Catch up on course handouts and assignments.",
+        "Stay hydrated and keep up your academic momentum!"
       ]
     };
   } else if (hour >= 17 && hour < 21) {
@@ -147,9 +173,9 @@ export function getLagosPeriodGreeting(): LagosGreetingResult {
       greeting: 'Good evening',
       period: 'evening',
       messages: [
-        "Time to wind down lectures and review today's notes.",
-        "Solid work today. Glance over tomorrow's class schedule.",
-        "Evenings are prime time for revising key concepts and past questions."
+        "Time to review today's lecture notes and topics.",
+        "Glance over tomorrow's timetable and prepare.",
+        "Evenings are prime time for past questions revision."
       ]
     };
   } else {
@@ -158,8 +184,7 @@ export function getLagosPeriodGreeting(): LagosGreetingResult {
       period: 'night',
       messages: [
         "Rest well and recharge for tomorrow's academic goals.",
-        "Late night study session? Keep it calm and get enough sleep.",
-        "A peaceful night's rest is part of smart exam preparation."
+        "A peaceful night's rest is part of smart study preparation."
       ]
     };
   }
@@ -171,11 +196,173 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateAdmin,
   onNavigateRep
 }) => {
-  const { user, profile, isAdmin, roleReadError, refreshProfile, logout, updateStudentProfile, upgradeJambToMatric } = useAuth();
+  const { user, profile, isAdmin, isRep, roleReadError, refreshProfile, logout, updateStudentProfile, upgradeJambToMatric } = useAuth();
   const { settings } = useSiteSettings();
+
+  // Active navigation state
   const [activeTab, setActiveTab] = useState<TabType>('overview');
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isInner, setIsInner] = useState<boolean>(false);
+  const [innerTitle, setInnerTitle] = useState<string>('');
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+
+  // Logout confirmation sheet
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+
+  // Student Department is AUTOMATIC - strictly locked to enrolled department
+  const studentDept = profile?.department || 'Computer Technology';
+  const studentInitial = (profile?.fullName || user?.email || 'S').charAt(0).toUpperCase();
+
+  // Home Filters: Defaults to student's level and 1st semester
+  const defaultLevel = profile?.level ? normalizeCourseLevel(profile.level) : 'ND1';
+  const [homeLevelFilter, setHomeLevelFilter] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>(defaultLevel);
+  const [homeSemesterFilter, setHomeSemesterFilter] = useState<'First Semester' | 'Second Semester' | 'All'>('First Semester');
+  const [homeSearchQuery, setHomeSearchQuery] = useState('');
+
+  // Core Data
+  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
+  const [topics, setTopics] = useState<TopicItem[]>([]);
+  const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
+  const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
+  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
+  const [links, setLinks] = useState<LinkItem[]>([]);
+  const [myMessages, setMyMessages] = useState<ContactMessage[]>([]);
+  const [loadingMessages, setLoadingMessages] = useState(false);
+
+  // Notifications State
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [notificationsLastSeen, setNotificationsLastSeen] = useState<string>(() => {
+    return (profile as any)?.notificationsLastSeen || localStorage.getItem('sot_notifications_last_seen') || '';
+  });
+
+  // Profile Edit State
+  const [editFullName, setEditFullName] = useState(profile?.fullName || '');
+  const [editLevel, setEditLevel] = useState<string>(profile?.level || 'ND1');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  // JAMB -> Matric Upgrade state
+  const [upgradeMatricInput, setUpgradeMatricInput] = useState('');
+  const [upgradeSaving, setUpgradeSaving] = useState(false);
+  const [upgradeSuccess, setUpgradeSuccess] = useState<string | null>(null);
+  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+
+  // Bookmark Toast
+  const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
+
+  // Timetable sub-filter
+  const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
+  const [ttLevelFilter, setTtLevelFilter] = useState<string>(defaultLevel);
+
+  // Rep Announcement Post state
+  const [repTitle, setRepTitle] = useState('');
+  const [repContent, setRepContent] = useState('');
+  const [repCategory, setRepCategory] = useState<'Academic' | 'Student Notice' | 'Department' | 'General'>('Academic');
+  const [repUrgent, setRepUrgent] = useState(false);
+  const [repPinned, setRepPinned] = useState(false);
+  const [repPosting, setRepPosting] = useState(false);
+  const [repSuccess, setRepSuccess] = useState<string | null>(null);
+  const [repError, setRepError] = useState<string | null>(null);
+
+  // In-app PDF Viewer Modal (for search results or quick opens)
+  const [quickPdfViewer, setQuickPdfViewer] = useState<{ title: string; url: string; courseCode?: string } | null>(null);
+
+  // Dynamic Lagos Greeting
+  const [lagosGreetingData, setLagosGreetingData] = useState<LagosGreetingResult>(() => getLagosPeriodGreeting());
+
+  useEffect(() => {
+    const updateGreeting = () => {
+      setLagosGreetingData(getLagosPeriodGreeting());
+    };
+    const interval = setInterval(updateGreeting, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update default level filter when profile loads
+  useEffect(() => {
+    if (profile?.level) {
+      const norm = normalizeCourseLevel(profile.level);
+      setHomeLevelFilter(norm);
+      setTtLevelFilter(norm);
+      setEditLevel(norm);
+    }
+    if (profile?.fullName) {
+      setEditFullName(profile.fullName);
+    }
+  }, [profile?.level, profile?.fullName]);
+
+  // -------------------------------------------------------------
+  // BROWSER HISTORY INTEGRATION
+  // -------------------------------------------------------------
+  useEffect(() => {
+    // Initialize history state on mount
+    if (!window.history.state || !window.history.state.sotStudentNav) {
+      window.history.replaceState({ sotStudentNav: true, tab: 'overview', isInner: false }, '');
+    }
+
+    const handlePopState = (e: PopStateEvent) => {
+      const state = e.state;
+      if (state && state.sotStudentNav) {
+        setActiveTab(state.tab || 'overview');
+        setSelectedCourseId(state.courseId || null);
+        setInnerTitle(state.innerTitle || '');
+        setIsInner(!!state.isInner);
+      } else {
+        // Back to home overview root
+        setActiveTab('overview');
+        setSelectedCourseId(null);
+        setInnerTitle('');
+        setIsInner(false);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  const navigateToTab = (tab: TabType, title?: string, isInnerScreen = false, courseId?: string) => {
+    window.history.pushState(
+      {
+        sotStudentNav: true,
+        tab,
+        isInner: isInnerScreen,
+        innerTitle: title || '',
+        courseId: courseId || null
+      },
+      ''
+    );
+    setActiveTab(tab);
+    setInnerTitle(title || '');
+    setIsInner(isInnerScreen);
+    setSelectedCourseId(courseId || null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const navigateToBottomTab = (tab: TabType) => {
+    window.history.pushState(
+      { sotStudentNav: true, tab, isInner: false },
+      ''
+    );
+    setActiveTab(tab);
+    setSelectedCourseId(null);
+    setInnerTitle('');
+    setIsInner(false);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleGoBack = () => {
+    if (window.history.state && window.history.state.sotStudentNav) {
+      window.history.back();
+    } else {
+      setActiveTab('overview');
+      setSelectedCourseId(null);
+      setInnerTitle('');
+      setIsInner(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  };
 
   const handleConfirmLogout = async () => {
     try {
@@ -195,24 +382,153 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  // Bookmarks toast
-  const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
+  // -------------------------------------------------------------
+  // FIRESTORE LISTENERS (STRICTLY AUTOMATIC TO STUDENT'S DEPARTMENT)
+  // -------------------------------------------------------------
+  // Courses
+  useEffect(() => {
+    if (!studentDept) return;
+    const q = query(collection(db, 'courses'), where('department', '==', studentDept));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: CourseItem[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setCourses(list);
+      },
+      (err) => console.warn('Courses listener note:', err)
+    );
+    return () => unsub();
+  }, [studentDept]);
 
-  // Daily Streak check in Africa/Lagos timezone
+  // Topics
+  useEffect(() => {
+    if (!studentDept) return;
+    const q = query(collection(db, 'topics'), where('department', '==', studentDept));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: TopicItem[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        list.sort((a, b) => (a.order || 0) - (b.order || 0));
+        setTopics(list);
+      },
+      (err) => console.warn('Topics listener note:', err)
+    );
+    return () => unsub();
+  }, [studentDept]);
+
+  // Resources (Notes, Videos, Past Questions, Links)
+  useEffect(() => {
+    if (!studentDept) return;
+    const q = query(collection(db, 'resources'), where('department', '==', studentDept));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: ResourceItem[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setDeptResources(list);
+      },
+      (err) => console.warn('Resources listener note:', err)
+    );
+    return () => unsub();
+  }, [studentDept]);
+
+  // Timetables
+  useEffect(() => {
+    if (!studentDept) return;
+    const q = query(collection(db, 'timetables'), where('department', '==', studentDept));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: TimetableEntry[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setTimetables(list);
+      },
+      (err) => console.warn('Timetables listener note:', err)
+    );
+    return () => unsub();
+  }, [studentDept]);
+
+  // Announcements (Dept & All)
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'announcements'), (snap) => {
+      const list: AnnouncementItem[] = [];
+      snap.forEach((d) => {
+        list.push({ id: d.id, ...(d.data() as any) });
+      });
+      list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      setAnnouncements(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Links
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'links'), (snap) => {
+      const list: LinkItem[] = [];
+      snap.forEach((d) => {
+        list.push({ id: d.id, ...(d.data() as any) });
+      });
+      setLinks(list);
+    });
+    return () => unsub();
+  }, []);
+
+  // Student's Messages
+  const fetchMyMessages = async () => {
+    if (!user?.uid) return;
+    setLoadingMessages(true);
+    try {
+      const msgs: ContactMessage[] = [];
+      try {
+        const q = query(collection(db, 'messages'), where('userId', '==', user.uid));
+        const snap = await getDocs(q);
+        snap.forEach((d) => msgs.push({ id: d.id, ...d.data() } as ContactMessage));
+      } catch (e) {}
+
+      const localMsgs = JSON.parse(localStorage.getItem('sot_local_messages') || '[]');
+      const userLocalMsgs = localMsgs.filter(
+        (m: any) =>
+          m.userId === user.uid ||
+          m.uid === user.uid ||
+          (m.email && user.email && m.email.toLowerCase() === user.email.toLowerCase())
+      );
+
+      const combined = [...msgs, ...userLocalMsgs];
+      const unique = Array.from(new Map(combined.map((m) => [m.id, m])).values());
+      unique.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+      setMyMessages(unique);
+    } finally {
+      setLoadingMessages(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'my-messages') {
+      fetchMyMessages();
+    }
+  }, [activeTab, user?.uid]);
+
+  // Daily Streak Africa/Lagos
   useEffect(() => {
     if (!user?.uid || !profile) return;
     const todayLagos = getLagosDateString();
     const yesterdayLagos = getLagosYesterdayString();
 
-    if (profile.lastActiveDate === todayLagos) {
-      return; // Already recorded activity today
-    }
+    if (profile.lastActiveDate === todayLagos) return;
 
     let nextStreak = 1;
     if (profile.lastActiveDate === yesterdayLagos) {
       nextStreak = (profile.streakCount || 0) + 1;
-    } else {
-      nextStreak = 1;
     }
 
     const nextLongest = Math.max(profile.longestStreak || 0, nextStreak);
@@ -221,30 +537,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       streakCount: nextStreak,
       longestStreak: nextLongest,
       lastActiveDate: todayLagos
-    }).then(() => {
-      refreshProfile();
-    }).catch(err => {
-      console.warn('Streak update note:', err);
-    });
+    }).then(() => refreshProfile()).catch(() => {});
   }, [user?.uid, profile?.lastActiveDate]);
 
-  // Bookmarks helper functions
+  // Bookmarks Helper
   const isBookmarked = (type: 'course' | 'material' | 'announcement', id: string): boolean => {
-    return (profile?.bookmarks || []).some(b => b.type === type && b.id === id);
+    return (profile?.bookmarks || []).some((b) => b.type === type && b.id === id);
   };
 
   const toggleBookmark = async (item: Omit<BookmarkItem, 'createdAt'> & { createdAt?: string }) => {
     if (!user?.uid) return;
     const current = profile?.bookmarks || [];
-    const exists = current.some(b => b.type === item.type && b.id === item.id);
-    let updatedList: BookmarkItem[];
+    const exists = current.some((b) => b.type === item.type && b.id === item.id);
 
+    let updatedList: BookmarkItem[] = [];
     if (exists) {
-      updatedList = current.filter(b => !(b.type === item.type && b.id === item.id));
+      updatedList = current.filter((b) => !(b.type === item.type && b.id === item.id));
       setBookmarkToast(`Removed "${item.title}" from bookmarks.`);
     } else {
       if (current.length >= 100) {
-        setBookmarkToast('Bookmark limit reached (100 items max). Remove older bookmarks to add new ones.');
+        setBookmarkToast('Bookmark limit reached (100 items max).');
         return;
       }
       const newItem: BookmarkItem = {
@@ -252,13 +564,11 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         createdAt: item.createdAt || new Date().toISOString()
       };
       updatedList = [newItem, ...current];
-      setBookmarkToast(`Saved "${item.title}" to your bookmarks!`);
+      setBookmarkToast(`Saved "${item.title}" to bookmarks!`);
     }
 
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        bookmarks: updatedList
-      });
+      await updateDoc(doc(db, 'users', user.uid), { bookmarks: updatedList });
       await refreshProfile();
     } catch (err) {
       console.warn('Bookmarks save error:', err);
@@ -267,41 +577,166 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   useEffect(() => {
     if (bookmarkToast) {
-      const timer = setTimeout(() => setBookmarkToast(null), 3200);
+      const timer = setTimeout(() => setBookmarkToast(null), 3000);
       return () => clearTimeout(timer);
     }
   }, [bookmarkToast]);
 
-  // Department uploaded resources from Course Reps
-  const [deptResources, setDeptResources] = useState<ResourceItem[]>([]);
+  // Announcements filtered for student's department & urgent/pinned
+  const relevantAnnouncements = useMemo(() => {
+    return announcements.filter((a) => a.department === 'All' || a.department === studentDept);
+  }, [announcements, studentDept]);
 
-  // Communities & Links State
-  const [links, setLinks] = useState<LinkItem[]>([]);
+  const pinnedAnnouncement = useMemo(() => {
+    return relevantAnnouncements.find((a) => a.pinned);
+  }, [relevantAnnouncements]);
 
-  // Comprehensive Notifications State
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [notificationsLastSeen, setNotificationsLastSeen] = useState<string>(() => {
-    return (profile as any)?.notificationsLastSeen || localStorage.getItem('sot_notifications_last_seen') || '';
-  });
+  const unreadAnnouncementsCount = useMemo(() => {
+    if (!notificationsLastSeen) return relevantAnnouncements.length;
+    const lastSeenTime = new Date(notificationsLastSeen).getTime();
+    return relevantAnnouncements.filter((a) => new Date(a.createdAt || 0).getTime() > lastSeenTime).length;
+  }, [relevantAnnouncements, notificationsLastSeen]);
 
-  // Course Rep Announcement Pinned State
-  const [repPinned, setRepPinned] = useState(false);
+  // Notifications Popover Items
+  const dashboardNotifications: DashboardNotificationItem[] = useMemo(() => {
+    const list: DashboardNotificationItem[] = [];
+    relevantAnnouncements.slice(0, 10).forEach((a) => {
+      list.push({
+        id: a.id,
+        type: 'announcement',
+        title: a.title,
+        subtitle: a.content.slice(0, 100) + '...',
+        timeStr: a.createdAt ? new Date(a.createdAt).toLocaleDateString() : 'Recent',
+        timestamp: new Date(a.createdAt || 0).getTime(),
+        isUnread: !notificationsLastSeen || new Date(a.createdAt || 0).getTime() > new Date(notificationsLastSeen).getTime(),
+        actionTab: 'announcements',
+        badge: a.category || 'Notice',
+        isPinned: a.pinned
+      });
+    });
+    return list;
+  }, [relevantAnnouncements, notificationsLastSeen]);
 
-  // Profile edit states (Full Name, Level, Password)
-  const [editFullName, setEditFullName] = useState(profile?.fullName || '');
-  const [editLevel, setEditLevel] = useState<string>(profile?.level || 'ND1');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [profileSaving, setProfileSaving] = useState(false);
-  const [profileSuccess, setProfileSuccess] = useState<string | null>(null);
-  const [profileError, setProfileError] = useState<string | null>(null);
+  const unreadNotificationsCount = unreadAnnouncementsCount;
 
-  // JAMB -> Matric Upgrade state
-  const [upgradeMatricInput, setUpgradeMatricInput] = useState('');
-  const [upgradeSaving, setUpgradeSaving] = useState(false);
-  const [upgradeSuccess, setUpgradeSuccess] = useState<string | null>(null);
-  const [upgradeError, setUpgradeError] = useState<string | null>(null);
+  const handleMarkAllNotificationsRead = async () => {
+    const nowIso = new Date().toISOString();
+    setNotificationsLastSeen(nowIso);
+    localStorage.setItem('sot_notifications_last_seen', nowIso);
+    if (user?.uid) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), { notificationsLastSeen: nowIso });
+      } catch (e) {}
+    }
+  };
 
+  // -------------------------------------------------------------
+  // HOME SEARCH (REAL-TIME INSTANT SEARCH RESPECTING LEVEL & SEMESTER)
+  // -------------------------------------------------------------
+  const homeSearchResults = useMemo(() => {
+    if (!homeSearchQuery.trim()) return null;
+    const q = homeSearchQuery.toLowerCase().trim();
+
+    // Matching Courses
+    const matchedCourses = courses.filter((c) => {
+      const matchDept = c.department === studentDept;
+      const matchLvl = normalizeCourseLevel(c.level) === homeLevelFilter;
+      const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(c.semester) === homeSemesterFilter;
+      const matchQ = c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q);
+      return matchDept && matchLvl && matchSem && matchQ;
+    });
+
+    // Matching Topics
+    const matchedTopics = topics.filter((t) => {
+      const matchDept = t.department === studentDept;
+      const matchLvl = normalizeCourseLevel(t.level) === homeLevelFilter;
+      const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(t.semester) === homeSemesterFilter;
+      const matchQ = t.title.toLowerCase().includes(q);
+      return matchDept && matchLvl && matchSem && matchQ;
+    });
+
+    // Matching Past Questions
+    const matchedPastQuestions = deptResources.filter((r) => {
+      const isPq = r.type === 'Past Question' || r.category === 'Past Question';
+      const matchDept = r.department === studentDept;
+      const matchLvl = normalizeCourseLevel(r.level) === homeLevelFilter;
+      const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(r.semester) === homeSemesterFilter;
+      const matchQ =
+        r.title?.toLowerCase().includes(q) ||
+        r.courseCode?.toLowerCase().includes(q) ||
+        r.session?.toLowerCase().includes(q);
+      return isPq && matchDept && matchLvl && matchSem && matchQ;
+    });
+
+    // Matching Notes / Videos / Other Materials
+    const matchedMaterials = deptResources.filter((r) => {
+      const isPq = r.type === 'Past Question' || r.category === 'Past Question';
+      if (isPq) return false;
+      const matchDept = r.department === studentDept;
+      const matchLvl = normalizeCourseLevel(r.level) === homeLevelFilter;
+      const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(r.semester) === homeSemesterFilter;
+      const matchQ =
+        r.title?.toLowerCase().includes(q) ||
+        r.courseCode?.toLowerCase().includes(q) ||
+        r.category?.toLowerCase().includes(q);
+      return matchDept && matchLvl && matchSem && matchQ;
+    });
+
+    return {
+      courses: matchedCourses.slice(0, 5),
+      topics: matchedTopics.slice(0, 5),
+      pastQuestions: matchedPastQuestions.slice(0, 5),
+      materials: matchedMaterials.slice(0, 5)
+    };
+  }, [homeSearchQuery, courses, topics, deptResources, studentDept, homeLevelFilter, homeSemesterFilter]);
+
+  // "My Courses" preview (First 3 courses for active semester & level)
+  const myCoursesPreview = useMemo(() => {
+    const list = courses.filter((c) => {
+      const matchDept = c.department === studentDept;
+      const matchLvl = normalizeCourseLevel(c.level) === homeLevelFilter;
+      const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(c.semester) === homeSemesterFilter;
+      return matchDept && matchLvl && matchSem;
+    });
+    return list.slice(0, 3);
+  }, [courses, studentDept, homeLevelFilter, homeSemesterFilter]);
+
+  // Handle Profile Save
+  const handleProfileSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setProfileError(null);
+    setProfileSuccess(null);
+
+    if (newPassword && newPassword.length < 8) {
+      setProfileError('New password must be at least 8 characters long.');
+      return;
+    }
+    if (newPassword && newPassword !== confirmPassword) {
+      setProfileError('New password and confirmation do not match.');
+      return;
+    }
+
+    setProfileSaving(true);
+    try {
+      if (user?.uid) {
+        await updateDoc(doc(db, 'users', user.uid), {
+          level: editLevel
+        });
+      }
+      await updateStudentProfile(editFullName, newPassword || undefined);
+      await refreshProfile();
+      setProfileSuccess('Profile records updated successfully!');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => setProfileSuccess(null), 4000);
+    } catch (err: any) {
+      setProfileError(err.message || 'Could not update profile information.');
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // JAMB -> Matric Upgrade
   const handleUpgradeMatric = async (e: React.FormEvent) => {
     e.preventDefault();
     setUpgradeError(null);
@@ -330,581 +765,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  // Home Dynamic Greeting with Lagos time auto-update
-  const [lagosGreetingData, setLagosGreetingData] = useState<LagosGreetingResult>(() => getLagosPeriodGreeting());
-  const [greetingMsgIdx, setGreetingMsgIdx] = useState(0);
-
-  useEffect(() => {
-    const updateGreeting = () => {
-      const updated = getLagosPeriodGreeting();
-      setLagosGreetingData(updated);
-      setGreetingMsgIdx(prev => (prev + 1) % updated.messages.length);
-    };
-    const interval = setInterval(updateGreeting, 60000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Universal Search on Home
-  const [homeSearchQuery, setHomeSearchQuery] = useState('');
-
-  // Live Announcements
-  const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
-  const [annFilter, setAnnFilter] = useState('All');
-
-  // Timetables
-  const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
-  const [ttLevelFilter, setTtLevelFilter] = useState<string>(profile?.level ? normalizeCourseLevel(profile.level) : 'All');
-  const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
-
-  // Department Courses for Student's own department
-  const [courses, setCourses] = useState<CourseItem[]>(INITIAL_COURSES);
-  const [loadingCourses, setLoadingCourses] = useState(false);
-  const [courseLevel, setCourseLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>(
-    profile?.level ? normalizeCourseLevel(profile.level) : 'ND1'
-  );
-  const [courseSemester, setCourseSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
-  const [expandedCourseId, setExpandedCourseId] = useState<string | null>(null);
-  const [courseSearchQuery, setCourseSearchQuery] = useState('');
-
-  // Student's tracked messages (Complaints / Enquiries / Reviews)
-  const [myMessages, setMyMessages] = useState<ContactMessage[]>([]);
-  const [loadingMessages, setLoadingMessages] = useState(false);
-
-  // Course Rep Announcement Posting Form
-  const [repTitle, setRepTitle] = useState('');
-  const [repContent, setRepContent] = useState('');
-  const [repCategory, setRepCategory] = useState<'Academic' | 'Student Notice' | 'Department' | 'General'>('Department');
-  const [repUrgent, setRepUrgent] = useState(false);
-  const [repPosting, setRepPosting] = useState(false);
-  const [repSuccess, setRepSuccess] = useState<string | null>(null);
-  const [repError, setRepError] = useState<string | null>(null);
-
-  const isRep = profile?.role === 'rep';
-  const studentDept = profile?.department || 'Computer Technology';
-
-  useEffect(() => {
-    if (profile?.fullName) {
-      setEditFullName(profile.fullName);
-    }
-    if (profile?.level) {
-      setEditLevel(profile.level);
-      setTtLevelFilter(profile.level);
-      setCourseLevel(normalizeCourseLevel(profile.level));
-    }
-  }, [profile]);
-
-  // Fetch announcements
-  const fetchAnnouncements = async () => {
-    try {
-      const snap = await getDocs(collection(db, 'announcements'));
-      if (!snap.empty) {
-        const list: AnnouncementItem[] = [];
-        snap.forEach(d => {
-          list.push({ id: d.id, ...d.data() } as AnnouncementItem);
-        });
-        setAnnouncements(list);
-      }
-    } catch (err) {
-      // fallback to INITIAL_ANNOUNCEMENTS
-    }
-  };
-
-  useEffect(() => {
-    fetchAnnouncements();
-  }, []);
-
-  // Fetch Timetables for student's department
-  useEffect(() => {
-    const fetchTimetables = async () => {
-      try {
-        const q = query(collection(db, 'timetables'), where('department', '==', studentDept));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: TimetableEntry[] = [];
-          snap.forEach(d => {
-            list.push({ id: d.id, ...d.data() } as TimetableEntry);
-          });
-          setTimetables(list);
-        } else {
-          setTimetables([]);
-        }
-      } catch (err) {
-        console.warn('Timetables load note:', err);
-        setTimetables([]);
-      }
-    };
-
-    fetchTimetables();
-  }, [studentDept]);
-
-  // Fetch Courses for student's department
-  useEffect(() => {
-    const fetchCourses = async () => {
-      setLoadingCourses(true);
-      try {
-        const q = query(collection(db, 'courses'), where('department', '==', studentDept));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list: CourseItem[] = [];
-          snap.forEach(d => {
-            const data = d.data();
-            list.push({
-              id: d.id,
-              department: data.department || studentDept,
-              code: data.code || '',
-              title: data.title || '',
-              level: data.level || 'ND1',
-              semester: data.semester || 'First Semester',
-              units: typeof data.units === 'number' ? data.units : 3,
-              type: data.type === 'Elective' ? 'Elective' : 'Core',
-              description: data.description || '',
-              materials: Array.isArray(data.materials) ? data.materials : [],
-              createdAt: data.createdAt,
-              updatedAt: data.updatedAt
-            } as CourseItem);
-          });
-          setCourses(list);
-        } else {
-          setCourses([]);
-        }
-      } catch (err) {
-        console.warn('Courses load note:', err);
-        setCourses([]);
-      } finally {
-        setLoadingCourses(false);
-      }
-    };
-
-    fetchCourses();
-  }, [studentDept]);
-
-  // Fetch materials uploaded to "resources" collection for this department
-  useEffect(() => {
-    const fetchResources = async () => {
-      try {
-        const q = query(collection(db, 'resources'), where('department', '==', studentDept));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const list = snap.docs.map(d => ({ id: d.id, ...(d.data() as any) })) as ResourceItem[];
-          setDeptResources(list);
-        } else {
-          setDeptResources([]);
-        }
-      } catch (err) {
-        console.warn('Student resources fetch notice:', err);
-      }
-    };
-
-    fetchResources();
-  }, [studentDept]);
-
-  // Filtered courses for student's active level & semester
-  const studentFilteredCourses = courses.filter(c => {
-    const matchDept = c.department === studentDept;
-    const matchLevel = normalizeCourseLevel(c.level) === courseLevel;
-    const matchSem = normalizeCourseSemester(c.semester) === courseSemester;
-    if (!matchDept || !matchLevel || !matchSem) return false;
-    if (courseSearchQuery.trim()) {
-      const q = courseSearchQuery.toLowerCase();
-      return c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q);
-    }
-    return true;
-  });
-
-  // Filtered rep materials for student's active level & semester
-  const studentFilteredResources = deptResources.filter(r => {
-    const matchDept = r.department === studentDept;
-    const matchLevel = normalizeCourseLevel(r.level) === courseLevel;
-    const matchSem = normalizeCourseSemester(r.semester) === courseSemester;
-    if (!matchDept || !matchLevel || !matchSem) return false;
-    if (courseSearchQuery.trim()) {
-      const q = courseSearchQuery.toLowerCase();
-      return (
-        (r.courseCode ? r.courseCode.toLowerCase().includes(q) : false) ||
-        r.title.toLowerCase().includes(q) ||
-        (r.category ? r.category.toLowerCase().includes(q) : false)
-      );
-    }
-    return true;
-  });
-
-  // Fetch student's own messages
-  const fetchMyMessages = async () => {
-    if (!user?.uid) return;
-    setLoadingMessages(true);
-    try {
-      const msgs: ContactMessage[] = [];
-      try {
-        const q = query(collection(db, 'messages'), where('userId', '==', user.uid));
-        const snap = await getDocs(q);
-        snap.forEach(d => {
-          msgs.push({ id: d.id, ...d.data() } as ContactMessage);
-        });
-      } catch (e) {
-        // Query might be denied if no index, fall back to local
-      }
-
-      // Check local storage for messages with this user id or email
-      const localMsgs = JSON.parse(localStorage.getItem('sot_local_messages') || '[]');
-      const userLocalMsgs = localMsgs.filter((m: any) =>
-        m.userId === user.uid || m.uid === user.uid || (m.email && user.email && m.email.toLowerCase() === user.email.toLowerCase())
-      );
-
-      const combined = [...msgs, ...userLocalMsgs];
-      const unique = Array.from(new Map(combined.map(m => [m.id, m])).values());
-      // Sort newest first
-      unique.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
-      setMyMessages(unique);
-    } finally {
-      setLoadingMessages(false);
-    }
-  };
-
-  useEffect(() => {
-    if (activeTab === 'my-messages') {
-      fetchMyMessages();
-    }
-  }, [activeTab, user?.uid]);
-
-  // Fetch Communities & Links
-  useEffect(() => {
-    const fetchLinks = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'links'));
-        if (!snap.empty) {
-          const list: LinkItem[] = [];
-          snap.forEach(d => {
-            list.push({ id: d.id, ...d.data() } as LinkItem);
-          });
-          setLinks(list);
-        }
-      } catch (e) {
-        console.warn('Links fetch error:', e);
-      }
-    };
-    fetchLinks();
-  }, []);
-
-  // Filter announcements for student (matches 'All' or student's department)
-  // Max 3 pinned announcements appear first
-  const relevantAnnouncements = useMemo(() => {
-    const matched = announcements.filter(a => {
-      const matchDept = a.department === 'All' || a.department === profile?.department;
-      const matchCategory = annFilter === 'All' || a.category === annFilter;
-      return matchDept && matchCategory;
-    });
-
-    const pinned = matched.filter(a => a.pinned).slice(0, 3);
-    const nonPinned = matched.filter(a => !pinned.some(p => p.id === a.id));
-    return [...pinned, ...nonPinned];
-  }, [announcements, profile?.department, annFilter]);
-
-  // Home announcements: pinned announcements first, then latest, max 2 items
-  const homeAnnouncements = useMemo(() => {
-    const matched = announcements.filter(a => a.department === 'All' || a.department === (profile?.department || studentDept));
-    const pinned = matched.filter(a => a.pinned);
-    const nonPinned = matched.filter(a => !a.pinned);
-    return [...pinned, ...nonPinned].slice(0, 2);
-  }, [announcements, profile?.department, studentDept]);
-
-  // Next exam calculation for the timetable card
-  const nextExamInfo = useMemo(() => {
-    const todayStr = getLagosDateString();
-    const todayDate = new Date(todayStr);
-    const examEntries = timetables
-      .filter(t => t.department === studentDept && t.type === 'exam' && !!t.date)
-      .map(t => {
-        const examDate = new Date(t.date!);
-        const diffMs = examDate.getTime() - todayDate.getTime();
-        const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-        return { entry: t, diffDays };
-      })
-      .filter(e => e.diffDays >= 0)
-      .sort((a, b) => a.diffDays - b.diffDays);
-    return examEntries[0] || null;
-  }, [timetables, studentDept]);
-
-  // Comprehensive notifications aggregation (Announcements, Materials, Past Questions, Courses, Timetables, Links, Study Tasks)
-  const lastSeenIso = notificationsLastSeen || (profile as any)?.notificationsLastSeen;
-  const lastSeenMs = lastSeenIso ? new Date(lastSeenIso).getTime() : 0;
-
-  const dashboardNotifications: DashboardNotificationItem[] = useMemo(() => {
-    const items: DashboardNotificationItem[] = [];
-
-    // 1. Announcements
-    announcements.forEach(a => {
-      const matchDept = a.department === 'All' || a.department === profile?.department;
-      if (matchDept) {
-        const ts = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        items.push({
-          id: 'ann_' + a.id,
-          type: 'announcement',
-          title: a.title,
-          subtitle: `${a.department === 'All' ? 'School-Wide' : a.department} • ${a.category}`,
-          timeStr: a.createdAt ? new Date(a.createdAt).toLocaleDateString() : 'Recent',
-          timestamp: ts,
-          isUnread: ts > lastSeenMs,
-          actionTab: 'announcements',
-          badge: a.pinned ? 'Pinned Notice' : 'Notice',
-          isPinned: Boolean(a.pinned)
-        });
-      }
-    });
-
-    // 2. Learning Materials & Past Questions (resources)
-    deptResources.forEach(r => {
-      const ts = r.createdAt ? new Date(r.createdAt).getTime() : 0;
-      items.push({
-        id: 'mat_' + r.id,
-        type: 'material',
-        title: `${r.courseCode || ''}: ${r.title}`,
-        subtitle: `New ${r.category || r.type || 'Resource'} for ${r.level} • ${r.semester}`,
-        timeStr: r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Recent',
-        timestamp: ts,
-        isUnread: ts > lastSeenMs,
-        actionTab: 'resources',
-        badge: r.category || (r.type as any) || 'Material'
-      });
-    });
-
-    // 3. Courses
-    courses.forEach(c => {
-      if (c.createdAt && c.department === profile?.department) {
-        const ts = new Date(c.createdAt).getTime();
-        items.push({
-          id: 'crs_' + c.id,
-          type: 'course',
-          title: `${c.code}: ${c.title}`,
-          subtitle: `Enrolled Course • ${c.level} ${c.semester}`,
-          timeStr: new Date(c.createdAt).toLocaleDateString(),
-          timestamp: ts,
-          isUnread: ts > lastSeenMs,
-          actionTab: 'resources',
-          badge: 'Course'
-        });
-      }
-    });
-
-    // 4. Timetables
-    timetables.forEach(t => {
-      if (t.createdAt && t.department === profile?.department) {
-        const ts = new Date(t.createdAt).getTime();
-        items.push({
-          id: 'tt_' + t.id,
-          type: 'timetable',
-          title: `${t.type === 'exam' ? 'Exam' : 'Class'}: ${t.courseCode}`,
-          subtitle: `${t.day} • ${t.startTime} (${t.venue})`,
-          timeStr: new Date(t.createdAt).toLocaleDateString(),
-          timestamp: ts,
-          isUnread: ts > lastSeenMs,
-          actionTab: 'timetables',
-          badge: t.type === 'exam' ? 'Exam Timetable' : 'Timetable'
-        });
-      }
-    });
-
-    // 5. Links & Communities
-    links.forEach(l => {
-      if (l.active !== false && (l.audience === 'All' || l.audience === profile?.department)) {
-        const ts = l.createdAt ? new Date(l.createdAt).getTime() : 0;
-        items.push({
-          id: 'lnk_' + l.id,
-          type: 'link',
-          title: l.name,
-          subtitle: `${l.category} • ${l.audience}`,
-          timeStr: l.createdAt ? new Date(l.createdAt).toLocaleDateString() : 'Recent',
-          timestamp: ts,
-          isUnread: ts > lastSeenMs,
-          actionTab: 'links',
-          badge: 'Community'
-        });
-      }
-    });
-
-    // 6. To-Do Reminders (due today, due tomorrow, overdue)
-    const todayStr = getLagosDateString();
-    const tomorrowStr = getLagosDateString(new Date(Date.now() + 86400000));
-    (profile?.studyPlanner || []).forEach(task => {
-      if (!task.done && task.dueDate) {
-        let badge = 'Task';
-        let isUrgent = false;
-        if (task.dueDate === todayStr) {
-          badge = 'Due Today';
-          isUrgent = true;
-        } else if (task.dueDate === tomorrowStr) {
-          badge = 'Due Tomorrow';
-          isUrgent = true;
-        } else if (task.dueDate < todayStr) {
-          badge = 'Overdue Task';
-          isUrgent = true;
-        }
-        if (isUrgent) {
-          items.push({
-            id: 'task_' + task.id,
-            type: 'todo',
-            title: task.title,
-            subtitle: `${task.courseCode ? `${task.courseCode} • ` : ''}Due: ${task.dueDate}`,
-            timeStr: badge,
-            timestamp: Date.now() + (badge === 'Overdue Task' ? 1000 : 500),
-            isUnread: true,
-            actionTab: 'study-planner',
-            badge
-          });
-        }
-      }
-    });
-
-    items.sort((a, b) => b.timestamp - a.timestamp);
-    return items;
-  }, [announcements, deptResources, courses, timetables, links, profile?.studyPlanner, profile?.department, lastSeenMs]);
-
-  const unreadNotificationsCount = useMemo(() => {
-    return dashboardNotifications.filter(n => n.isUnread).length;
-  }, [dashboardNotifications]);
-
-  const unreadAnnouncementsCount = useMemo(() => {
-    return relevantAnnouncements.filter(a => a.createdAt && new Date(a.createdAt).getTime() > lastSeenMs).length;
-  }, [relevantAnnouncements, lastSeenMs]);
-
-  // Mark all notifications as seen
-  const handleMarkAllNotificationsRead = async () => {
-    const nowIso = new Date().toISOString();
-    setNotificationsLastSeen(nowIso);
-    localStorage.setItem('sot_notifications_last_seen', nowIso);
-    if (auth.currentUser) {
-      try {
-        await updateDoc(doc(db, 'users', auth.currentUser.uid), {
-          notificationsLastSeen: nowIso,
-          lastSeenAnnouncements: nowIso
-        });
-      } catch (err) {
-        // ignore
-      }
-    }
-    if (profile) {
-      const updated = { ...profile, notificationsLastSeen: nowIso, lastSeenAnnouncements: nowIso };
-      localStorage.setItem('sot_local_profile', JSON.stringify(updated));
-    }
-  };
-
-  const handleOpenAnnouncements = () => {
-    setActiveTab('announcements');
-    setSidebarOpen(false);
-    handleMarkAllNotificationsRead();
-  };
-
-  const studentDepartment = DEPARTMENTS.find((d) => d.name === profile?.department) || DEPARTMENTS[1];
-
-  const studentFirstName = useMemo(() => {
-    if (profile?.fullName?.trim()) {
-      return profile.fullName.trim().split(' ')[0];
-    }
-    if (user?.email) {
-      const namePart = user.email.split('@')[0];
-      return namePart.charAt(0).toUpperCase() + namePart.slice(1);
-    }
-    return 'Student';
-  }, [profile?.fullName, user?.email]);
-
-  const studentInitial = useMemo(() => {
-    if (profile?.fullName?.trim()) {
-      return profile.fullName.trim().charAt(0).toUpperCase();
-    }
-    if (user?.email) {
-      return user.email.charAt(0).toUpperCase();
-    }
-    return 'S';
-  }, [profile?.fullName, user?.email]);
-
-  // Universal Search across Courses, Materials, Past Questions, and Announcements
-  const universalSearchResults = useMemo(() => {
-    if (!homeSearchQuery.trim()) return null;
-    const q = homeSearchQuery.toLowerCase();
-
-    const matchedCourses = courses.filter(
-      c => c.department === studentDept && (c.code.toLowerCase().includes(q) || c.title.toLowerCase().includes(q))
-    );
-
-    const matchedMaterials: Array<{ id: string; title: string; courseCode: string; category: string; url: string }> = [];
-    courses.forEach(c => {
-      if (c.department === studentDept && c.materials) {
-        c.materials.forEach((m, idx) => {
-          if (m.title.toLowerCase().includes(q) || c.code.toLowerCase().includes(q)) {
-            matchedMaterials.push({
-              id: m.id || `${c.code}_${idx}`,
-              title: m.title,
-              courseCode: c.code,
-              category: m.category,
-              url: m.url
-            });
-          }
-        });
-      }
-    });
-
-    deptResources.forEach(r => {
-      const codeMatch = r.courseCode ? r.courseCode.toLowerCase().includes(q) : false;
-      if (r.department === studentDept && (r.title.toLowerCase().includes(q) || codeMatch)) {
-        matchedMaterials.push({
-          id: r.id,
-          title: r.title,
-          courseCode: r.courseCode || '',
-          category: r.category || (r.type as any) || 'Note',
-          url: r.url
-        });
-      }
-    });
-
-    const matchedAnnouncements = relevantAnnouncements.filter(
-      a => a.title.toLowerCase().includes(q) || a.content.toLowerCase().includes(q)
-    );
-
-    return {
-      courses: matchedCourses.slice(0, 4),
-      materials: matchedMaterials.slice(0, 4),
-      announcements: matchedAnnouncements.slice(0, 3)
-    };
-  }, [homeSearchQuery, courses, deptResources, relevantAnnouncements, studentDept]);
-
-  const handleProfileSave = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setProfileError(null);
-    setProfileSuccess(null);
-
-    if (newPassword && newPassword.length < 8) {
-      setProfileError('New password must be at least 8 characters long.');
-      return;
-    }
-    if (newPassword && newPassword !== confirmPassword) {
-      setProfileError('New password and confirmation do not match.');
-      return;
-    }
-
-    setProfileSaving(true);
-    try {
-      if (user?.uid) {
-        try {
-          await updateDoc(doc(db, 'users', user.uid), {
-            level: editLevel
-          });
-        } catch (e) {
-          console.warn('Level save error:', e);
-        }
-      }
-      await updateStudentProfile(editFullName, newPassword || undefined);
-      await refreshProfile();
-      setProfileSuccess('Profile records updated successfully!');
-      setNewPassword('');
-      setConfirmPassword('');
-      setTimeout(() => setProfileSuccess(null), 4000);
-    } catch (err: any) {
-      setProfileError(err.message || 'Could not update profile information.');
-    } finally {
-      setProfileSaving(false);
-    }
-  };
-
-  // Course Rep Announcement Submit
+  // Rep Announcement Post
   const handleRepPostAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
     setRepError(null);
@@ -916,37 +777,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
 
     setRepPosting(true);
-    const newAnn = {
-      title: repTitle.trim(),
-      content: repContent.trim(),
-      category: repCategory,
-      department: studentDept, // STRICTLY LOCKED to own department
-      urgent: repUrgent,
-      pinned: repPinned,
-      author: `${profile?.fullName || 'Student'} (Course Rep)`,
-      uploadedBy: user?.uid || '',
-      uploadedByEmail: user?.email || '',
-      createdAt: new Date().toISOString()
-    };
-
     try {
-      try {
-        const docRef = await addDoc(collection(db, 'announcements'), newAnn);
-        setAnnouncements(prev => [{ id: docRef.id, ...newAnn }, ...prev]);
-      } catch (err: any) {
-        console.warn('Firestore announcement save note:', err);
-        // Fallback local
-        const localAnn = { id: 'ann_' + Date.now(), ...newAnn };
-        setAnnouncements(prev => [localAnn, ...prev]);
-      }
-
-      setRepSuccess(`Announcement broadcast successfully to all students in ${studentDept}!`);
+      const newAnn = {
+        title: repTitle.trim(),
+        content: repContent.trim(),
+        category: repCategory,
+        department: studentDept,
+        urgent: repUrgent,
+        pinned: repPinned,
+        author: `${profile?.fullName || 'Student'} (Course Rep)`,
+        uploadedBy: user?.uid || '',
+        uploadedByEmail: user?.email || '',
+        createdAt: new Date().toISOString()
+      };
+      await addDoc(collection(db, 'announcements'), newAnn);
+      setRepSuccess('Department bulletin published successfully!');
       setRepTitle('');
       setRepContent('');
-      setRepUrgent(false);
-      setRepPinned(false);
       setTimeout(() => setRepSuccess(null), 4000);
-      fetchAnnouncements();
     } catch (err: any) {
       setRepError(err?.message || 'Failed to publish announcement.');
     } finally {
@@ -954,35 +802,64 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
-  // Filtered Timetable entries for student's department
-  const relevantTimetables = timetables.filter(t => {
-    const matchDept = t.department === studentDept;
-    const matchType = t.type === ttTypeTab;
-    const matchLevel = ttLevelFilter === 'All' || t.level === ttLevelFilter;
-    return matchDept && matchType && matchLevel;
-  });
+  // Get Page Title for Header
+  const getTabTitle = (tab: TabType): string => {
+    switch (tab) {
+      case 'overview':
+        return 'Home';
+      case 'courses':
+        return 'Courses';
+      case 'past-questions':
+        return 'Past Questions';
+      case 'ask-ai':
+        return 'Ask AI';
+      case 'profile':
+        return 'Profile';
+      case 'timetables':
+        return 'Timetable';
+      case 'announcements':
+        return 'Announcements';
+      case 'gpa':
+        return 'GPA Calculator';
+      case 'study-planner':
+        return 'Study Planner';
+      case 'bookmarks':
+        return 'Saved';
+      case 'links':
+        return 'Communities & Links';
+      case 'my-messages':
+        return 'My Messages';
+      case 'rep-announcement':
+        return 'Post Announcement';
+      default:
+        return 'SOT Portal';
+    }
+  };
 
   return (
-    <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col md:flex-row pb-20 md:pb-0">
-      
-      {/* Mobile Top Bar */}
-      <div className="md:hidden flex items-center justify-between h-14 px-4 bg-[#0A1224] border-b border-[#24315A] sticky top-0 z-30">
-        <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-            <GraduationCap className="w-4 h-4" />
-          </div>
-          <span className="font-display font-bold text-sm text-[#E6ECFA]">
-            SOT Student Desk
-          </span>
-        </div>
+    <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col pb-24 max-w-2xl mx-auto w-full px-3.5 sm:px-5">
+      {/* ======================================================== */}
+      {/* TOP HEADER: Shows Blue Back Arrow on any Inner Page      */}
+      {/* ======================================================== */}
+      {isInner ? (
+        <header className="sticky top-0 z-30 bg-[#0A1224]/95 backdrop-blur-md border-b border-[#24315A] -mx-3.5 sm:-mx-5 px-3.5 sm:px-5 py-3 flex items-center justify-between mb-4">
+          <button
+            type="button"
+            onClick={handleGoBack}
+            className="flex items-center gap-2 text-[#2F52FF] hover:text-[#5271FF] font-bold text-sm transition-colors cursor-pointer group"
+          >
+            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-0.5 transition-transform" />
+            <span className="text-[#E6ECFA] font-bold text-base font-heading">
+              {innerTitle || getTabTitle(activeTab)}
+            </span>
+          </button>
 
-        <div className="flex items-center gap-2">
-          {/* Notification Bell Dropdown (Single Bell) */}
+          {/* Quick Notification Bell */}
           <div className="relative">
             <button
               onClick={() => setShowNotifications(!showNotifications)}
               title="Notifications"
-              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
+              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
             >
               <Bell className="w-4 h-4" />
               {unreadNotificationsCount > 0 && (
@@ -991,7 +868,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </span>
               )}
             </button>
-
             <NotificationsPopover
               isOpen={showNotifications}
               onClose={() => setShowNotifications(false)}
@@ -999,1761 +875,1039 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               unreadCount={unreadNotificationsCount}
               onMarkAllAsRead={handleMarkAllNotificationsRead}
               onSelectNotification={(tab) => {
-                setActiveTab(tab);
-                setSidebarOpen(false);
+                navigateToTab(tab as any, getTabTitle(tab as any), true);
               }}
             />
           </div>
-
-          {/* Student Avatar Icon */}
-          <button
-            onClick={() => setActiveTab('profile')}
-            title="Profile & Settings"
-            className={`w-8 h-8 rounded-full border flex items-center justify-center font-bold text-xs transition-all cursor-pointer ${
-              activeTab === 'profile'
-                ? 'bg-[#2F52FF] text-white border-[#FFC700] ring-2 ring-[#FFC700]/30 shadow-sm'
-                : 'bg-[#121C36] text-[#FFC700] border-[#24315A] hover:border-[#2F52FF]'
-            }`}
-          >
-            {studentInitial}
-          </button>
-        </div>
-      </div>
-
-      {/* Desktop Sidebar Navigation (Hidden for students on mobile in favor of bottom tab bar) */}
-      <aside
-        className="hidden md:flex md:sticky top-0 z-40 h-screen w-72 bg-[#0A1224] border-r border-[#24315A] flex-col justify-between p-5"
-      >
-        <div className="space-y-5 overflow-y-auto pr-1">
-          <div className="flex items-center justify-between pb-3 border-b border-[#24315A]">
+        </header>
+      ) : activeTab !== 'overview' ? (
+        /* Root Bottom Tab Header (no back arrow) */
+        <header className="sticky top-0 z-30 bg-[#0A1224]/95 backdrop-blur-md border-b border-[#24315A] -mx-3.5 sm:-mx-5 px-3.5 sm:px-5 py-3 flex items-center justify-between mb-4">
+          <h2 className="font-heading font-bold text-lg text-[#E6ECFA]">
+            {getTabTitle(activeTab)}
+          </h2>
+          <div className="relative">
             <button
-              onClick={onNavigateHome}
-              className="flex items-center gap-3 text-left group cursor-pointer"
+              onClick={() => setShowNotifications(!showNotifications)}
+              title="Notifications"
+              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
             >
-              <div className="w-10 h-10 rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#2F52FF] transition-colors">
-                <GraduationCap className="w-5 h-5" />
-              </div>
-              <div>
-                <span className="font-display font-bold text-lg text-[#E6ECFA] block leading-tight">
-                  SOT<span className="text-[#FFC700]">.</span>
-                </span>
-                <span className="text-[10px] text-[#9AA8C7]">{SITE_CONFIG.tagline}</span>
-              </div>
-            </button>
-          </div>
-
-          {/* Student / Rep / Admin Status Card */}
-          <div className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A]">
-            <div className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider mb-1 flex items-center justify-between">
-              <span>
-                {isAdmin ? 'Administrator' : isRep ? 'Course Representative' : 'Student Account'}
-              </span>
-              <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase ${
-                isAdmin ? 'bg-[#FFC700] text-[#0A1224]' : isRep ? 'bg-[#2F52FF] text-white' : 'bg-[#0A1224] text-[#9AA8C7]'
-              }`}>
-                {profile?.role || 'student'}
-              </span>
-            </div>
-            <div className="text-xs font-semibold text-[#E6ECFA] truncate">
-              {profile?.fullName || user?.email}
-            </div>
-            <div className="mt-1.5 flex items-center gap-1.5 text-[11px]  text-[#9AA8C7]">
-              <span className={`w-1.5 h-1.5 rounded-full ${isAdmin ? 'bg-[#FFC700]' : isRep ? 'bg-[#2F52FF]' : 'bg-emerald-400'}`} />
-              <span>{isAdmin ? 'CLEARANCE: ADMIN' : (profile?.matricNumber ? profile.matricNumber : profile?.jambNumber ? `JAMB: ${profile.jambNumber}` : 'ID PENDING')}</span>
-            </div>
-          </div>
-
-          {/* Navigation Links */}
-          <nav className="space-y-1">
-            <button
-              onClick={() => { setActiveTab('overview'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'overview'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <LayoutDashboard className="w-4 h-4 text-[#FFC700]" />
-              <span>Overview</span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('resources'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'resources' || activeTab === 'courses'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <BookOpen className="w-4 h-4 text-[#FFC700]" />
-                <span>Academic Resources</span>
-              </div>
-              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
-                {courses.length}
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('department'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'department'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <Building2 className="w-4 h-4 text-[#FFC700]" />
-              <span>My Department</span>
-            </button>
-
-
-            {/* Timetables Tab (NEW) */}
-            <button
-              onClick={() => { setActiveTab('timetables'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'timetables'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <Calendar className="w-4 h-4 text-[#FFC700]" />
-              <span>Timetables</span>
-            </button>
-
-            {/* Announcements Tab with unread counter */}
-            <button
-              onClick={handleOpenAnnouncements}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'announcements'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <Bell className="w-4 h-4 text-[#FFC700]" />
-              <div className="flex-1 flex items-center justify-between">
-                <span>Announcements</span>
-                {unreadAnnouncementsCount > 0 ? (
-                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-rose-600 text-white font-extrabold animate-pulse">
-                    {unreadAnnouncementsCount} new
-                  </span>
-                ) : (
-                  <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
-                    {relevantAnnouncements.length}
-                  </span>
-                )}
-              </div>
-            </button>
-
-            {/* Bookmarks Tab */}
-            <button
-              onClick={() => { setActiveTab('bookmarks'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'bookmarks'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Bookmark className="w-4 h-4 text-[#FFC700]" />
-                <span>Bookmarks</span>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#FFC700] border border-[#24315A] font-bold">
-                {(profile?.bookmarks || []).length}
-              </span>
-            </button>
-
-            {/* Communities & Links Tab */}
-            <button
-              onClick={() => { setActiveTab('links'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'links'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Link2 className="w-4 h-4 text-[#FFC700]" />
-                <span>Communities &amp; Links</span>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-[#121C36] text-[#25D366] border border-[#24315A] font-bold">
-                Hub
-              </span>
-            </button>
-
-            {/* GPA / CGPA Calculator Tab */}
-            <button
-              onClick={() => { setActiveTab('gpa'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'gpa'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Calculator className="w-4 h-4 text-[#FFC700]" />
-                <span>GPA Calculator</span>
-              </div>
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/30">
-                4.00
-              </span>
-            </button>
-
-            {/* Study Planner Tab */}
-            <button
-              onClick={() => { setActiveTab('study-planner'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'study-planner'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <ListTodo className="w-4 h-4 text-[#FFC700]" />
-                <span>Study Planner</span>
-              </div>
-              {(profile?.studyPlanner || []).filter(t => !t.done).length > 0 && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold">
-                  {(profile?.studyPlanner || []).filter(t => !t.done).length}
+              <Bell className="w-4 h-4" />
+              {unreadNotificationsCount > 0 && (
+                <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
+                  {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
                 </span>
               )}
             </button>
+            <NotificationsPopover
+              isOpen={showNotifications}
+              onClose={() => setShowNotifications(false)}
+              notifications={dashboardNotifications}
+              unreadCount={unreadNotificationsCount}
+              onMarkAllAsRead={handleMarkAllNotificationsRead}
+              onSelectNotification={(tab) => {
+                navigateToTab(tab as any, getTabTitle(tab as any), true);
+              }}
+            />
+          </div>
+        </header>
+      ) : null}
 
-            {/* Complaint Tracking / My Messages Tab (NEW) */}
-            <button
-              onClick={() => { setActiveTab('my-messages'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'my-messages'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <MessageSquare className="w-4 h-4 text-[#FFC700]" />
-              <span>My Messages</span>
-            </button>
-
-            {/* Course Rep Announcement Post Tab (ONLY visible if role === 'rep') */}
-            {isRep && (
-              <button
-                onClick={() => { setActiveTab('rep-announcement'); setSidebarOpen(false); }}
-                className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer border ${
-                  activeTab === 'rep-announcement'
-                    ? 'bg-gradient-to-r from-[#2F52FF] to-[#1E3AB8] text-white border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.3)]'
-                    : 'bg-[#121C36]/80 text-[#FFC700] border-[#FFC700]/40 hover:bg-[#121C36]'
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <Megaphone className="w-4 h-4 text-[#FFC700]" />
-                  <span>Post Announcement</span>
-                </div>
-                <span className="text-[9px] uppercase font-bold px-1.5 py-0.5 rounded bg-[#FFC700] text-[#0A1224]">
-                  Rep
-                </span>
-              </button>
-            )}
-
-            {/* Ask AI Sidebar Page Link */}
-            <button
-              onClick={() => { setActiveTab('ask-ai'); setSidebarOpen(false); }}
-              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'ask-ai'
-                  ? 'bg-gradient-to-r from-[#2F52FF] to-[#1E3AB8] text-white shadow-[0_0_20px_rgba(47,82,255,0.45)] border border-[#FFC700]/50'
-                  : 'text-[#E6ECFA] hover:text-white hover:bg-[#121C36]'
-              }`}
-            >
-              <div className="flex items-center gap-3">
-                <Sparkles className="w-4 h-4 text-[#FFC700]" />
-                <span>Ask AI</span>
-              </div>
-              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#FFC700] text-[#0A1224]">
-                TUTOR
-              </span>
-            </button>
-
-            <button
-              onClick={() => { setActiveTab('profile'); setSidebarOpen(false); }}
-              className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer ${
-                activeTab === 'profile'
-                  ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36]'
-              }`}
-            >
-              <User className="w-4 h-4 text-[#FFC700]" />
-              <span>Profile Settings</span>
-            </button>
-
-            {/* Course Rep Desk Sidebar Navigation Link (Reps and Admins) */}
-            {(isRep || isAdmin) && (
-              <button
-                onClick={() => {
-                  if (onNavigateRep) {
-                    onNavigateRep();
-                  } else {
-                    window.location.href = '/rep';
-                  }
-                  setSidebarOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer bg-gradient-to-r from-[#2F52FF]/25 to-[#121C36] border border-[#FFC700]/50 text-[#FFC700] hover:bg-[#2F52FF]/35 hover:shadow-[0_0_15px_rgba(255,199,0,0.25)] group"
-              >
-                <div className="flex items-center gap-3">
-                  <Sparkles className="w-4 h-4 text-[#FFC700] group-hover:scale-110 transition-transform" />
-                  <span>Course Rep Desk</span>
-                </div>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-[#FFC700] text-[#0A1224]">
-                  Rep
-                </span>
-              </button>
-            )}
-
-            {/* Admin Dashboard Sidebar Navigation Link (Admins Only) */}
-            {isAdmin && (
-              <button
-                onClick={() => {
-                  if (onNavigateAdmin) {
-                    onNavigateAdmin();
-                  } else {
-                    window.location.href = '/admin';
-                  }
-                  setSidebarOpen(false);
-                }}
-                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-sm font-semibold transition-all cursor-pointer bg-gradient-to-r from-[#2F52FF]/20 to-[#FFC700]/15 border border-[#FFC700]/50 text-[#FFC700] hover:bg-[#FFC700]/20 hover:border-[#FFC700] hover:shadow-[0_0_15px_rgba(255,199,0,0.25)] group"
-              >
-                <div className="flex items-center gap-3">
-                  <ShieldCheck className="w-4 h-4 text-[#FFC700] group-hover:scale-110 transition-transform" />
-                  <span>Admin Dashboard</span>
-                </div>
-                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-[#FFC700] text-[#0A1224]">
-                  Admin
-                </span>
-              </button>
-            )}
-          </nav>
+      {/* Toast Notification */}
+      {bookmarkToast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-[#121C36] border border-[#2F52FF] text-xs font-semibold text-[#E6ECFA] shadow-[0_0_20px_rgba(47,82,255,0.4)] flex items-center gap-2">
+          <BookmarkCheck className="w-4 h-4 text-[#FFC700]" />
+          <span>{bookmarkToast}</span>
         </div>
-
-        {/* Sidebar Footer */}
-        <div className="space-y-1.5 pt-3 border-t border-[#24315A]">
-          <button
-            onClick={onNavigateContact}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36] cursor-pointer"
-          >
-            <span>Student Helpdesk Form</span>
-          </button>
-          <button
-            onClick={onNavigateHome}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#121C36] cursor-pointer"
-          >
-            <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
-            <span>Public Site</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowLogoutConfirm(true)}
-            className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-400 hover:bg-rose-950/20 cursor-pointer transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            <span>Log out</span>
-          </button>
-        </div>
-      </aside>
-
-      {sidebarOpen && (
-        <div
-          onClick={() => setSidebarOpen(false)}
-          className="fixed inset-0 z-30 bg-[#0A1224]/80 backdrop-blur-sm md:hidden"
-        />
       )}
 
-      {/* Main Content Workspace */}
-      <main className="flex-1 min-w-0 p-5 sm:p-8 lg:p-10 space-y-8 overflow-y-auto">
-        
-        {/* Visible Role Read Error Banner if role couldn't be read */}
-        {roleReadError && (
-          <div className="p-4 rounded-xl bg-rose-950/70 border border-rose-500/60 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs text-rose-200 shadow-[0_0_20px_rgba(244,63,94,0.2)]">
-            <div className="flex items-start gap-2.5">
-              <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
-              <div>
-                <strong className="text-rose-100 font-semibold block text-sm">
-                  Failed to Read User Role from Firestore
-                </strong>
-                <p className=" text-[11px] text-rose-300 mt-0.5 break-all">
-                  {roleReadError}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => refreshProfile()}
-              className="px-3.5 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold text-xs shrink-0 cursor-pointer flex items-center gap-1.5 transition-colors"
-            >
-              <RefreshCw className="w-3.5 h-3.5" />
-              <span>Retry Reading Role</span>
-            </button>
-          </div>
-        )}
-        
-        {/* PAGE HEADER */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-[#24315A]">
-          <div>
-            <div className="flex items-center gap-2 text-[11px] text-[#9AA8C7]">
-              <span>School of Technology</span>
-              <span>/</span>
-              <span className="text-[#FFC700] font-semibold capitalize">
-                {activeTab === 'rep-announcement' ? 'Course Rep Announcement' : activeTab === 'my-messages' ? 'Complaint & Message Tracking' : activeTab === 'gpa' ? 'GPA Calculator' : activeTab === 'study-planner' ? 'Study Planner' : activeTab === 'links' ? 'Communities & Links' : activeTab}
-              </span>
-            </div>
-            <h1 className="font-heading font-bold text-xl sm:text-[22px] text-[#E6ECFA] mt-0.5">
-              {activeTab === 'overview' && 'Student Portal Overview'}
-              {activeTab === 'department' && 'My Enrolled Department'}
-              {activeTab === 'resources' && 'Curriculum & Study Materials'}
-              {activeTab === 'courses' && 'Department Courses & Learning Materials'}
-              {activeTab === 'timetables' && 'Department Timetables & Exam Schedules'}
-              {activeTab === 'announcements' && 'Student Bulletins & Notices'}
-              {activeTab === 'bookmarks' && 'My Bookmarked Items'}
-              {activeTab === 'links' && 'Communities & Essential Links'}
-              {activeTab === 'gpa' && 'GPA & CGPA Calculator'}
-              {activeTab === 'study-planner' && 'Study Planner & To-Dos'}
-              {activeTab === 'my-messages' && 'My Complaints & Message Tracking'}
-              {activeTab === 'rep-announcement' && 'Course Representative Bulletin Desk'}
-              {activeTab === 'ask-ai' && 'Ask AI Academic Tutor'}
-              {activeTab === 'profile' && 'Student Profile Settings'}
-            </h1>
-          </div>
-
-          {/* Desktop Top Bar: Single Bell + Avatar */}
-          <div className="hidden md:flex items-center gap-2.5">
-            {/* Notification Bell Dropdown */}
-            <div className="relative">
-              <button
-                onClick={() => setShowNotifications(!showNotifications)}
-                title="Notifications"
-                className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] cursor-pointer transition-colors"
-              >
-                <Bell className="w-4 h-4" />
-                {unreadNotificationsCount > 0 && (
-                  <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
-                    {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
-                  </span>
-                )}
-              </button>
-
-              <NotificationsPopover
-                isOpen={showNotifications}
-                onClose={() => setShowNotifications(false)}
-                notifications={dashboardNotifications}
-                unreadCount={unreadNotificationsCount}
-                onMarkAllAsRead={handleMarkAllNotificationsRead}
-                onSelectNotification={(tab) => {
-                  setActiveTab(tab);
-                  setSidebarOpen(false);
-                }}
-              />
-            </div>
-
-            {/* Student Avatar */}
-            <button
-              onClick={() => setActiveTab('profile')}
-              title="Profile & Settings"
-              className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                activeTab === 'profile'
-                  ? 'bg-[#2F52FF] text-white border-[#FFC700]'
-                  : 'bg-[#121C36] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
-              }`}
-            >
-              <div className="w-6 h-6 rounded-full bg-[#0A1224] text-[#FFC700] font-bold text-xs flex items-center justify-center border border-[#FFC700]/30">
-                {studentInitial}
-              </div>
-              <span className="text-xs font-semibold max-w-[120px] truncate">{studentFirstName}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* Global Bookmarks Toast Alert */}
-        {bookmarkToast && (
-          <div className="p-3 rounded-xl bg-[#121C36] border border-[#FFC700]/50 text-xs text-[#E6ECFA] flex items-center justify-between shadow-[0_4px_20px_rgba(255,199,0,0.2)]">
-            <div className="flex items-center gap-2.5">
-              <BookmarkCheck className="w-4 h-4 text-[#FFC700] shrink-0" />
-              <span>{bookmarkToast}</span>
-            </div>
-            <button
-              onClick={() => setActiveTab('bookmarks')}
-              className="text-[#FFC700] font-bold hover:underline ml-3 shrink-0 cursor-pointer"
-            >
-              View Bookmarks &rarr;
-            </button>
-          </div>
-        )}
-
+      {/* Main Content Area */}
+      <main className="flex-1 space-y-4">
         {/* ======================================================== */}
-        {/* VIEW 1: OVERVIEW (Simplified Student Home)                */}
+        {/* VIEW 1: HOME (COMPACT & CLEAN)                           */}
         {/* ======================================================== */}
         {activeTab === 'overview' && (
-          <div className="space-y-2 sm:space-y-2.5 max-w-2xl mx-auto">
+          <div className="space-y-4 pt-2">
+            {/* Top Bar for Home: Notification Bell & Logo */}
+            <div className="flex items-center justify-between pb-1">
+              <div className="flex items-center gap-2">
+                <div className="w-7 h-7 rounded-lg bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
+                  <GraduationCap className="w-4 h-4" />
+                </div>
+                <span className="font-heading font-bold text-sm text-[#E6ECFA]">
+                  SOT Student Desk
+                </span>
+              </div>
 
-            {/* 1. Compact Greeting Card */}
-            <div className="p-3 sm:p-3.5 rounded-2xl bg-gradient-to-r from-[#0E1A38] via-[#12224A] to-[#1A2E63] border border-[#24315A] shadow-[0_4px_20px_rgba(47,82,255,0.12)] space-y-2.5">
+              <div className="relative">
+                <button
+                  onClick={() => setShowNotifications(!showNotifications)}
+                  title="Notifications"
+                  className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
+                >
+                  <Bell className="w-4 h-4" />
+                  {unreadNotificationsCount > 0 && (
+                    <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
+                      {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
+                    </span>
+                  )}
+                </button>
+                <NotificationsPopover
+                  isOpen={showNotifications}
+                  onClose={() => setShowNotifications(false)}
+                  notifications={dashboardNotifications}
+                  unreadCount={unreadNotificationsCount}
+                  onMarkAllAsRead={handleMarkAllNotificationsRead}
+                  onSelectNotification={(tab) => {
+                    navigateToTab(tab as any, getTabTitle(tab as any), true);
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* 1. GREETING CARD */}
+            <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
               <div>
-                <h2 className="font-heading font-bold text-base sm:text-lg text-[#E6ECFA] tracking-tight flex items-center gap-1.5">
-                  <span>{lagosGreetingData.greeting}, {studentFirstName}!</span>
-                  {lagosGreetingData.period === 'morning' && <span className="text-amber-400">☀️</span>}
-                  {lagosGreetingData.period === 'afternoon' && <span className="text-[#FFC700]">⛅</span>}
-                  {lagosGreetingData.period === 'evening' && <span className="text-indigo-400">🌅</span>}
-                  {lagosGreetingData.period === 'night' && <span className="text-blue-300">🌙</span>}
-                </h2>
-                <p className="text-xs text-[#9AA8C7] mt-0.5">
-                  {lagosGreetingData.messages[greetingMsgIdx % lagosGreetingData.messages.length]}
+                <h1 className="font-heading font-bold text-lg text-[#E6ECFA] flex items-center gap-1.5">
+                  <span>{lagosGreetingData.greeting},</span>
+                  <span className="text-[#FFC700]">
+                    {profile?.fullName ? profile.fullName.trim().split(' ')[0] : 'Student'}
+                  </span>
+                </h1>
+                <p className="text-[11px] text-[#9AA8C7] mt-0.5">
+                  Welcome to your department study dashboard.
                 </p>
               </div>
 
-              {/* Department & Level Chips + GPA & Tasks Shortcuts */}
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-[#24315A]/60 flex-wrap">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="px-2 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] text-[#FFC700] text-[11px] font-semibold flex items-center gap-1">
-                    <GraduationCap className="w-3 h-3 text-[#FFC700]" />
-                    <span>{profile?.department || studentDept}</span>
-                  </span>
-
-                  {(profile?.level || editLevel) && (
-                    <span className="px-2 py-0.5 rounded-md bg-[#2F52FF]/20 border border-[#2F52FF]/40 text-[#E6ECFA] text-[11px] font-semibold flex items-center gap-1">
-                      <span className="text-[10px] text-[#FFC700] uppercase font-bold">Level:</span>
-                      <span>{profile?.level || editLevel}</span>
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 shrink-0 ml-auto">
-                  <button
-                    onClick={() => setActiveTab('gpa')}
-                    className="px-2.5 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] hover:border-[#FFC700] text-[#FFC700] text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1"
-                  >
-                    <Calculator className="w-3 h-3" />
-                    <span>GPA</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('study-planner')}
-                    className="px-2.5 py-0.5 rounded-md bg-[#0A1224]/80 border border-[#24315A] hover:border-[#2F52FF] text-[#60A5FA] text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1"
-                  >
-                    <ListTodo className="w-3 h-3" />
-                    <span>Tasks</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {/* 2. Universal Search Bar */}
-            <div className="relative">
-              <div className="relative">
-                <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={homeSearchQuery}
-                  onChange={e => setHomeSearchQuery(e.target.value)}
-                  placeholder="Search courses, notes, past questions"
-                  className="w-full pl-9 pr-8 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#62759F] focus:outline-none focus:border-[#2F52FF] transition-all"
-                />
-                {homeSearchQuery && (
-                  <button
-                    onClick={() => setHomeSearchQuery('')}
-                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-[#9AA8C7] hover:text-white"
-                  >
-                    &times;
-                  </button>
-                )}
+              {/* Department & Level Chips */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                  {studentDept}
+                </span>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#60A5FA] border border-[#24315A]">
+                  {homeLevelFilter}
+                </span>
               </div>
 
-              {/* Universal Search Results Popover */}
-              {universalSearchResults && (
-                <div className="mt-2 p-3 rounded-xl bg-[#0F1E36] border border-[#24315A] shadow-2xl space-y-2.5">
-                  <div className="flex items-center justify-between text-xs text-[#9AA8C7] pb-1 border-b border-[#1F2C4C]">
-                    <span>Results for &ldquo;{homeSearchQuery}&rdquo;</span>
+              {/* 1st Sem | 2nd Sem | All Switch and Level Dropdown */}
+              <div className="pt-2 border-t border-[#24315A]/60 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+                <div className="flex items-center p-0.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
+                  {(['First Semester', 'Second Semester', 'All'] as const).map((sem) => (
                     <button
-                      onClick={() => setHomeSearchQuery('')}
-                      className="text-xs text-[#9AA8C7] hover:text-white cursor-pointer"
+                      key={sem}
+                      type="button"
+                      onClick={() => setHomeSemesterFilter(sem)}
+                      className={`flex-1 sm:flex-initial px-3 py-1 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                        homeSemesterFilter === sem
+                          ? 'bg-[#2F52FF] text-white shadow-sm'
+                          : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
                     >
-                      Close
-                    </button>
-                  </div>
-
-                  {universalSearchResults.courses.length === 0 &&
-                   universalSearchResults.materials.length === 0 &&
-                   universalSearchResults.announcements.length === 0 ? (
-                    <p className="text-xs text-[#9AA8C7] py-2 text-center">
-                      No matches found. Try searching by course code (e.g. COM 111) or title.
-                    </p>
-                  ) : (
-                    <div className="space-y-2">
-                      {universalSearchResults.courses.length > 0 && (
-                        <div>
-                          <p className="text-[10px] uppercase font-bold text-[#FFC700] mb-1">Courses</p>
-                          <div className="space-y-1">
-                            {universalSearchResults.courses.map((c: CourseItem) => (
-                              <button
-                                key={c.id}
-                                onClick={() => { setActiveTab('resources'); setHomeSearchQuery(''); }}
-                                className="w-full text-left p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors"
-                              >
-                                <span className="font-semibold text-[#E6ECFA] truncate">{c.code}: {c.title}</span>
-                                <span className="text-[10px] text-[#FFC700] shrink-0">{c.units} Units &rarr;</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {universalSearchResults.materials.length > 0 && (
-                        <div>
-                          <p className="text-[10px] uppercase font-bold text-[#2F52FF] mb-1">Materials &amp; Past Questions</p>
-                          <div className="space-y-1">
-                            {universalSearchResults.materials.map((m: { id: string; title: string; courseCode: string; category: string; url: string }) => (
-                              <div
-                                key={m.id}
-                                className="p-2 rounded-lg bg-[#121C36] text-xs flex items-center justify-between gap-2"
-                              >
-                                <div className="min-w-0">
-                                  <p className="font-medium text-[#E6ECFA] truncate">{m.title}</p>
-                                  <span className="text-[10px] text-[#9AA8C7]">{m.courseCode} • {m.category}</span>
-                                </div>
-                                {m.url && (
-                                  <a
-                                    href={m.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="px-2 py-0.5 rounded bg-[#2F52FF] text-white text-[10px] font-semibold shrink-0 hover:bg-[#2544DD]"
-                                  >
-                                    Open
-                                  </a>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {universalSearchResults.announcements.length > 0 && (
-                        <div>
-                          <p className="text-[10px] uppercase font-bold text-emerald-400 mb-1">Announcements</p>
-                          <div className="space-y-1">
-                            {universalSearchResults.announcements.map((a: AnnouncementItem) => (
-                              <button
-                                key={a.id}
-                                onClick={() => { setActiveTab('announcements'); setHomeSearchQuery(''); }}
-                                className="w-full text-left p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-xs flex items-center justify-between gap-2 cursor-pointer transition-colors"
-                              >
-                                <span className="font-semibold text-[#E6ECFA] truncate">{a.title}</span>
-                                <span className="text-[10px] text-emerald-400 shrink-0">View &rarr;</span>
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* 3. Slim One-Row Streak Card */}
-            <DailyStreakCard
-              streakCount={profile?.streakCount || 1}
-              longestStreak={profile?.longestStreak || profile?.streakCount || 1}
-              lastActiveDate={profile?.lastActiveDate}
-            />
-
-            {/* 4. Announcements (Pinned first, max 2 items, single compact row with See All) */}
-            <div className="p-3 sm:p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-bold text-[#E6ECFA]">
-                  <Bell className="w-3.5 h-3.5 text-[#FFC700]" />
-                  <span>Announcements</span>
-                  {unreadAnnouncementsCount > 0 && (
-                    <span className="text-[9px] font-bold px-1.5 py-0.2 rounded-full bg-rose-600 text-white">
-                      {unreadAnnouncementsCount}
-                    </span>
-                  )}
-                </div>
-                <button
-                  onClick={handleOpenAnnouncements}
-                  className="text-[11px] font-semibold text-[#FFC700] hover:underline cursor-pointer"
-                >
-                  See all &rarr;
-                </button>
-              </div>
-
-              {homeAnnouncements.length === 0 ? (
-                <p className="text-xs text-[#9AA8C7]">No announcements posted yet.</p>
-              ) : (
-                <div className="space-y-1.5">
-                  {homeAnnouncements.map((a) => (
-                    <button
-                      key={a.id}
-                      onClick={handleOpenAnnouncements}
-                      className="w-full text-left p-2 rounded-lg bg-[#0A1224]/70 hover:bg-[#1A2E63] border border-[#24315A]/60 flex items-center justify-between gap-2 cursor-pointer transition-colors group"
-                    >
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        {a.pinned && (
-                          <Pin className="w-3 h-3 text-[#FFC700] fill-[#FFC700] shrink-0" />
-                        )}
-                        <span className="text-xs font-semibold text-[#E6ECFA] truncate group-hover:text-white">
-                          {a.title}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-[#FFC700] shrink-0 font-medium">Read &rarr;</span>
+                      {sem === 'First Semester' ? '1st Sem' : sem === 'Second Semester' ? '2nd Sem' : 'All'}
                     </button>
                   ))}
                 </div>
+
+                <div className="flex items-center gap-2 self-end sm:self-auto">
+                  <span className="text-[11px] text-[#9AA8C7] font-semibold">Level:</span>
+                  <select
+                    value={homeLevelFilter}
+                    onChange={(e) => setHomeLevelFilter(e.target.value as any)}
+                    className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
+                  >
+                    {ACADEMIC_LEVELS.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. SEARCH BAR ("Search courses, topics, past questions") */}
+            <div className="relative">
+              <input
+                type="text"
+                value={homeSearchQuery}
+                onChange={(e) => setHomeSearchQuery(e.target.value)}
+                placeholder="Search courses, topics, past questions"
+                className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF] focus:ring-1 focus:ring-[#2F52FF]/40 shadow-sm"
+              />
+              <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-3" />
+              {homeSearchQuery && (
+                <button
+                  onClick={() => setHomeSearchQuery('')}
+                  className="absolute right-3 top-3 text-[#9AA8C7] hover:text-[#E6ECFA]"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               )}
             </div>
 
-            {/* 5. Today's Timetable (Compact card with today's classes and next exam line) */}
-            {(() => {
-              const todayLagosDay = new Intl.DateTimeFormat('en-US', {
-                timeZone: 'Africa/Lagos',
-                weekday: 'long'
-              }).format(new Date());
+            {/* INSTANT SEARCH RESULTS OVERLAY */}
+            {homeSearchResults && (
+              <div className="p-3.5 rounded-2xl bg-[#0A1224] border border-[#2F52FF]/50 shadow-xl space-y-3">
+                <div className="flex items-center justify-between text-xs font-bold text-[#FFC700]">
+                  <span>Instant Results for "{homeSearchQuery}"</span>
+                  <button
+                    onClick={() => setHomeSearchQuery('')}
+                    className="text-[#9AA8C7] hover:text-white"
+                  >
+                    Clear
+                  </button>
+                </div>
 
-              const todayClasses = timetables.filter(t =>
-                t.department === studentDept &&
-                t.day === todayLagosDay &&
-                t.type === 'class'
-              );
+                {homeSearchResults.courses.length === 0 &&
+                homeSearchResults.topics.length === 0 &&
+                homeSearchResults.pastQuestions.length === 0 &&
+                homeSearchResults.materials.length === 0 ? (
+                  <div className="py-6 text-center text-xs text-[#9AA8C7]">
+                    No courses, topics, or past questions match "{homeSearchQuery}" in {homeLevelFilter} ({homeSemesterFilter === 'All' ? 'All Semesters' : homeSemesterFilter}).
+                  </div>
+                ) : (
+                  <div className="space-y-3 text-xs divide-y divide-[#24315A]/60">
+                    {/* Courses Group */}
+                    {homeSearchResults.courses.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] uppercase font-bold text-[#60A5FA]">
+                          Courses ({homeSearchResults.courses.length})
+                        </span>
+                        {homeSearchResults.courses.map((c) => (
+                          <div
+                            key={c.id}
+                            onClick={() => {
+                              navigateToTab('courses', `${c.code}: ${c.title}`, true, c.id);
+                              setHomeSearchQuery('');
+                            }}
+                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                          >
+                            <div className="truncate pr-2">
+                              <span className="font-bold text-[#FFC700] mr-2">{c.code}</span>
+                              <span className="text-[#E6ECFA]">{c.title}</span>
+                            </div>
+                            <span className="text-[10px] text-[#9AA8C7] shrink-0">{c.units} units</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
 
-              return (
-                <div className="p-3 sm:p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-[#E6ECFA] flex items-center gap-1.5">
-                      <Calendar className="w-3.5 h-3.5 text-[#FFC700]" />
-                      <span>Today ({todayLagosDay})</span>
+                    {/* Topics Group */}
+                    {homeSearchResults.topics.length > 0 && (
+                      <div className="space-y-1.5 pt-2">
+                        <span className="text-[10px] uppercase font-bold text-[#FFC700]">
+                          Topics ({homeSearchResults.topics.length})
+                        </span>
+                        {homeSearchResults.topics.map((t) => (
+                          <div
+                            key={t.id}
+                            onClick={() => {
+                              navigateToTab('courses', t.title, true, t.courseId);
+                              setHomeSearchQuery('');
+                            }}
+                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                          >
+                            <span className="truncate text-[#E6ECFA] font-medium">{t.title}</span>
+                            <span className="text-[10px] text-[#2F52FF] font-semibold shrink-0">Open Topic &rarr;</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Past Questions Group */}
+                    {homeSearchResults.pastQuestions.length > 0 && (
+                      <div className="space-y-1.5 pt-2">
+                        <span className="text-[10px] uppercase font-bold text-amber-400">
+                          Past Questions ({homeSearchResults.pastQuestions.length})
+                        </span>
+                        {homeSearchResults.pastQuestions.map((pq) => (
+                          <div
+                            key={pq.id}
+                            onClick={() => {
+                              setQuickPdfViewer({
+                                title: pq.title,
+                                url: formatPdfUrl(pq.url),
+                                courseCode: pq.courseCode
+                              });
+                            }}
+                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                          >
+                            <div className="truncate pr-2">
+                              {pq.courseCode && (
+                                <span className="font-bold text-[#FFC700] mr-2">{pq.courseCode}</span>
+                              )}
+                              <span className="text-[#E6ECFA]">{pq.title}</span>
+                            </div>
+                            <span className="text-[10px] px-2 py-0.5 rounded bg-[#2F52FF] text-white font-bold shrink-0">
+                              Preview
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Materials Group */}
+                    {homeSearchResults.materials.length > 0 && (
+                      <div className="space-y-1.5 pt-2">
+                        <span className="text-[10px] uppercase font-bold text-emerald-400">
+                          Materials ({homeSearchResults.materials.length})
+                        </span>
+                        {homeSearchResults.materials.map((m) => (
+                          <div
+                            key={m.id}
+                            onClick={() => {
+                              if (m.url.toLowerCase().includes('.pdf') || m.url.includes('drive.google.com')) {
+                                setQuickPdfViewer({
+                                  title: m.title,
+                                  url: formatPdfUrl(m.url),
+                                  courseCode: m.courseCode
+                                });
+                              } else {
+                                window.open(m.url, '_blank');
+                              }
+                            }}
+                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                          >
+                            <span className="truncate text-[#E6ECFA] font-medium">{m.title}</span>
+                            <span className="text-[10px] text-[#9AA8C7] shrink-0">{m.type || m.category || 'File'}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 3. ROUNDED SQUARE TILES (2 COLUMNS) - REPLACES THE MENU */}
+            {!homeSearchQuery && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  {/* Tile 1: Courses */}
+                  <div
+                    onClick={() => navigateToTab('courses', 'Courses', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <BookOpen className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Courses
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Topics &amp; notes</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 2: Past Questions */}
+                  <div
+                    onClick={() => navigateToTab('past-questions', 'Past Questions', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <FileText className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Past Questions
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Exams &amp; sessions</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 3: Timetable */}
+                  <div
+                    onClick={() => navigateToTab('timetables', 'Timetable', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <Calendar className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Timetable
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Classes &amp; exams</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 4: Announcements */}
+                  <div
+                    onClick={() => navigateToTab('announcements', 'Announcements', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group relative"
+                  >
+                    {unreadAnnouncementsCount > 0 && (
+                      <span className="absolute top-2.5 right-2.5 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-extrabold text-[9px]">
+                        {unreadAnnouncementsCount} new
+                      </span>
+                    )}
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <Bell className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Announcements
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Bulletins &amp; notices</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 5: GPA Calculator */}
+                  <div
+                    onClick={() => navigateToTab('gpa', 'GPA Calculator', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <Calculator className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        GPA Calculator
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Track your target GPA</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 6: Study Planner */}
+                  <div
+                    onClick={() => navigateToTab('study-planner', 'Study Planner', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <ListTodo className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Study Planner
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">To-dos &amp; assignments</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 7: Saved */}
+                  <div
+                    onClick={() => navigateToTab('bookmarks', 'Saved Items', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <Bookmark className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Saved
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Bookmarks &amp; pins</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 8: Communities & Links */}
+                  <div
+                    onClick={() => navigateToTab('links', 'Communities & Links', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <Link2 className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Communities &amp; Links
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Groups &amp; resources</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 9: My Messages */}
+                  <div
+                    onClick={() => navigateToTab('my-messages', 'My Messages', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <MessageSquare className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        My Messages
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Inquiries &amp; replies</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 10: Ask AI */}
+                  <div
+                    onClick={() => navigateToTab('ask-ai', 'Ask AI Study Helper', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <Sparkles className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Ask AI
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Smart study assistant</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 4. PINNED ANNOUNCEMENT ROW (IF ANY) */}
+                {pinnedAnnouncement && (
+                  <div
+                    onClick={() => navigateToTab('announcements', 'Announcements', true)}
+                    className="p-3 rounded-xl bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#FFC700] transition-colors"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <Pin className="w-4 h-4 text-[#FFC700] shrink-0" />
+                      <div className="min-w-0">
+                        <span className="text-[10px] text-[#FFC700] font-bold uppercase tracking-wider block">
+                          Pinned Notice
+                        </span>
+                        <p className="text-xs font-semibold text-[#E6ECFA] truncate">
+                          {pinnedAnnouncement.title}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="text-[11px] font-bold text-[#2F52FF] hover:underline shrink-0 flex items-center gap-1">
+                      Read &rarr;
                     </span>
+                  </div>
+                )}
+
+                {/* 5. "MY COURSES" (FIRST 3 COURSES FOR LEVEL & SEMESTER) */}
+                <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-heading font-bold text-xs text-[#E6ECFA]">
+                      My Courses ({myCoursesPreview.length})
+                    </h3>
                     <button
-                      onClick={() => setActiveTab('timetables')}
-                      className="text-[11px] font-semibold text-[#FFC700] hover:underline cursor-pointer"
+                      type="button"
+                      onClick={() => navigateToTab('courses', 'Courses', false)}
+                      className="text-[11px] text-[#FFC700] font-semibold hover:underline cursor-pointer"
                     >
-                      Full timetable &rarr;
+                      Browse all &rarr;
                     </button>
                   </div>
 
-                  {todayClasses.length === 0 ? (
-                    <p className="text-xs text-[#9AA8C7]">No classes scheduled today.</p>
+                  {myCoursesPreview.length === 0 ? (
+                    <p className="text-xs text-[#9AA8C7] py-2 text-center">
+                      No courses found for {homeLevelFilter} ({homeSemesterFilter}).
+                    </p>
                   ) : (
                     <div className="space-y-1.5">
-                      {todayClasses.map(c => (
+                      {myCoursesPreview.map((c) => (
                         <div
                           key={c.id}
-                          className="p-2 rounded-lg bg-[#0A1224]/70 border border-[#24315A]/60 flex items-center justify-between text-xs"
+                          onClick={() => navigateToTab('courses', `${c.code}: ${c.title}`, true, c.id)}
+                          className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] flex items-center justify-between gap-2 cursor-pointer transition-colors"
                         >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="font-bold text-[#FFC700] truncate">{c.courseCode}</span>
-                            <span className="text-[#9AA8C7] truncate text-[11px]">• {c.venue}</span>
+                          <div className="min-w-0 truncate">
+                            <span className="font-mono font-bold text-[#FFC700] text-xs mr-2">{c.code}</span>
+                            <span className="text-xs text-[#E6ECFA] truncate">{c.title}</span>
                           </div>
-                          <span className="text-[10px] font-semibold text-[#E6ECFA] shrink-0 bg-[#2F52FF]/20 px-2 py-0.5 rounded border border-[#2F52FF]/30">
-                            {c.startTime}
+                          <span className="text-[10px] px-2 py-0.5 rounded bg-[#121C36] text-[#9AA8C7] border border-[#24315A] shrink-0 font-medium">
+                            {c.units} units
                           </span>
                         </div>
                       ))}
                     </div>
                   )}
+                </div>
 
-                  {/* Next exam integrated line */}
-                  {nextExamInfo && (
-                    <div className="pt-2 border-t border-[#24315A]/60 flex items-center justify-between text-[11px]">
-                      <span className="text-[#9AA8C7] flex items-center gap-1.5 truncate">
-                        <Clock className="w-3 h-3 text-[#FFC700] shrink-0" />
-                        <span className="truncate">
-                          {nextExamInfo.diffDays === 0
-                            ? `Next exam today (${nextExamInfo.entry.courseCode})`
-                            : nextExamInfo.diffDays === 1
-                            ? `Next exam tomorrow (${nextExamInfo.entry.courseCode})`
-                            : `Next exam in ${nextExamInfo.diffDays} days (${nextExamInfo.entry.courseCode})`}
-                        </span>
-                      </span>
-                      <button
-                        onClick={() => setActiveTab('timetables')}
-                        className="text-[#60A5FA] hover:underline font-medium shrink-0 ml-2 cursor-pointer"
-                      >
-                        View
-                      </button>
+                {/* 6. SLIM STREAK CARD */}
+                <DailyStreakCard
+                  streakCount={profile?.streakCount || 0}
+                  longestStreak={profile?.longestStreak || 0}
+                  lastActiveDate={profile?.lastActiveDate}
+                />
+
+                {/* 7. SLIM WHATSAPP "JOIN" ROW */}
+                {settings.whatsappChannelUrl && (
+                  <a
+                    href={settings.whatsappChannelUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="p-3 rounded-xl bg-[#0A1224] border border-[#25D366]/40 hover:border-[#25D366] flex items-center justify-between gap-2.5 transition-all shadow-sm"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <div className="w-8 h-8 rounded-lg bg-[#25D366]/20 flex items-center justify-center text-[#25D366] shrink-0">
+                        <WhatsAppIcon className="w-4 h-4 fill-current" />
+                      </div>
+                      <div className="min-w-0">
+                        <h4 className="font-heading font-bold text-xs text-[#E6ECFA] truncate">
+                          Join Our WhatsApp Channel
+                        </h4>
+                        <p className="text-[10px] text-[#9AA8C7]">
+                          Official updates &amp; student notifications
+                        </p>
+                      </div>
                     </div>
-                  )}
-                </div>
-              );
-            })()}
-
-            {/* 6. Slim One-Row "Join our WhatsApp channel" button (only if link saved in Settings) */}
-            {settings.whatsappChannelUrl && (
-              <a
-                href={settings.whatsappChannelUrl.trim()}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full p-2.5 sm:p-3 rounded-xl bg-[#121C36] border border-[#25D366]/40 hover:border-[#25D366] text-[#E6ECFA] hover:text-white flex items-center justify-between gap-2.5 transition-all cursor-pointer shadow-sm group"
-              >
-                <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-6 h-6 rounded-lg bg-[#25D366] text-white flex items-center justify-center shrink-0 shadow-[0_0_8px_rgba(37,211,102,0.4)]">
-                    <WhatsAppIcon className="w-3.5 h-3.5 text-white" />
-                  </div>
-                  <span className="text-xs font-semibold truncate">
-                    Join our WhatsApp channel
-                  </span>
-                </div>
-                <span className="text-[11px] font-bold text-[#25D366] flex items-center gap-1 shrink-0 group-hover:translate-x-0.5 transition-transform">
-                  <span>Join</span>
-                  <ExternalLink className="w-3 h-3" />
-                </span>
-              </a>
+                    <span className="px-3 py-1 rounded-lg bg-[#25D366] text-black font-bold text-xs shrink-0 flex items-center gap-1">
+                      <span>Join</span>
+                      <ExternalLink className="w-3 h-3 text-black" />
+                    </span>
+                  </a>
+                )}
+              </div>
             )}
-
           </div>
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 2: MY DEPARTMENT                                    */}
+        {/* VIEW 2: COURSES TAB (Topics & Notes, NO Past Questions)  */}
         {/* ======================================================== */}
-        {activeTab === 'department' && (
-          <div className="space-y-6">
-            <div className="p-7 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-              <div className="flex items-center gap-3.5">
-                <div className="w-14 h-14 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                  <DepartmentIcon name={studentDepartment.iconName} className="w-7 h-7" />
-                </div>
-                <div>
-                  <span className="text-xs  font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-                    {studentDepartment.shortCode}
-                  </span>
-                  <h2 className="font-display font-extrabold text-2xl sm:text-3xl text-[#E6ECFA] mt-1">
-                    {studentDepartment.name}
-                  </h2>
-                </div>
-              </div>
-
-              <p className="text-base text-[#E6ECFA] leading-relaxed max-w-3xl">
-                {studentDepartment.oneLiner}
-              </p>
-
-              <p className="text-sm text-[#9AA8C7] leading-relaxed max-w-3xl">
-                {studentDepartment.description}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-                <h3 className="text-sm font-bold text-[#FFC700] uppercase tracking-wider flex items-center gap-2">
-                  <BookOpen className="w-4 h-4" />
-                  <span>Program Focus Areas</span>
-                </h3>
-                <div className="space-y-2.5">
-                  {studentDepartment.programFocus.map((item, idx) => (
-                    <div key={idx} className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] flex items-center gap-2.5">
-                      <span className="w-5 h-5 rounded bg-[#121C36] text-[#FFC700] font-bold flex items-center justify-center text-[11px]">
-                        {idx + 1}
-                      </span>
-                      <span>{item}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-                <h3 className="text-sm font-bold text-[#FFC700] uppercase tracking-wider flex items-center gap-2">
-                  <Sparkles className="w-4 h-4" />
-                  <span>Career Pathways</span>
-                </h3>
-                <div className="space-y-2.5">
-                  {studentDepartment.careerProspects.map((cp, idx) => (
-                    <div key={idx} className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] flex items-center gap-2.5">
-                      <CheckCircle2 className="w-4 h-4 text-[#2F52FF] shrink-0" />
-                      <span>{cp}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW: DEPARTMENT COURSES & MATERIALS                     */}
-        {/* ======================================================== */}
-        {(activeTab === 'resources' || activeTab === 'courses') && (
+        {activeTab === 'courses' && (
           <StudentResourcesView
             courses={courses}
             resources={deptResources}
-            userLevel={profile?.level || editLevel}
+            userLevel={homeLevelFilter}
             department={studentDept}
             isBookmarked={isBookmarked}
             toggleBookmark={toggleBookmark}
             bookmarks={profile?.bookmarks || []}
-            onNavigateLinks={() => setActiveTab('links')}
+            onNavigateLinks={() => navigateToTab('links', 'Communities & Links', true)}
           />
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 3: TIMETABLES (Classes & Exams for own department)  */}
+        {/* VIEW 3: PAST QUESTIONS TAB (STANDALONE, NOT UNDER COURSE) */}
         {/* ======================================================== */}
-        {activeTab === 'timetables' && (
-          <div className="space-y-6">
-            
-            {/* Header and Controls */}
-            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] flex flex-col md:flex-row md:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider block">
-                  Department Schedule
-                </span>
-                <h2 className="font-display font-bold text-xl text-[#E6ECFA] mt-0.5">
-                  {studentDept} Timetable
-                </h2>
-                <p className="text-xs text-[#9AA8C7] mt-0.5">
-                  Filtered exclusively for students of {studentDept}
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-3">
-                {/* Schedule Type Switcher */}
-                <div className="bg-[#0A1224] p-1 rounded-xl border border-[#24315A] flex items-center">
-                  <button
-                    onClick={() => setTtTypeTab('class')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      ttTypeTab === 'class'
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
-                        : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    Weekly Classes
-                  </button>
-                  <button
-                    onClick={() => setTtTypeTab('exam')}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                      ttTypeTab === 'exam'
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
-                        : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    Exam Timetable
-                  </button>
-                </div>
-
-                {/* Level Filter */}
-                <div className="flex items-center gap-1 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
-                  <button
-                    onClick={() => setTtLevelFilter('All')}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                      ttLevelFilter === 'All' ? 'bg-[#121C36] text-[#FFC700]' : 'text-[#9AA8C7]'
-                    }`}
-                  >
-                    All Levels
-                  </button>
-                  {ACADEMIC_LEVELS.map(lvl => (
-                    <button
-                      key={lvl}
-                      onClick={() => setTtLevelFilter(lvl)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
-                        ttLevelFilter === lvl ? 'bg-[#121C36] text-[#FFC700]' : 'text-[#9AA8C7]'
-                      }`}
-                    >
-                      {lvl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Timetable Content */}
-            {ttTypeTab === 'class' ? (
-              // Weekly Class Timetable grouped by Day
-              <div className="space-y-6">
-                {DAYS_OF_WEEK.map(day => {
-                  const dayEntries = relevantTimetables.filter(t => t.day === day);
-                  if (dayEntries.length === 0) return null;
-
-                  return (
-                    <div key={day} className="space-y-3">
-                      <div className="flex items-center gap-2">
-                        <span className="w-3 h-3 rounded-md bg-[#2F52FF]" />
-                        <h3 className="font-display font-bold text-base text-[#E6ECFA]">
-                          {day}
-                        </h3>
-                        <span className="text-xs text-[#9AA8C7]">({dayEntries.length} lectures)</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {dayEntries.map(entry => (
-                          <div
-                            key={entry.id}
-                            className="p-4 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-colors space-y-2.5"
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className=" text-xs font-extrabold px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-                                {entry.courseCode}
-                              </span>
-                              <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
-                                {entry.level}
-                              </span>
-                            </div>
-
-                            <div className="space-y-1 text-xs">
-                              <div className="flex items-center gap-2 text-[#E6ECFA] font-semibold">
-                                <Clock className="w-3.5 h-3.5 text-[#2F52FF]" />
-                                <span>{entry.startTime} – {entry.endTime}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-[#9AA8C7]">
-                                <Building2 className="w-3.5 h-3.5 text-[#FFC700]" />
-                                <span>Venue: <strong className="text-[#E6ECFA]">{entry.venue}</strong></span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                })}
-
-                {relevantTimetables.length === 0 && (
-                  <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7]">
-                    No class timetable entries found for {studentDept} ({ttLevelFilter}).
-                  </div>
-                )}
-              </div>
-            ) : (
-              // Exam Timetable List
-              <div className="space-y-4">
-                {relevantTimetables.length === 0 ? (
-                  <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7]">
-                    No examination timetable scheduled yet for {studentDept} ({ttLevelFilter}).
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {relevantTimetables.map(entry => (
-                      <div
-                        key={entry.id}
-                        className="p-5 rounded-2xl bg-[#121C36] border border-[#FFC700]/30 shadow-[0_0_20px_rgba(255,199,0,0.06)] space-y-3"
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="px-2.5 py-1 rounded bg-[#0A1224] text-[#FFC700]  text-xs font-bold border border-[#24315A]">
-                            {entry.courseCode}
-                          </span>
-                          <span className="px-2 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-500/40 text-[10px] font-extrabold uppercase">
-                            Examination
-                          </span>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-3 pt-1 text-xs">
-                          <div className="p-2.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
-                            <span className="text-[#9AA8C7] block text-[10px] uppercase font-bold">Exam Date &amp; Day</span>
-                            <span className="text-[#E6ECFA] font-semibold">{entry.date || entry.day}</span>
-                          </div>
-                          <div className="p-2.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
-                            <span className="text-[#9AA8C7] block text-[10px] uppercase font-bold">Duration</span>
-                            <span className="text-[#E6ECFA] font-semibold">{entry.startTime} – {entry.endTime}</span>
-                          </div>
-                        </div>
-
-                        <div className="p-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs flex items-center justify-between">
-                          <span className="text-[#9AA8C7]">Assigned Examination Hall:</span>
-                          <strong className="text-[#FFC700]">{entry.venue}</strong>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW 4: ANNOUNCEMENTS                                    */}
-        {/* ======================================================== */}
-        {activeTab === 'announcements' && (
-          <div className="space-y-6">
-            
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                {['All', 'Academic', 'Student Notice', 'Department', 'General'].map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => setAnnFilter(cat)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold cursor-pointer ${
-                      annFilter === cat
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_15px_rgba(47,82,255,0.4)]'
-                        : 'bg-[#121C36] text-[#9AA8C7] border border-[#24315A]'
-                    }`}
-                  >
-                    {cat}
-                  </button>
-                ))}
-              </div>
-              <span className="text-xs text-[#9AA8C7]">
-                Targeted for: <strong className="text-[#FFC700]">{profile?.department}</strong> &amp; All Students
-              </span>
-            </div>
-
-            <div className="space-y-4">
-              {relevantAnnouncements.length === 0 ? (
-                <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7]">
-                  No announcements found for this filter.
-                </div>
-              ) : (
-                relevantAnnouncements.map((ann) => {
-                  const isUnread = ann.createdAt && new Date(ann.createdAt).getTime() > lastSeenMs;
-                  return (
-                    <div
-                      key={ann.id}
-                      className={`p-6 rounded-2xl bg-[#121C36] border space-y-3 transition-colors ${
-                        ann.pinned
-                          ? 'border-[#FFC700]/70 bg-gradient-to-r from-[#121C36] via-[#121C36] to-[#FFC700]/5 shadow-[0_0_20px_rgba(255,199,0,0.1)]'
-                          : isUnread
-                          ? 'border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.15)]'
-                          : 'border-[#24315A] hover:border-[#2F52FF]'
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          {ann.pinned && (
-                            <span className="px-2.5 py-0.5 rounded text-[11px] font-bold bg-[#FFC700] text-[#0A1224] flex items-center gap-1 shadow-sm">
-                              <Pin className="w-3 h-3 fill-[#0A1224]" />
-                              <span>PINNED</span>
-                            </span>
-                          )}
-                          <span className={`px-2.5 py-0.5 rounded text-[11px] font-bold ${
-                            ann.urgent ? 'bg-rose-950 text-rose-300 border border-rose-500/40' : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
-                          }`}>
-                            {ann.category} {ann.urgent && '• URGENT'}
-                          </span>
-                          {isUnread && (
-                            <span className="px-2 py-0.5 rounded-full bg-[#FFC700] text-[#0A1224] text-[10px] font-extrabold uppercase">
-                              New
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-3">
-                          <span className="text-xs  text-[#9AA8C7]">
-                            {ann.createdAt ? new Date(ann.createdAt).toLocaleDateString() : ''}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              toggleBookmark({
-                                id: ann.id,
-                                type: 'announcement',
-                                title: ann.title,
-                                category: ann.category,
-                                department: ann.department
-                              });
-                            }}
-                            title={isBookmarked('announcement', ann.id) ? 'Remove Bookmark' : 'Bookmark Announcement'}
-                            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                              isBookmarked('announcement', ann.id)
-                                ? 'bg-[#FFC700]/20 border-[#FFC700] text-[#FFC700]'
-                                : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700]'
-                            }`}
-                          >
-                            <Bookmark className={`w-3.5 h-3.5 ${isBookmarked('announcement', ann.id) ? 'fill-[#FFC700]' : ''}`} />
-                          </button>
-                        </div>
-                      </div>
-
-                      <h3 className="font-display font-bold text-lg text-[#E6ECFA]">
-                        {ann.title}
-                      </h3>
-
-                      <p className="text-sm text-[#9AA8C7] leading-relaxed whitespace-pre-wrap">
-                        {ann.content}
-                      </p>
-
-                      <div className="text-[11px] text-[#9AA8C7] pt-2 border-t border-[#24315A]/60 flex items-center justify-between">
-                        <span>Broadcast by: <strong className="text-[#E6ECFA]">{ann.author || 'Student Administration'}</strong></span>
-                        <span className=" text-[#FFC700]">Audience: {ann.department}</span>
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW: BOOKMARKS                                          */}
-        {/* ======================================================== */}
-        {activeTab === 'bookmarks' && (
-          <StudentBookmarksView
-            bookmarks={profile?.bookmarks || []}
-            onRemove={(item) => toggleBookmark(item)}
-            onNavigateCourses={() => setActiveTab('courses')}
-            onNavigateAnnouncements={() => setActiveTab('announcements')}
+        {activeTab === 'past-questions' && (
+          <StudentPastQuestionsView
+            department={studentDept}
+            userLevel={homeLevelFilter}
+            isInner={isInner}
+            onBack={handleGoBack}
+            isBookmarked={isBookmarked}
+            toggleBookmark={toggleBookmark}
           />
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 5: MY MESSAGES & COMPLAINT TRACKING                 */}
-        {/* ======================================================== */}
-        {activeTab === 'my-messages' && (
-          <div className="space-y-6">
-            
-            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-              <div>
-                <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider block">
-                  Support Desk
-                </span>
-                <h2 className="font-display font-bold text-xl text-[#E6ECFA] mt-0.5">
-                  My Complaints &amp; Enquiries
-                </h2>
-                <p className="text-xs text-[#9AA8C7] mt-0.5">
-                  Track the real-time status and administrator replies to tickets submitted from the contact desk.
-                </p>
-              </div>
-
-              <button
-                onClick={onNavigateContact}
-                className="px-4 py-2.5 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-all flex items-center gap-2 cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.3)] shrink-0"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>Submit New Ticket</span>
-              </button>
-            </div>
-
-            {loadingMessages ? (
-              <div className="p-12 text-center text-xs text-[#9AA8C7] animate-pulse">
-                Loading your submitted messages...
-              </div>
-            ) : myMessages.length === 0 ? (
-              <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3">
-                <MessageSquare className="w-10 h-10 text-[#FFC700] mx-auto opacity-60" />
-                <h3 className="font-display font-bold text-base text-[#E6ECFA]">
-                  No Submitted Messages Yet
-                </h3>
-                <p className="text-xs text-[#9AA8C7] max-w-sm mx-auto">
-                  Whenever you submit a Complaint, Enquiry, or Review from the Contact page while logged in, you can track its progress and read administrator replies here.
-                </p>
-                <button
-                  onClick={onNavigateContact}
-                  className="mt-2 px-5 py-2 rounded-xl bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer"
-                >
-                  Go to Contact Desk
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {myMessages.map(msg => (
-                  <div
-                    key={msg.id}
-                    className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 shadow-[0_0_20px_rgba(0,0,0,0.2)]"
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24315A] pb-3">
-                      <div className="flex items-center gap-2.5">
-                        <span className={`px-2.5 py-1 rounded text-xs font-bold ${
-                          msg.type === 'Complaint' ? 'bg-rose-950 text-rose-300 border border-rose-500/40' :
-                          msg.type === 'Enquiry' ? 'bg-blue-950 text-blue-300 border border-blue-500/40' :
-                          'bg-amber-950 text-amber-300 border border-amber-500/40'
-                        }`}>
-                          {msg.type}
-                        </span>
-
-                        {/* Status Badge */}
-                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1.5 ${
-                          msg.status === 'Resolved' ? 'bg-emerald-950 text-emerald-300 border border-emerald-500/40' :
-                          msg.status === 'Read' ? 'bg-sky-950 text-sky-300 border border-sky-500/40' :
-                          'bg-amber-950 text-amber-300 border border-amber-500/40'
-                        }`}>
-                          {msg.status === 'Resolved' ? <CheckCircle className="w-3.5 h-3.5 text-emerald-400" /> :
-                           msg.status === 'Read' ? <Eye className="w-3.5 h-3.5 text-sky-400" /> :
-                           <Clock className="w-3.5 h-3.5 text-amber-400" />}
-                          <span>Status: {msg.status}</span>
-                        </span>
-                      </div>
-
-                      <span className="text-xs  text-[#9AA8C7]">
-                        {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
-                      </span>
-                    </div>
-
-                    {/* Student's Original Message */}
-                    <div className="space-y-1">
-                      <div className="text-[11px] font-bold uppercase tracking-wider text-[#9AA8C7]">
-                        Your Submission:
-                      </div>
-                      <p className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap bg-[#0A1224] p-3.5 rounded-xl border border-[#24315A]">
-                        {msg.message}
-                      </p>
-                    </div>
-
-                    {/* Admin Reply Section */}
-                    {msg.adminReply ? (
-                      <div className="p-4 rounded-xl bg-gradient-to-r from-[#2F52FF]/15 to-[#FFC700]/10 border border-[#FFC700]/50 space-y-2">
-                        <div className="flex items-center justify-between text-xs font-bold text-[#FFC700]">
-                          <span className="flex items-center gap-1.5">
-                            <ShieldCheck className="w-4 h-4 text-[#FFC700]" />
-                            <span>Administrator Response</span>
-                          </span>
-                          {msg.repliedAt && (
-                            <span className="text-[11px]  text-[#9AA8C7]">
-                              {new Date(msg.repliedAt).toLocaleString()}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap">
-                          {msg.adminReply}
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="p-3.5 rounded-xl bg-[#0A1224]/60 border border-[#24315A] text-xs text-[#9AA8C7] flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-amber-400 shrink-0" />
-                        <span>Awaiting administrator response. Your ticket is currently queued with the student desk committee.</span>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW 6: POST ANNOUNCEMENT (COURSE REPS ONLY)             */}
-        {/* ======================================================== */}
-        {activeTab === 'rep-announcement' && isRep && (
-          <div className="space-y-6 max-w-3xl">
-            
-            <div className="p-6 rounded-2xl bg-gradient-to-r from-[#121C36] to-[#1E3AB8]/30 border border-[#FFC700]/40 space-y-2">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#FFC700] text-[#0A1224] text-[10px] font-extrabold uppercase">
-                <Megaphone className="w-3.5 h-3.5" />
-                <span>Department Representative Privilege</span>
-              </div>
-              <h2 className="font-display font-bold text-2xl text-[#E6ECFA]">
-                Broadcast Announcement for {studentDept}
-              </h2>
-              <p className="text-xs text-[#9AA8C7]">
-                As an accredited Course Representative, announcements you submit here will be broadcast exclusively to all students in <strong>{studentDept}</strong>.
-              </p>
-            </div>
-
-            {repError && (
-              <div className="p-3.5 rounded-xl bg-rose-950/70 border border-rose-500/60 text-xs text-rose-200 flex items-center gap-2">
-                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                <span>{repError}</span>
-              </div>
-            )}
-
-            {repSuccess && (
-              <div className="p-3.5 rounded-xl bg-emerald-950/70 border border-emerald-500/60 text-xs text-emerald-200 flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                <span>{repSuccess}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleRepPostAnnouncement} className="p-7 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5">
-              
-              {/* Department Lock Notice */}
-              <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
-                  Target Department (Locked by Clearance)
-                </label>
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-sm text-[#FFC700] font-semibold">
-                  <Lock className="w-4 h-4 text-[#FFC700]" />
-                  <span>{studentDept}</span>
-                  <span className="text-[10px] text-[#9AA8C7] ml-auto font-normal ">Department Locked</span>
-                </div>
-              </div>
-
-              {/* Title */}
-              <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
-                  Announcement Title *
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={repTitle}
-                  onChange={(e) => setRepTitle(e.target.value)}
-                  placeholder="e.g. Rescheduled Lab Session for ND II COM212"
-                  className="w-full px-4 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                />
-              </div>
-
-              {/* Category */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
-                    Category *
-                  </label>
-                  <select
-                    value={repCategory}
-                    onChange={(e: any) => setRepCategory(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                  >
-                    <option value="Department">Department</option>
-                    <option value="Academic">Academic</option>
-                    <option value="Student Notice">Student Notice</option>
-                    <option value="General">General</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center gap-5 pt-6 flex-wrap">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#E6ECFA]">
-                    <input
-                      type="checkbox"
-                      checked={repUrgent}
-                      onChange={(e) => setRepUrgent(e.target.checked)}
-                      className="w-4 h-4 rounded text-[#2F52FF] focus:ring-0 bg-[#0A1224] border-[#24315A]"
-                    />
-                    <span className="text-rose-400">Mark as Urgent Notice</span>
-                  </label>
-
-                  <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-[#E6ECFA]">
-                    <input
-                      type="checkbox"
-                      checked={repPinned}
-                      onChange={(e) => setRepPinned(e.target.checked)}
-                      className="w-4 h-4 rounded text-[#FFC700] focus:ring-0 bg-[#0A1224] border-[#24315A]"
-                    />
-                    <span className="text-[#FFC700] flex items-center gap-1 font-bold">
-                      <Pin className="w-3.5 h-3.5 fill-[#FFC700]" />
-                      <span>Pin Announcement</span>
-                    </span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Content */}
-              <div>
-                <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
-                  Notice Details / Message *
-                </label>
-                <textarea
-                  required
-                  rows={6}
-                  value={repContent}
-                  onChange={(e) => setRepContent(e.target.value)}
-                  placeholder="Type the full announcement details here. Be clear about dates, venue changes, or lecturer instructions..."
-                  className="w-full px-4 py-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs sm:text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] leading-relaxed"
-                />
-              </div>
-
-              <div className="pt-2 flex justify-end">
-                <button
-                  type="submit"
-                  disabled={repPosting}
-                  className="px-7 py-3 rounded-xl bg-[#FFC700] text-[#0A1224] font-extrabold text-xs hover:bg-[#ffd233] transition-all cursor-pointer shadow-[0_0_20px_rgba(255,199,0,0.3)] disabled:opacity-50 flex items-center gap-2"
-                >
-                  <Megaphone className="w-4 h-4" />
-                  <span>{repPosting ? 'Publishing Notice...' : 'Publish to Department'}</span>
-                </button>
-              </div>
-            </form>
-
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW 7: PROFILE SETTINGS                                 */}
-        {/* ======================================================== */}
-        {activeTab === 'profile' && (
-          <div className="space-y-6 max-w-2xl">
-            
-            <div className="p-7 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-6">
-              
-              <div className="flex items-center justify-between border-b border-[#24315A] pb-4">
-                <div>
-                  <h3 className="font-display font-bold text-xl text-[#E6ECFA]">
-                    Student Profile Settings
-                  </h3>
-                  <p className="text-xs text-[#9AA8C7]">
-                    You can update your display name and password. Matric numbers cannot be modified.
-                  </p>
-                </div>
-                <span className="px-2.5 py-1 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/30 text-xs font-bold">
-                  Verified
-                </span>
-              </div>
-
-              {profileError && (
-                <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                  <span>{profileError}</span>
-                </div>
-              )}
-
-              {profileSuccess && (
-                <div className="p-3 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                  <span>{profileSuccess}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleProfileSave} className="space-y-5">
-                
-                {/* Email (Read-only) */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                    Registered Email (Read-Only)
-                  </label>
-                  <input
-                    type="text"
-                    disabled
-                    value={profile?.email || user?.email || ''}
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#9AA8C7] cursor-not-allowed opacity-80"
-                  />
-                </div>
-
-                {/* Student Identification: Permanent Matric OR Temporary JAMB + Upgrade Notice */}
-                {profile?.matricNumber ? (
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-[#9AA8C7]">
-                        Matriculation Number (Permanent)
-                      </label>
-                      <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
-                        Locked &amp; Immutable
-                      </span>
-                    </div>
-                    <input
-                      type="text"
-                      disabled
-                      value={profile.matricNumber}
-                      className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm font-bold text-[#FFC700] cursor-not-allowed opacity-80"
-                    />
-                    <p className="text-[11px] text-[#9AA8C7] mt-1">
-                      Matric numbers are unique and cannot be updated once saved. Contact the student desk if your record contains an error.
-                    </p>
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    {/* JAMB Registration Number */}
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <label className="text-xs font-semibold text-[#9AA8C7]">
-                          JAMB Registration Number (Temporary ID)
-                        </label>
-                        <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#FFC700]/30 font-semibold">
-                          JAMB Student
-                        </span>
-                      </div>
-                      <input
-                        type="text"
-                        disabled
-                        value={profile?.jambNumber || 'NOT ASSIGNED'}
-                        className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm font-bold text-[#FFC700] cursor-not-allowed opacity-80"
-                      />
-                    </div>
-
-                    {/* Notice: Add your matric number when you get it */}
-                    <div className="p-4 rounded-xl bg-[#0A1224] border border-[#2F52FF]/40 space-y-3">
-                      <div className="flex items-start gap-2.5">
-                        <FileBadge2 className="w-5 h-5 text-[#FFC700] shrink-0 mt-0.5" />
-                        <div>
-                          <h4 className="text-xs font-bold text-[#E6ECFA]">
-                            Add your matric number when you get it
-                          </h4>
-                          <p className="text-[11px] text-[#9AA8C7] mt-0.5 leading-relaxed">
-                            Once your department assigns your official matric number, save it below. Your temporary JAMB registration will be cleared and your permanent matric ID will be locked.
-                          </p>
-                        </div>
-                      </div>
-
-                      {upgradeError && (
-                        <div className="p-2.5 rounded-lg bg-rose-950/40 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
-                          <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-                          <span>{upgradeError}</span>
-                        </div>
-                      )}
-
-                      {upgradeSuccess && (
-                        <div className="p-2.5 rounded-lg bg-emerald-950/40 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
-                          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
-                          <span>{upgradeSuccess}</span>
-                        </div>
-                      )}
-
-                      <div className="flex flex-col sm:flex-row gap-2 pt-1">
-                        <input
-                          type="text"
-                          value={upgradeMatricInput}
-                          onChange={(e) => setUpgradeMatricInput(e.target.value.toUpperCase().replace(/\s+/g, ''))}
-                          placeholder="e.g. F/ND/25/3210001"
-                          maxLength={30}
-                          disabled={upgradeSaving}
-                          className="flex-1 px-3.5 py-2 rounded-lg bg-[#121C36] border border-[#24315A] text-sm text-[#E6ECFA] placeholder-[#5A6E85] focus:outline-none focus:border-[#2F52FF] font-mono uppercase"
-                        />
-                        <button
-                          type="button"
-                          onClick={(e) => handleUpgradeMatric(e)}
-                          disabled={upgradeSaving || !upgradeMatricInput.trim()}
-                          className="px-4 py-2 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5 cursor-pointer shadow-sm shrink-0"
-                        >
-                          {upgradeSaving ? (
-                            <>
-                              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              <span>Saving...</span>
-                            </>
-                          ) : (
-                            <>
-                              <CheckCircle2 className="w-3.5 h-3.5 text-[#FFC700]" />
-                              <span>Save matric number</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Department (Read-only) */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                    Enrolled Department
-                  </label>
-                  <input
-                    type="text"
-                    disabled
-                    value={profile?.department || 'Unassigned'}
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] cursor-not-allowed opacity-80"
-                  />
-                </div>
-
-                {/* Academic Level (Optional) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-[#9AA8C7]">
-                      Academic Level (Optional)
-                    </label>
-                    <span className="text-[10px] text-[#FFC700] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A]">
-                      Auto-filters Resources &amp; Timetables
-                    </span>
-                  </div>
-                  <select
-                    value={editLevel}
-                    onChange={(e) => setEditLevel(e.target.value)}
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-semibold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
-                  >
-                    <option value="ND1">ND I (National Diploma 1)</option>
-                    <option value="ND2">ND II (National Diploma 2)</option>
-                    <option value="HND1">HND I (Higher National Diploma 1)</option>
-                    <option value="HND2">HND II (Higher National Diploma 2)</option>
-                  </select>
-                  <p className="text-[11px] text-[#9AA8C7] mt-1">
-                    When configured, your course materials and timetables default to your current academic level.
-                  </p>
-                </div>
-
-                {/* Full Name (Editable) */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#9AA8C7] mb-1">
-                    Student Full Name *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={editFullName}
-                    onChange={(e) => setEditFullName(e.target.value)}
-                    placeholder="Enter your official full name"
-                    className="w-full px-4 py-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-sm text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                  />
-                </div>
-
-                {/* Password Change (Optional) */}
-                <div className="pt-2 border-t border-[#24315A] space-y-3">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#FFC700]">
-                    Change Account Password (Optional)
-                  </h4>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
-                        New Password (min 8 chars)
-                      </label>
-                      <input
-                        type="password"
-                        value={newPassword}
-                        onChange={(e) => setNewPassword(e.target.value)}
-                        placeholder="Leave blank to keep current"
-                        className="w-full px-3.5 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
-                        Confirm New Password
-                      </label>
-                      <input
-                        type="password"
-                        value={confirmPassword}
-                        onChange={(e) => setConfirmPassword(e.target.value)}
-                        placeholder="Re-enter new password"
-                        className="w-full px-3.5 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 flex justify-end">
-                  <button
-                    type="submit"
-                    disabled={profileSaving}
-                    className="px-6 py-2.5 rounded-xl text-xs font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] transition-all cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.2)] disabled:opacity-50"
-                  >
-                    {profileSaving ? 'Saving Changes...' : 'Save Profile Changes'}
-                  </button>
-                </div>
-              </form>
-
-              {/* Install SOT App (PWA) under Profile Settings */}
-              <div className="pt-4 border-t border-[#24315A]">
-                <PWAInstallRow />
-              </div>
-
-            </div>
-
-            {/* Very bottom of Profile Page: Full-Width Outlined Red Log out button */}
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => setShowLogoutConfirm(true)}
-                className="w-full py-3.5 px-4 rounded-xl border border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 hover:border-rose-400 font-bold text-xs flex items-center justify-center gap-2.5 transition-all cursor-pointer shadow-sm group"
-              >
-                <LogOut className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
-                <span>Log out</span>
-              </button>
-            </div>
-
-          </div>
-        )}
-
-        {/* ======================================================== */}
-        {/* VIEW 8: ASK AI (Full Page Workspace)                    */}
+        {/* VIEW 4: ASK AI (Smart Assistant)                        */}
         {/* ======================================================== */}
         {activeTab === 'ask-ai' && (
           <AskAiView />
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 9: GPA / CGPA CALCULATOR                            */}
+        {/* VIEW 5: PROFILE (Student Info, Install App & Log Out)    */}
         {/* ======================================================== */}
-        {activeTab === 'gpa' && (
-          <GpaCalculator />
+        {activeTab === 'profile' && (
+          <div className="space-y-4">
+            {/* Student ID & Credential Card */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3">
+              <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-[#2F52FF] text-white flex items-center justify-center font-bold text-base shadow-sm">
+                    {studentInitial}
+                  </div>
+                  <div>
+                    <h3 className="font-heading font-bold text-sm sm:text-base text-[#E6ECFA]">
+                      {profile?.fullName || user?.email}
+                    </h3>
+                    <p className="text-[11px] text-[#9AA8C7]">{profile?.email || user?.email}</p>
+                  </div>
+                </div>
+                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                  Active
+                </span>
+              </div>
+
+              {/* Identification details: Dept, Level, ID */}
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                  <span className="text-[10px] text-[#9AA8C7] block">Department</span>
+                  <span className="font-bold text-[#E6ECFA] truncate block">{studentDept}</span>
+                </div>
+                <div className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                  <span className="text-[10px] text-[#9AA8C7] block">Academic Level</span>
+                  <span className="font-bold text-[#FFC700] block">{profile?.level || 'ND1'}</span>
+                </div>
+              </div>
+
+              {/* ID: Permanent Matric or Temporary JAMB */}
+              <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
+                <div className="flex items-center justify-between text-xs">
+                  <span className="text-[11px] font-semibold text-[#9AA8C7]">
+                    {profile?.matricNumber ? 'Matriculation Number' : 'JAMB Registration Number'}
+                  </span>
+                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
+                    profile?.matricNumber
+                      ? 'bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/30'
+                      : 'bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/30'
+                  }`}>
+                    {profile?.matricNumber ? 'Permanent' : 'Temporary ID'}
+                  </span>
+                </div>
+                <div className="font-mono font-bold text-sm text-[#FFC700]">
+                  {profile?.matricNumber || profile?.jambNumber || 'NOT ASSIGNED'}
+                </div>
+
+                {/* If JAMB, show "Add your matric number when you get it" notice */}
+                {!profile?.matricNumber && profile?.jambNumber && (
+                  <div className="pt-2 border-t border-[#24315A] space-y-2">
+                    <div className="flex items-start gap-2">
+                      <FileBadge2 className="w-4 h-4 text-[#FFC700] shrink-0 mt-0.5" />
+                      <p className="text-[11px] text-[#9AA8C7]">
+                        <strong className="text-[#E6ECFA]">Add your matric number when you get it:</strong> Once assigned, save it below to make your profile permanent.
+                      </p>
+                    </div>
+
+                    {upgradeError && (
+                      <div className="p-2 rounded bg-rose-950/50 border border-rose-500/50 text-[11px] text-rose-200">
+                        {upgradeError}
+                      </div>
+                    )}
+                    {upgradeSuccess && (
+                      <div className="p-2 rounded bg-emerald-950/50 border border-emerald-500/50 text-[11px] text-emerald-200">
+                        {upgradeSuccess}
+                      </div>
+                    )}
+
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        type="text"
+                        value={upgradeMatricInput}
+                        onChange={(e) => setUpgradeMatricInput(e.target.value.toUpperCase().replace(/\s+/g, ''))}
+                        placeholder="e.g. F/ND/25/3210001"
+                        maxLength={30}
+                        disabled={upgradeSaving}
+                        className="flex-1 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] uppercase placeholder-[#9AA8C7]/50 font-mono"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleUpgradeMatric}
+                        disabled={upgradeSaving || !upgradeMatricInput.trim()}
+                        className="px-3.5 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold disabled:opacity-50 cursor-pointer shrink-0"
+                      >
+                        {upgradeSaving ? 'Saving...' : 'Save'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Profile Settings Form */}
+            <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
+              <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                Update Profile &amp; Password
+              </h3>
+
+              {profileError && (
+                <div className="p-2.5 rounded-lg bg-rose-950/50 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                  <span>{profileError}</span>
+                </div>
+              )}
+
+              {profileSuccess && (
+                <div className="p-2.5 rounded-lg bg-emerald-950/50 border border-emerald-500/50 text-xs text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{profileSuccess}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleProfileSave} className="space-y-3 text-xs">
+                <div>
+                  <label className="block text-[#9AA8C7] mb-1 font-semibold">Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    value={editFullName}
+                    onChange={(e) => setEditFullName(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[#9AA8C7] mb-1 font-semibold">Level</label>
+                  <select
+                    value={editLevel}
+                    onChange={(e) => setEditLevel(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  >
+                    {ACADEMIC_LEVELS.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <label className="block text-[#9AA8C7] mb-1 font-semibold">New Password (optional)</label>
+                    <input
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Min 8 characters"
+                      className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[#9AA8C7] mb-1 font-semibold">Confirm Password</label>
+                    <input
+                      type="password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Repeat new password"
+                      className="w-full px-3 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={profileSaving}
+                    className="px-4 py-2 rounded-lg bg-[#FFC700] hover:bg-[#ffd233] text-[#0A1224] font-bold transition-all disabled:opacity-50 cursor-pointer shadow-sm"
+                  >
+                    {profileSaving ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Install SOT App (PWA) */}
+              <div className="pt-3 border-t border-[#24315A]">
+                <PWAInstallRow />
+              </div>
+            </div>
+
+            {/* Red Outlined Full-Width Log Out Button */}
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowLogoutConfirm(true)}
+                className="w-full py-3 px-4 rounded-xl border border-rose-500/50 text-rose-400 hover:text-rose-300 hover:bg-rose-950/30 hover:border-rose-400 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm group"
+              >
+                <LogOut className="w-4 h-4 group-hover:-translate-x-0.5 transition-transform" />
+                <span>Log out</span>
+              </button>
+            </div>
+          </div>
         )}
 
         {/* ======================================================== */}
-        {/* VIEW 10: STUDY PLANNER                                   */}
+        {/* VIEW 6: TIMETABLE                                        */}
         {/* ======================================================== */}
-        {activeTab === 'study-planner' && (
-          <StudyPlanner />
+        {activeTab === 'timetables' && (
+          <div className="space-y-4">
+            <div className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center p-0.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
+                <button
+                  type="button"
+                  onClick={() => setTtTypeTab('class')}
+                  className={`px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                    ttTypeTab === 'class'
+                      ? 'bg-[#2F52FF] text-white shadow-sm'
+                      : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                  }`}
+                >
+                  Classes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTtTypeTab('exam')}
+                  className={`px-3 py-1 rounded text-xs font-bold transition-all cursor-pointer ${
+                    ttTypeTab === 'exam'
+                      ? 'bg-[#2F52FF] text-white shadow-sm'
+                      : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+                  }`}
+                >
+                  Exams
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-[#9AA8C7] font-semibold">Level:</span>
+                <select
+                  value={ttLevelFilter}
+                  onChange={(e) => setTtLevelFilter(e.target.value)}
+                  className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none"
+                >
+                  {ACADEMIC_LEVELS.map((lvl) => (
+                    <option key={lvl} value={lvl}>
+                      {lvl}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Timetable Items */}
+            {timetables
+              .filter(
+                (t) =>
+                  t.department === studentDept &&
+                  t.type === ttTypeTab &&
+                  t.level === ttLevelFilter
+              ).length === 0 ? (
+              <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
+                <Calendar className="w-8 h-8 text-[#9AA8C7]/50 mx-auto" />
+                <h4 className="text-sm font-bold text-[#E6ECFA]">No timetable posted</h4>
+                <p className="text-xs text-[#9AA8C7]">
+                  No {ttTypeTab} timetable currently active for {ttLevelFilter} in {studentDept}.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {timetables
+                  .filter(
+                    (t) =>
+                      t.department === studentDept &&
+                      t.type === ttTypeTab &&
+                      t.level === ttLevelFilter
+                  )
+                  .map((t) => (
+                    <div
+                      key={t.id}
+                      className="p-3 rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-between gap-3 text-xs"
+                    >
+                      <div>
+                        <span className="font-bold text-[#FFC700] mr-2">{t.courseCode}</span>
+                        <span className="text-[#E6ECFA] font-medium">{t.venue}</span>
+                        <div className="text-[11px] text-[#9AA8C7] mt-0.5">
+                          {t.day} • {t.startTime} - {t.endTime}
+                        </div>
+                      </div>
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#60A5FA] border border-[#24315A]">
+                        {t.type}
+                      </span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW 7: ANNOUNCEMENTS                                    */}
+        {/* ======================================================== */}
+        {activeTab === 'announcements' && (
+          <div className="space-y-3">
+            {relevantAnnouncements.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center text-xs text-[#9AA8C7]">
+                No announcements currently posted for your department.
+              </div>
+            ) : (
+              relevantAnnouncements.map((a) => (
+                <div
+                  key={a.id}
+                  className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2 text-xs"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                      {a.category}
+                    </span>
+                    <span className="text-[10px] text-[#9AA8C7]">
+                      {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : ''}
+                    </span>
+                  </div>
+                  <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">{a.title}</h4>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed">{a.content}</p>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW 8: GPA CALCULATOR                                   */}
+        {/* ======================================================== */}
+        {activeTab === 'gpa' && <GpaCalculator />}
+
+        {/* ======================================================== */}
+        {/* VIEW 9: STUDY PLANNER                                    */}
+        {/* ======================================================== */}
+        {activeTab === 'study-planner' && <StudyPlanner />}
+
+        {/* ======================================================== */}
+        {/* VIEW 10: SAVED / BOOKMARKS                               */}
+        {/* ======================================================== */}
+        {activeTab === 'bookmarks' && (
+          <StudentBookmarksView
+            bookmarks={profile?.bookmarks || []}
+            onRemove={(item) => toggleBookmark(item)}
+            onNavigateCourses={() => navigateToTab('courses', 'Courses', false)}
+            onNavigateAnnouncements={() => navigateToTab('announcements', 'Announcements', true)}
+          />
         )}
 
         {/* ======================================================== */}
         {/* VIEW 11: COMMUNITIES & LINKS                             */}
         {/* ======================================================== */}
-        {activeTab === 'links' && (
-          <CommunitiesLinksView />
-        )}
+        {activeTab === 'links' && <CommunitiesLinksView />}
 
+        {/* ======================================================== */}
+        {/* VIEW 12: MY MESSAGES                                     */}
+        {/* ======================================================== */}
+        {activeTab === 'my-messages' && (
+          <div className="space-y-3">
+            <div className="flex items-center justify-between pb-1">
+              <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                Submitted Messages &amp; Inquiries
+              </h3>
+              <button
+                onClick={onNavigateContact}
+                className="text-xs text-[#FFC700] font-semibold hover:underline cursor-pointer"
+              >
+                Send New Message &rarr;
+              </button>
+            </div>
+
+            {loadingMessages ? (
+              <div className="p-8 text-center text-xs text-[#9AA8C7]">Loading messages...</div>
+            ) : myMessages.length === 0 ? (
+              <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
+                <MessageSquare className="w-8 h-8 text-[#9AA8C7]/50 mx-auto" />
+                <h4 className="text-sm font-bold text-[#E6ECFA]">No messages sent yet</h4>
+                <p className="text-xs text-[#9AA8C7]">
+                  Have a complaint or enquiry? Reach out through the Contact Desk.
+                </p>
+              </div>
+            ) : (
+              myMessages.map((m) => (
+                <div
+                  key={m.id}
+                  className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2 text-xs"
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-[#FFC700]">{m.type}</span>
+                    <span
+                      className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                        m.status === 'Resolved'
+                          ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30'
+                          : 'bg-amber-950 text-amber-300 border border-amber-500/30'
+                      }`}
+                    >
+                      {m.status}
+                    </span>
+                  </div>
+                  <p className="text-[#E6ECFA] font-medium">{m.message}</p>
+                  {m.adminReply && (
+                    <div className="p-2.5 rounded-lg bg-[#0A1224] border border-emerald-500/40 text-[11px] text-emerald-200 mt-2 space-y-1">
+                      <span className="font-bold block text-emerald-400">Desk Reply:</span>
+                      <p>{m.adminReply}</p>
+                    </div>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        )}
       </main>
 
-      {/* Mobile Bottom Tab Bar (Students: Home, Resources, Timetable, Ask AI, Profile) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0A1224]/95 backdrop-blur-md border-t border-[#24315A] px-2 py-1.5 flex items-center justify-around safe-area-pb">
+      {/* ======================================================== */}
+      {/* BOTTOM TAB BAR (ONLY 5 TABS: Home, Courses, Past Qs,     */}
+      {/* Ask AI, Profile)                                         */}
+      {/* ======================================================== */}
+      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A1224]/95 backdrop-blur-md border-t border-[#24315A] px-2 py-1.5 flex items-center justify-around safe-area-pb">
         {/* 1. Home */}
         <button
-          onClick={() => setActiveTab('overview')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'overview'
-              ? 'text-[#FFC700] font-bold'
-              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          onClick={() => navigateToBottomTab('overview')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'overview' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'overview' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
@@ -2762,43 +1916,37 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <span className="text-[10px]">Home</span>
         </button>
 
-        {/* 2. Resources */}
+        {/* 2. Courses */}
         <button
-          onClick={() => setActiveTab('resources')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'resources' || activeTab === 'courses' || activeTab === 'bookmarks'
-              ? 'text-[#FFC700] font-bold'
-              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          onClick={() => navigateToBottomTab('courses')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'courses' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
-          <div className={`p-1 rounded-lg ${activeTab === 'resources' || activeTab === 'courses' || activeTab === 'bookmarks' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+          <div className={`p-1 rounded-lg ${activeTab === 'courses' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
             <BookOpen className="w-5 h-5" />
           </div>
-          <span className="text-[10px]">Resources</span>
+          <span className="text-[10px]">Courses</span>
         </button>
 
-        {/* 3. Timetable */}
+        {/* 3. Past Questions */}
         <button
-          onClick={() => setActiveTab('timetables')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'timetables'
-              ? 'text-[#FFC700] font-bold'
-              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          onClick={() => navigateToBottomTab('past-questions')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'past-questions' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
-          <div className={`p-1 rounded-lg ${activeTab === 'timetables' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <Calendar className="w-5 h-5" />
+          <div className={`p-1 rounded-lg ${activeTab === 'past-questions' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <FileText className="w-5 h-5" />
           </div>
-          <span className="text-[10px]">Timetable</span>
+          <span className="text-[10px]">Past Questions</span>
         </button>
 
         {/* 4. Ask AI */}
         <button
-          onClick={() => setActiveTab('ask-ai')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'ask-ai'
-              ? 'text-[#FFC700] font-bold'
-              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          onClick={() => navigateToBottomTab('ask-ai')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'ask-ai' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'ask-ai' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
@@ -2807,25 +1955,23 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <span className="text-[10px]">Ask AI</span>
         </button>
 
-        {/* 5. Links */}
+        {/* 5. Profile */}
         <button
-          onClick={() => setActiveTab('links')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-2.5 rounded-xl transition-all cursor-pointer ${
-            activeTab === 'links'
-              ? 'text-[#FFC700] font-bold'
-              : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+          onClick={() => navigateToBottomTab('profile')}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+            activeTab === 'profile' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
-          <div className={`p-1 rounded-lg ${activeTab === 'links' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <Link2 className="w-5 h-5" />
+          <div className={`p-1 rounded-lg ${activeTab === 'profile' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
+            <User className="w-5 h-5" />
           </div>
-          <span className="text-[10px]">Links</span>
+          <span className="text-[10px]">Profile</span>
         </button>
       </nav>
 
-      {/* Small Confirmation Sheet: "Log out of SOT?" */}
+      {/* Logout Confirmation Sheet */}
       {showLogoutConfirm && (
-        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm">
           <div
             className="w-full max-w-sm rounded-2xl bg-[#0E1A38] border border-[#24315A] shadow-[0_10px_40px_rgba(0,0,0,0.6)] p-5 space-y-4"
             role="dialog"
@@ -2866,6 +2012,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         </div>
       )}
 
+      {/* Quick PDF Viewer Modal */}
+      {quickPdfViewer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md">
+          <div className="relative w-full max-w-4xl h-[90vh] bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+            <div className="p-3.5 bg-[#121C36] border-b border-[#24315A] flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                {quickPdfViewer.courseCode && (
+                  <span className="px-2 py-0.5 rounded text-[10px] font-extrabold uppercase bg-[#2F52FF] text-white mr-2">
+                    {quickPdfViewer.courseCode}
+                  </span>
+                )}
+                <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate inline-block">
+                  {quickPdfViewer.title}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2">
+                <a
+                  href={quickPdfViewer.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <span className="hidden sm:inline">External</span>
+                </a>
+                <a
+                  href={getPdfDownloadUrl(quickPdfViewer.url)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download</span>
+                </a>
+                <button
+                  onClick={() => setQuickPdfViewer(null)}
+                  className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white hover:border-rose-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 bg-[#070D1A]">
+              <iframe
+                src={quickPdfViewer.url}
+                title={quickPdfViewer.title}
+                className="w-full h-full border-none"
+              />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

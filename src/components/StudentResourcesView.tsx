@@ -44,7 +44,7 @@ interface StudentResourcesViewProps {
 }
 
 type MainResourceTab = 'courses' | 'past-questions' | 'bookmarks';
-type CourseDetailTab = 'topics' | 'past-questions' | 'materials';
+type CourseDetailTab = 'topics' | 'materials';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
@@ -568,7 +568,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                   </p>
                 </div>
 
-                {/* Internal Course Tabs: Topics, Past Questions, Materials */}
+                {/* Internal Course Tabs: Topics, Materials */}
                 <div className="flex items-center gap-2 pt-2 border-t border-[#24315A]/60">
                   <button
                     onClick={() => setCourseDetailTab('topics')}
@@ -580,18 +580,6 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                   >
                     <Layers className="w-3.5 h-3.5" />
                     <span>Topics ({courseTopics.length})</span>
-                  </button>
-
-                  <button
-                    onClick={() => setCourseDetailTab('past-questions')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      courseDetailTab === 'past-questions'
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
-                        : 'bg-[#0A1224] text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    <FileQuestion className="w-3.5 h-3.5" />
-                    <span>Past Questions ({coursePastQuestions.length})</span>
                   </button>
 
                   <button
@@ -815,104 +803,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 </div>
               )}
 
-              {/* TAB 2: COURSE PAST QUESTIONS */}
-              {courseDetailTab === 'past-questions' && (
-                <div className="space-y-3">
-                  {coursePastQuestions.length === 0 ? (
-                    <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-                      <FileQuestion className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-                      <p className="font-heading font-bold text-sm text-[#E6ECFA]">
-                        No past questions uploaded for {selectedCourse.code} yet
-                      </p>
-                      <p className="text-xs text-[#9AA8C7]">
-                        Past semester exam papers will appear here once submitted by course representatives or faculty.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {coursePastQuestions.map(pq => {
-                        const isPqBookmarked = isBookmarked('material', pq.id);
-                        return (
-                          <div
-                            key={pq.id}
-                            className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-300 flex items-center justify-center shrink-0">
-                                <FileQuestion className="w-4 h-4" />
-                              </div>
-                              <div className="min-w-0">
-                                <h4 className="font-heading font-bold text-xs sm:text-sm text-[#E6ECFA] truncate">
-                                  {pq.title}
-                                </h4>
-                                <p className="text-[10px] text-[#9AA8C7]">
-                                  {pq.courseCode || selectedCourse.code} • Past Question
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                              <button
-                                onClick={() => toggleBookmark({
-                                  id: pq.id,
-                                  type: 'material',
-                                  title: pq.title,
-                                  code: selectedCourse.code,
-                                  link: pq.url
-                                })}
-                                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                  isPqBookmarked
-                                    ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                                    : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
-                                }`}
-                                title={isPqBookmarked ? 'Remove bookmark' : 'Bookmark past question'}
-                              >
-                                {isPqBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                              </button>
-
-                              <button
-                                onClick={() => setViewerItem({
-                                  title: pq.title,
-                                  url: pq.url,
-                                  courseCode: selectedCourse.code,
-                                  type: 'Past Question'
-                                })}
-                                className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                              >
-                                <Eye className="w-3.5 h-3.5" />
-                                <span>Preview</span>
-                              </button>
-
-                              <a
-                                href={pq.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] hover:text-white text-xs font-semibold flex items-center gap-1"
-                              >
-                                <span>Open</span>
-                                <ExternalLink className="w-3.5 h-3.5 text-[#9AA8C7]" />
-                              </a>
-
-                              <a
-                                href={getPdfDownloadUrl(pq.url)}
-                                target="_blank"
-                                rel="noreferrer"
-                                download
-                                className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#FFC700] hover:bg-[#FFC700]/10"
-                                title="Download PDF"
-                              >
-                                <Download className="w-3.5 h-3.5" />
-                              </a>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* TAB 3: COURSE MATERIALS */}
+              {/* TAB 2: COURSE MATERIALS */}
               {courseDetailTab === 'materials' && (
                 <div className="space-y-3">
                   {courseMaterials.length === 0 ? (

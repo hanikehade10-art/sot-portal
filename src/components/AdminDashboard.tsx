@@ -78,6 +78,7 @@ import {
 import { AdminRepActivityView } from './AdminRepActivityView';
 import { AdminLinksView } from './AdminLinksView';
 import { AdminCoursesManager } from './AdminCoursesManager';
+import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
@@ -88,6 +89,7 @@ type AdminTab =
   | 'students'
   | 'rep-activity'
   | 'courses'
+  | 'past-questions'
   | 'timetables'
   | 'announcements'
   | 'messages'
@@ -1288,6 +1290,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     students: 'Students',
     'rep-activity': 'Rep Activity',
     courses: 'Courses',
+    'past-questions': 'Past Questions',
     timetables: 'Timetables',
     announcements: 'Announcements',
     messages: 'Messages',
@@ -1442,6 +1445,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
                 {courses.length}
               </span>
+            </button>
+
+            {/* 3.5. Past Questions */}
+            <button
+              onClick={() => { setActiveTab('past-questions'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'past-questions'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <FileText className="w-4 h-4 text-[#FFC700]" />
+                <span>Past Questions</span>
+              </div>
             </button>
 
             {/* 4. Timetables */}
@@ -1791,6 +1809,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           {/* ======================================================== */}
           {activeTab === 'courses' && (
             <AdminCoursesManager onNotify={fetchData} />
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB 2.5: PAST QUESTIONS                                  */}
+          {/* ======================================================== */}
+          {activeTab === 'past-questions' && (
+            <AdminPastQuestionsView onNotify={fetchData} />
           )}
 
           {/* ======================================================== */}

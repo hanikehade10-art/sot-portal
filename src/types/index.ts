@@ -153,6 +153,8 @@ export interface ResourceItem {
   courseCode?: string;
   title: string;
   category?: ResourceCategory;
+  session?: string;
+  year?: string;
   url: string;
   description?: string;
   uploadedBy: string; // uid
