@@ -44,6 +44,10 @@ import { PWAInstallRow } from './PWAInstallRow';
 import { useSiteSettings } from '../hooks/useSiteSettings';
 import { LinkItem } from '../types';
 import {
+  subscribeToPhoneNotifications,
+  unsubscribeFromPhoneNotifications
+} from '../lib/pushNotifications';
+import {
   LayoutDashboard,
   Building2,
   Bell,
@@ -252,6 +256,49 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Bookmark Toast
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
 
+  // Phone Push Notifications State
+  const [phoneNotificationsEnabled, setPhoneNotificationsEnabled] = useState<boolean>(() => {
+    return localStorage.getItem('sot_phone_notifications_enabled') === 'true';
+  });
+  const [phoneNotificationsLoading, setPhoneNotificationsLoading] = useState(false);
+  const [phoneNotificationFeedback, setPhoneNotificationFeedback] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
+
+  const handleTogglePhoneNotifications = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const shouldEnable = e.target.checked;
+    setPhoneNotificationFeedback(null);
+    setPhoneNotificationsLoading(true);
+
+    try {
+      if (shouldEnable) {
+        if (!user) throw new Error('Please sign in to enable push notifications.');
+        await subscribeToPhoneNotifications(user, profile?.department, profile?.level);
+        setPhoneNotificationsEnabled(true);
+        setPhoneNotificationFeedback({
+          type: 'success',
+          message: 'Phone notifications enabled! You will receive timely alerts for your department.'
+        });
+      } else {
+        await unsubscribeFromPhoneNotifications(user, profile?.department, profile?.level);
+        setPhoneNotificationsEnabled(false);
+        setPhoneNotificationFeedback({
+          type: 'success',
+          message: 'Phone notifications turned off.'
+        });
+      }
+    } catch (err: any) {
+      setPhoneNotificationsEnabled(!shouldEnable);
+      setPhoneNotificationFeedback({
+        type: 'error',
+        message: err.message || 'Failed to update phone notification settings.'
+      });
+    } finally {
+      setPhoneNotificationsLoading(false);
+    }
+  };
+
   // Timetable sub-filter
   const [ttTypeTab, setTtTypeTab] = useState<'class' | 'exam'>('class');
   const [ttLevelFilter, setTtLevelFilter] = useState<string>(defaultLevel);
@@ -297,8 +344,29 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // BROWSER HISTORY INTEGRATION
   // -------------------------------------------------------------
   useEffect(() => {
-    // Initialize history state on mount
-    if (!window.history.state || !window.history.state.sotStudentNav) {
+    // Check if opened via push notification deep link (e.g. ?tab=announcements or ?tab=past-questions)
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetTab = urlParams.get('tab') as TabType | null;
+
+    if (targetTab) {
+      const innerTitles: Partial<Record<TabType, string>> = {
+        timetables: 'Timetable',
+        announcements: 'Announcements',
+        gpa: 'GPA Calculator',
+        'study-planner': 'Study Planner',
+        bookmarks: 'Saved Items',
+        links: 'Communities & Links',
+        'my-messages': 'My Messages'
+      };
+      const isInnerTab = Boolean(innerTitles[targetTab]);
+      setActiveTab(targetTab);
+      setIsInner(isInnerTab);
+      if (isInnerTab && innerTitles[targetTab]) {
+        setInnerTitle(innerTitles[targetTab]!);
+      }
+      window.history.replaceState({ sotStudentNav: true, tab: targetTab, isInner: isInnerTab, innerTitle: innerTitles[targetTab] || '' }, '');
+    } else if (!window.history.state || !window.history.state.sotStudentNav) {
+      // Initialize history state on mount
       window.history.replaceState({ sotStudentNav: true, tab: 'overview', isInner: false }, '');
     }
 
@@ -366,6 +434,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   const handleConfirmLogout = async () => {
     try {
+      if (user) {
+        await unsubscribeFromPhoneNotifications(user, profile?.department, profile?.level).catch(() => {});
+      }
       sessionStorage.clear();
       localStorage.removeItem('sot_local_user');
       localStorage.removeItem('sot_local_profile');
@@ -373,6 +444,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       localStorage.removeItem('sot_notifications_last_seen');
       localStorage.removeItem('sot_daily_ai_timestamps');
       localStorage.removeItem('sot_ai_chat_session');
+      localStorage.removeItem('sot_fcm_token');
+      localStorage.removeItem('sot_phone_notifications_enabled');
       await logout();
     } catch (err) {
       console.warn('Logout error:', err);
@@ -1667,6 +1740,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </button>
                 </div>
               </form>
+
+              {/* Phone Notifications Switch */}
+              <div className="pt-3 border-t border-[#24315A] space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-[#2F52FF]/20 text-[#60A5FA] flex items-center justify-center shrink-0">
+                      <Bell className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-xs text-[#E6ECFA]">Phone notifications</h4>
+                      <p className="text-[11px] text-[#9AA8C7] leading-tight">
+                        Receive instant phone alerts for announcements, past questions, and lecture changes.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={phoneNotificationsEnabled}
+                      disabled={phoneNotificationsLoading}
+                      onChange={handleTogglePhoneNotifications}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-[#0A1224] border border-[#24315A] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[#24315A] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#2F52FF] peer-checked:border-[#2F52FF] disabled:opacity-50" />
+                  </label>
+                </div>
+
+                {phoneNotificationsLoading && (
+                  <div className="flex items-center gap-2 text-[11px] text-[#FFC700]">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Configuring phone notifications...</span>
+                  </div>
+                )}
+
+                {phoneNotificationFeedback && (
+                  <div
+                    className={`p-2.5 rounded-lg text-xs flex items-center gap-2 ${
+                      phoneNotificationFeedback.type === 'success'
+                        ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-rose-950/60 text-rose-300 border border-rose-500/30'
+                    }`}
+                  >
+                    {phoneNotificationFeedback.type === 'success' ? (
+                      <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                    ) : (
+                      <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                    )}
+                    <span>{phoneNotificationFeedback.message}</span>
+                  </div>
+                )}
+              </div>
 
               {/* Install SOT App (PWA) */}
               <div className="pt-3 border-t border-[#24315A]">

@@ -9,9 +9,10 @@ import {
   query,
   orderBy
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { LinkItem, LinkCategory } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
+import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
 import {
   Link2,
   Plus,

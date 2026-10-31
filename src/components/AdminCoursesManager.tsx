@@ -19,6 +19,7 @@ import {
   formatPdfUrl,
   getYouTubeEmbedUrl
 } from '../data/coursesAndTimetables';
+import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
 import {
   BookOpen,
   Plus,
@@ -101,6 +102,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
   const [topicTitle, setTopicTitle] = useState('');
   const [batchTopicsText, setBatchTopicsText] = useState('');
   const [savingTopic, setSavingTopic] = useState(false);
+  const [notifyTopicStudents, setNotifyTopicStudents] = useState(true);
+  const [notifyResourceStudents, setNotifyResourceStudents] = useState(true);
 
   // Resource Item Modal (Video, Note, Link, Past Question, Course Material)
   const [resourceModalConfig, setResourceModalConfig] = useState<{
@@ -407,6 +410,19 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
         const newTopic: TopicItem = { id: ref.id, ...payload };
         setTopics(prev => [...prev, newTopic]);
         showSaved('Saved');
+
+        if (notifyTopicStudents && auth.currentUser) {
+          const topic = `dept-${getDepartmentTopicSlug(currentManagingCourse.department)}-${currentManagingCourse.level.toLowerCase()}`;
+          dispatchPushNotification(
+            {
+              topic,
+              title: 'SOT: New Topic Added',
+              body: `${currentManagingCourse.code}: ${topicTitle.trim()}`,
+              link: '/dashboard?tab=courses'
+            },
+            auth.currentUser
+          ).catch((e) => console.warn('Topic push dispatch notice:', e));
+        }
       }
 
       setShowAddTopicModal(false);
@@ -450,6 +466,20 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
       }
 
       setTopics(prev => [...prev, ...newTopicsList]);
+
+      if (notifyTopicStudents && auth.currentUser && newTopicsList.length > 0) {
+        const topic = `dept-${getDepartmentTopicSlug(currentManagingCourse.department)}-${currentManagingCourse.level.toLowerCase()}`;
+        dispatchPushNotification(
+          {
+            topic,
+            title: 'SOT: New Topics Added',
+            body: `${currentManagingCourse.code}: Added ${newTopicsList.length} syllabus topics`,
+            link: '/dashboard?tab=courses'
+          },
+          auth.currentUser
+        ).catch((e) => console.warn('Batch topic push dispatch notice:', e));
+      }
+
       setShowBatchTopicModal(false);
       setBatchTopicsText('');
       showSaved(`Saved ${newTopicsList.length} topics!`);
@@ -574,6 +604,19 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
           ...payload
         };
         setResources(prev => [newResource, ...prev]);
+
+        if (notifyResourceStudents && auth.currentUser) {
+          const topic = `dept-${getDepartmentTopicSlug(currentManagingCourse.department)}-${currentManagingCourse.level.toLowerCase()}`;
+          dispatchPushNotification(
+            {
+              topic,
+              title: `SOT: New ${resourceModalConfig.type}`,
+              body: `${currentManagingCourse.code}: ${resourceModalConfig.title.trim()}`,
+              link: '/dashboard?tab=courses'
+            },
+            auth.currentUser
+          ).catch((e) => console.warn('Resource push dispatch notice:', e));
+        }
       }
 
       setResourceModalConfig(prev => ({ ...prev, isOpen: false }));
@@ -1303,6 +1346,21 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                 />
               </div>
 
+              {!editingTopic && (
+                <div className="flex items-center gap-2 pt-1 pb-1">
+                  <input
+                    type="checkbox"
+                    id="notifyTopicStudentsCheck"
+                    checked={notifyTopicStudents}
+                    onChange={(e) => setNotifyTopicStudents(e.target.checked)}
+                    className="w-4 h-4 rounded bg-[#070D1A] border border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                  />
+                  <label htmlFor="notifyTopicStudentsCheck" className="text-xs font-semibold text-[#E6ECFA] cursor-pointer select-none">
+                    Notify students (Phone push notification)
+                  </label>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
                 <button
                   type="button"
@@ -1363,6 +1421,19 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                 <p className="text-[10px] text-[#9AA8C7] mt-1">
                   Each line will be added in order to this course's syllabus.
                 </p>
+              </div>
+
+              <div className="flex items-center gap-2 pt-1 pb-1">
+                <input
+                  type="checkbox"
+                  id="notifyBatchTopicStudentsCheck"
+                  checked={notifyTopicStudents}
+                  onChange={(e) => setNotifyTopicStudents(e.target.checked)}
+                  className="w-4 h-4 rounded bg-[#070D1A] border border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                />
+                <label htmlFor="notifyBatchTopicStudentsCheck" className="text-xs font-semibold text-[#E6ECFA] cursor-pointer select-none">
+                  Notify students (Phone push notification)
+                </label>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
@@ -1453,6 +1524,21 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                     : 'Google Drive links automatically convert to interactive preview embeds.'}
                 </p>
               </div>
+
+              {!resourceModalConfig.editingId && (
+                <div className="flex items-center gap-2 pt-1 pb-1">
+                  <input
+                    type="checkbox"
+                    id="notifyResourceStudentsCheck"
+                    checked={notifyResourceStudents}
+                    onChange={(e) => setNotifyResourceStudents(e.target.checked)}
+                    className="w-4 h-4 rounded bg-[#070D1A] border border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                  />
+                  <label htmlFor="notifyResourceStudentsCheck" className="text-xs font-semibold text-[#E6ECFA] cursor-pointer select-none">
+                    Notify students (Phone push notification)
+                  </label>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
                 <button

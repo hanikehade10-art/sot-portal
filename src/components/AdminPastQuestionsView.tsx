@@ -15,6 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { ResourceItem } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import { formatPdfUrl, getPdfDownloadUrl } from '../data/coursesAndTimetables';
+import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
 import {
   FileText,
   UploadCloud,
@@ -71,6 +72,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
   const [formCourseCode, setFormCourseCode] = useState('');
   const [formSession, setFormSession] = useState('');
   const [formUrl, setFormUrl] = useState('');
+  const [notifyStudents, setNotifyStudents] = useState(true);
 
   // Status banners
   const [saving, setSaving] = useState(false);
@@ -200,6 +202,21 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
         payload.createdAt = new Date().toISOString();
         await addDoc(collection(db, 'resources'), payload);
         setSaveSuccess('Past question saved and published successfully!');
+
+        // Dispatch push notification
+        if (notifyStudents && user) {
+          const targetDept = isRepMode && repDepartment ? repDepartment : formDept;
+          const topic = `dept-${getDepartmentTopicSlug(targetDept)}-${formLevel.toLowerCase()}`;
+          dispatchPushNotification(
+            {
+              topic,
+              title: 'SOT: Past Question Added',
+              body: `${formCourseCode ? formCourseCode.trim().toUpperCase() + ' - ' : ''}${cleanTitle} (${formSession || 'Past Question'})`,
+              link: '/dashboard?tab=past-questions'
+            },
+            user
+          ).catch((e) => console.warn('Push broadcast note:', e));
+        }
       }
 
       setShowModal(false);
@@ -567,6 +584,22 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
                   Google Drive shareable links are automatically transformed into previewable PDF embeds.
                 </p>
               </div>
+
+              {/* Notify Students Checkbox (on by default) */}
+              {!editingId && (
+                <div className="flex items-center gap-2 pt-1 pb-1">
+                  <input
+                    type="checkbox"
+                    id="notifyStudentsPq"
+                    checked={notifyStudents}
+                    onChange={(e) => setNotifyStudents(e.target.checked)}
+                    className="w-4 h-4 rounded bg-[#070D1A] border border-[#1E2E52] text-[#2F52FF] focus:ring-0 focus:ring-offset-0 cursor-pointer"
+                  />
+                  <label htmlFor="notifyStudentsPq" className="text-xs font-semibold text-[#E6ECFA] cursor-pointer select-none">
+                    Notify students (Phone push notification)
+                  </label>
+                </div>
+              )}
 
               {/* Submit Buttons */}
               <div className="pt-3 flex items-center justify-end gap-2 border-t border-[#1E2E52]">

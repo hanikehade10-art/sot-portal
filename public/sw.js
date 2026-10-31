@@ -58,3 +58,46 @@ self.addEventListener('fetch', (event) => {
     })
   );
 });
+
+// Push notification handling for PWA
+self.addEventListener('push', (event) => {
+  if (event.data) {
+    try {
+      const data = event.data.json();
+      const title = data.notification?.title || data.data?.title || 'SOT Notification';
+      const options = {
+        body: data.notification?.body || data.data?.body || 'New update from SOT',
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        data: { link: data.fcmOptions?.link || data.data?.link || '/dashboard' }
+      };
+      event.waitUntil(self.registration.showNotification(title, options));
+    } catch (e) {
+      const text = event.data.text();
+      event.waitUntil(
+        self.registration.showNotification('SOT Notification', {
+          body: text || 'New update from SOT',
+          icon: '/icon-192.png',
+          badge: '/icon-192.png',
+          data: { link: '/dashboard' }
+        })
+      );
+    }
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const link = event.notification.data?.link || '/dashboard';
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windowClients) => {
+      for (const client of windowClients) {
+        if ('focus' in client) {
+          client.navigate(link);
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(link);
+    })
+  );
+});

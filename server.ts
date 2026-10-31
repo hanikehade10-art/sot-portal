@@ -3,6 +3,8 @@ import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
+import subscribeHandler from './api/subscribe.js';
+import sendHandler from './api/send.js';
 
 dotenv.config();
 
@@ -45,6 +47,10 @@ function commitRateLimit(key: string, limit: number = DEFAULT_MAX_REQUESTS_PER_D
   const effectiveLimit = limit > 0 ? limit : DEFAULT_MAX_REQUESTS_PER_DAY;
   return Math.max(0, effectiveLimit - validTimestamps.length);
 }
+
+// Phone Push Notification Handlers
+app.all('/api/subscribe', (req: Request, res: Response) => subscribeHandler(req, res));
+app.all('/api/send', (req: Request, res: Response) => sendHandler(req, res));
 
 // Health & Gemini Key Status Route
 app.get('/api/gemini-status', (_req: Request, res: Response) => {
