@@ -263,4 +263,59 @@ export interface ChatMessage {
   mode?: AiChatMode;
 }
 
+export interface QuizQuestion {
+  id: string;
+  text: string;
+  options: string[]; // 2 to 6 options
+}
+
+export interface QuizKeyItem {
+  questionId: string;
+  correctOptionIndex: number; // 0 for A, 1 for B, 2 for C, etc.
+  explanation: string;
+}
+
+export interface QuizItem {
+  id: string;
+  department: string;
+  level: 'ND1' | 'ND2' | 'HND1' | 'HND2' | string;
+  semester: 'First Semester' | 'Second Semester' | string;
+  courseCode: string;
+  title: string;
+  instructions?: string;
+  timeLimit?: number; // In minutes (0 or undefined for no limit)
+  shuffle?: boolean;
+  published: boolean;
+  questionCount: number;
+  questions: QuizQuestion[]; // Questions with options only, NO correct answers
+  createdBy: string;
+  createdByName?: string;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface QuizKeyDoc {
+  id: string; // quizId
+  quizId: string;
+  department: string;
+  keys: QuizKeyItem[];
+  updatedAt?: string;
+}
+
+export interface QuizAttempt {
+  id: string; // `${uid}_${quizId}`
+  uid: string;
+  quizId: string;
+  department: string;
+  studentName?: string;
+  matricNumber?: string;
+  answers: Record<string, number>; // questionId -> selectedOptionIndex (-1 if unanswered)
+  score: number;
+  total: number;
+  attempts: number;
+  bestScore: number;
+  submittedAt: string;
+  updatedAt?: string;
+}
+
 

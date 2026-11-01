@@ -163,8 +163,13 @@ export async function dispatchPushNotification(
     body: string;
     link?: string;
   },
-  user: User
+  user?: User | null
 ): Promise<{ success: boolean; messageId?: string }> {
+  if (!user) {
+    console.warn('dispatchPushNotification skipped: User is not authenticated.');
+    return { success: false };
+  }
+
   const idToken = await user.getIdToken();
 
   const response = await fetch('/api/send', {

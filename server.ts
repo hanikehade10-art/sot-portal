@@ -1,3 +1,4 @@
+import http from 'http';
 import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
@@ -11,8 +12,33 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function parseArg(flag: string): string | undefined {
+  const prefix = `${flag}=`;
+  for (let i = 0; i < process.argv.length; i++) {
+    const arg = process.argv[i];
+    if (arg === flag && i + 1 < process.argv.length) {
+      return process.argv[i + 1];
+    }
+    if (arg.startsWith(prefix)) {
+      return arg.slice(prefix.length);
+    }
+  }
+  return undefined;
+}
+
+const cliPort = parseArg('--port') || parseArg('-p');
+const cliHost = parseArg('--host') || parseArg('-h');
+
+// In AI Studio / Cloud Run, PORT may be set to 8080 by the outer proxy.
+// Respect explicit --port CLI argument first, or fall back to 3000 in dev.
+const PORT = cliPort
+  ? parseInt(cliPort, 10)
+  : (process.env.NODE_ENV === 'production' && process.env.PORT ? parseInt(process.env.PORT, 10) : 3000);
+
+const HOST = cliHost || '0.0.0.0';
+
 const app = express();
-const PORT = Number(process.env.PORT) || 3000;
+const server = http.createServer(app);
 
 app.use(express.json());
 
@@ -375,7 +401,10 @@ async function startServer() {
   if (!isProd) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: process.env.DISABLE_HMR === 'true' ? false : { server },
+      },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -387,8 +416,8 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server listening on port ${PORT} (NODE_ENV: ${process.env.NODE_ENV || 'development'})`);
+  server.listen(PORT, HOST, () => {
+    console.log(`Server listening on ${HOST}:${PORT} (NODE_ENV: ${process.env.NODE_ENV || 'development'})`);
     console.log(`[Gemini] API Key status: ${process.env.GEMINI_API_KEY ? `Configured (${process.env.GEMINI_API_KEY.length} chars)` : 'MISSING (GEMINI_API_KEY not found in env)'}`);
   });
 }

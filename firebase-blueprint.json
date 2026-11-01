@@ -190,6 +190,57 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["department", "level", "semester", "title", "url", "fileName", "uploadedBy", "createdAt"]
+    },
+    "QuizItem": {
+      "title": "QuizItem",
+      "description": "Department academic multiple choice quiz with questions and options (no correct answers)",
+      "type": "object",
+      "properties": {
+        "department": { "type": "string", "maxLength": 64 },
+        "level": { "type": "string", "maxLength": 32 },
+        "semester": { "type": "string", "maxLength": 32 },
+        "courseCode": { "type": "string", "maxLength": 32 },
+        "title": { "type": "string", "maxLength": 200 },
+        "instructions": { "type": "string", "maxLength": 2000 },
+        "timeLimit": { "type": "number" },
+        "shuffle": { "type": "boolean" },
+        "published": { "type": "boolean" },
+        "questionCount": { "type": "number" },
+        "createdBy": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["department", "level", "semester", "courseCode", "title", "published", "questionCount", "createdBy", "createdAt"]
+    },
+    "QuizKeyDoc": {
+      "title": "QuizKeyDoc",
+      "description": "Answer keys and explanations for a quiz (separated from public quiz document to prevent student cheating)",
+      "type": "object",
+      "properties": {
+        "quizId": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["quizId", "department"]
+    },
+    "QuizAttemptDoc": {
+      "title": "QuizAttemptDoc",
+      "description": "Student quiz attempt records, scores, and submitted answer choices",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "quizId": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "studentName": { "type": "string", "maxLength": 128 },
+        "matricNumber": { "type": "string", "maxLength": 64 },
+        "score": { "type": "number" },
+        "total": { "type": "number" },
+        "attempts": { "type": "number" },
+        "bestScore": { "type": "number" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "quizId", "department", "score", "total", "attempts", "bestScore", "submittedAt"]
     }
   },
   "firestore": {
@@ -236,6 +287,18 @@
     "/courseSheets/{id}": {
       "schema": "CourseSheet",
       "description": "Official course sheet PDFs per department, level, and semester. Read by students; Managed by admins"
+    },
+    "/quizzes/{quizId}": {
+      "schema": "QuizItem",
+      "description": "Department multiple choice quizzes. Read by students; Managed by admins and department reps"
+    },
+    "/quizKeys/{quizId}": {
+      "schema": "QuizKeyDoc",
+      "description": "Answer keys and explanations for quizzes. Read by admins, reps, or students after submitting; Managed by admins and reps"
+    },
+    "/quizAttempts/{attemptId}": {
+      "schema": "QuizAttemptDoc",
+      "description": "Student quiz attempts and scores. Read by owner, admin, or rep; Created/updated by student"
     }
   }
 }

@@ -58,6 +58,7 @@ import {
   Mail,
   Layers,
   AlertTriangle,
+  AlertCircle,
   ChevronRight,
   Home,
   Send,
@@ -73,12 +74,19 @@ import {
   PinOff,
   FileText,
   UploadCloud,
-  CheckCircle2
+  CheckCircle2,
+  FileQuestion
 } from 'lucide-react';
 import { AdminRepActivityView } from './AdminRepActivityView';
 import { AdminLinksView } from './AdminLinksView';
 import { AdminCoursesManager } from './AdminCoursesManager';
 import { AdminPastQuestionsView } from './AdminPastQuestionsView';
+import { AdminQuizzesView } from './AdminQuizzesView';
+import {
+  dispatchPushNotification,
+  getDepartmentTopicSlug,
+  unsubscribeFromPhoneNotifications
+} from '../lib/pushNotifications';
 
 interface AdminDashboardProps {
   onNavigateHome: () => void;
@@ -90,6 +98,7 @@ type AdminTab =
   | 'rep-activity'
   | 'courses'
   | 'past-questions'
+  | 'quizzes'
   | 'timetables'
   | 'announcements'
   | 'messages'
@@ -145,6 +154,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [uploadSaving, setUploadSaving] = useState(false);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadNotify, setUploadNotify] = useState(true);
 
   // -------------------------------------------------------------
   // COURSES MANAGEMENT STATE
@@ -190,6 +200,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [studentSearch, setStudentSearch] = useState('');
   const [studentDeptFilter, setStudentDeptFilter] = useState<string>('All');
   const [studentIdFilter, setStudentIdFilter] = useState<'All' | 'matric' | 'jamb'>('All');
+  const [showEditStudentModal, setShowEditStudentModal] = useState(false);
+  const [isCreatingStudent, setIsCreatingStudent] = useState(false);
+  const [editingStudent, setEditingStudent] = useState<UserProfile | null>(null);
+  const [editStudentName, setEditStudentName] = useState('');
+  const [editStudentEmail, setEditStudentEmail] = useState('');
+  const [editStudentDept, setEditStudentDept] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+  const [editStudentLevel, setEditStudentLevel] = useState('ND1');
+  const [editStudentMatric, setEditStudentMatric] = useState('');
+  const [editStudentJamb, setEditStudentJamb] = useState('');
+  const [editStudentRole, setEditStudentRole] = useState<'student' | 'rep' | 'admin'>('student');
+  const [editStudentDisabled, setEditStudentDisabled] = useState(false);
+  const [studentSaving, setStudentSaving] = useState(false);
+  const [studentModalError, setStudentModalError] = useState<string | null>(null);
+  const [studentSuccessMessage, setStudentSuccessMessage] = useState<string | null>(null);
 
   // -------------------------------------------------------------
   // TIMETABLES STATE
@@ -210,6 +234,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [ttFormDate, setTtFormDate] = useState<string>('');
   const [ttSaving, setTtSaving] = useState(false);
   const [ttError, setTtError] = useState<string | null>(null);
+  const [ttNotify, setTtNotify] = useState(true);
 
   // -------------------------------------------------------------
   // MESSAGES STATE
@@ -230,6 +255,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [annDepartment, setAnnDepartment] = useState('All');
   const [annUrgent, setAnnUrgent] = useState(false);
   const [annPinned, setAnnPinned] = useState(false);
+  const [annNotify, setAnnNotify] = useState(true);
 
   // -------------------------------------------------------------
   // FAQS STATE
@@ -256,6 +282,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
   const handleConfirmLogout = async () => {
     try {
+      await unsubscribeFromPhoneNotifications(user, profile?.department, profile?.level).catch(() => {});
       sessionStorage.clear();
       localStorage.removeItem('sot_local_user');
       localStorage.removeItem('sot_local_profile');
@@ -263,6 +290,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       localStorage.removeItem('sot_notifications_last_seen');
       localStorage.removeItem('sot_daily_ai_timestamps');
       localStorage.removeItem('sot_ai_chat_session');
+      localStorage.removeItem('sot_fcm_token');
+      localStorage.removeItem('sot_phone_notifications_enabled');
       await logout();
     } catch (err) {
       console.warn('Logout error:', err);
@@ -861,6 +890,143 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     setStudents(prev => prev.filter(s => s.uid !== uid));
   };
 
+  const handleOpenCreateStudent = () => {
+    setIsCreatingStudent(true);
+    setEditingStudent(null);
+    setEditStudentName('');
+    setEditStudentEmail('');
+    setEditStudentDept(studentDeptFilter !== 'All' ? studentDeptFilter : SOT_DEPARTMENTS_LIST[0]);
+    setEditStudentLevel('ND1');
+    setEditStudentMatric('');
+    setEditStudentJamb('');
+    setEditStudentRole('student');
+    setEditStudentDisabled(false);
+    setStudentModalError(null);
+    setShowEditStudentModal(true);
+  };
+
+  const handleOpenEditStudent = (student: UserProfile) => {
+    setIsCreatingStudent(false);
+    setEditingStudent(student);
+    setEditStudentName(student.fullName || '');
+    setEditStudentEmail(student.email || '');
+    setEditStudentDept(student.department || SOT_DEPARTMENTS_LIST[0]);
+    setEditStudentLevel(student.level || 'ND1');
+    setEditStudentMatric(student.matricNumber || '');
+    setEditStudentJamb(student.jambNumber || '');
+    setEditStudentRole((student.role as any) || 'student');
+    setEditStudentDisabled(Boolean(student.disabled));
+    setStudentModalError(null);
+    setShowEditStudentModal(true);
+  };
+
+  const handleSaveStudentProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editStudentName.trim()) {
+      setStudentModalError('Student full name is required.');
+      return;
+    }
+    if (isCreatingStudent && !editStudentEmail.trim()) {
+      setStudentModalError('Email address is required.');
+      return;
+    }
+
+    setStudentSaving(true);
+    setStudentModalError(null);
+
+    const prevMatric = editingStudent?.matricNumber?.trim().toUpperCase();
+    const newMatric = editStudentMatric.trim().toUpperCase();
+    const prevJamb = editingStudent?.jambNumber?.trim().toUpperCase();
+    const newJamb = editStudentJamb.trim().toUpperCase();
+    const nowIso = new Date().toISOString();
+
+    const targetUid = isCreatingStudent
+      ? 'user_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)
+      : editingStudent!.uid;
+
+    const profileData: Partial<UserProfile> = {
+      uid: targetUid,
+      fullName: editStudentName.trim(),
+      email: isCreatingStudent ? editStudentEmail.trim().toLowerCase() : (editingStudent?.email || editStudentEmail.trim().toLowerCase()),
+      department: editStudentDept,
+      level: editStudentLevel,
+      matricNumber: newMatric || undefined,
+      jambNumber: newJamb || undefined,
+      idType: newMatric ? 'matric' : newJamb ? 'jamb' : undefined,
+      role: editStudentRole,
+      disabled: editStudentDisabled,
+      profileComplete: true,
+      updatedAt: nowIso
+    };
+
+    try {
+      if (isCreatingStudent) {
+        await setDoc(doc(db, 'users', targetUid), {
+          ...profileData,
+          createdAt: nowIso
+        });
+        setStudents(prev => [{ ...profileData, createdAt: nowIso } as UserProfile, ...prev]);
+      } else {
+        await updateDoc(doc(db, 'users', targetUid), profileData);
+        setStudents(prev =>
+          prev.map(s => (s.uid === targetUid ? ({ ...s, ...profileData } as UserProfile) : s))
+        );
+      }
+
+      // Sync matric registration
+      if (prevMatric && prevMatric !== newMatric) {
+        const oldMatricDocId = sanitizeMatricId(prevMatric);
+        await deleteDoc(doc(db, 'matricNumbers', oldMatricDocId)).catch(() => {});
+        await deleteDoc(doc(db, 'matric_registry', oldMatricDocId)).catch(() => {});
+      }
+      if (newMatric && newMatric !== prevMatric) {
+        const newMatricDocId = sanitizeMatricId(newMatric);
+        const matricPayload = {
+          uid: targetUid,
+          userId: targetUid,
+          department: editStudentDept,
+          matricNumber: newMatric,
+          createdAt: nowIso
+        };
+        await setDoc(doc(db, 'matricNumbers', newMatricDocId), matricPayload, { merge: true }).catch(() => {});
+        await setDoc(doc(db, 'matric_registry', newMatricDocId), matricPayload, { merge: true }).catch(() => {});
+      }
+
+      // Sync JAMB registration
+      if (prevJamb && prevJamb !== newJamb) {
+        const oldJambDocId = `JAMB_${sanitizeJambId(prevJamb)}`;
+        await deleteDoc(doc(db, 'matricNumbers', oldJambDocId)).catch(() => {});
+        await deleteDoc(doc(db, 'matric_registry', oldJambDocId)).catch(() => {});
+      }
+      if (newJamb && newJamb !== prevJamb) {
+        const newJambDocId = `JAMB_${sanitizeJambId(newJamb)}`;
+        const jambPayload = {
+          uid: targetUid,
+          userId: targetUid,
+          department: editStudentDept,
+          jambNumber: newJamb,
+          createdAt: nowIso
+        };
+        await setDoc(doc(db, 'matricNumbers', newJambDocId), jambPayload, { merge: true }).catch(() => {});
+        await setDoc(doc(db, 'matric_registry', newJambDocId), jambPayload, { merge: true }).catch(() => {});
+      }
+
+      setShowEditStudentModal(false);
+      setEditingStudent(null);
+      setStudentSuccessMessage(
+        isCreatingStudent
+          ? `Student profile created successfully!`
+          : `Student profile updated successfully!`
+      );
+      setTimeout(() => setStudentSuccessMessage(null), 3500);
+    } catch (err: any) {
+      console.error('Failed to save student profile:', err);
+      setStudentModalError(err.message || 'Failed to save student profile to Firestore.');
+    } finally {
+      setStudentSaving(false);
+    }
+  };
+
   const handleExportCSV = () => {
     const headers = ['UID', 'Full Name', 'Email', 'Department', 'ID Type', 'Student ID', 'Role', 'Status', 'Date Joined'];
     const rows = filteredStudents.map(s => [
@@ -907,6 +1073,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     setTtFormVenue('Hall 1');
     setTtFormType(ttTypeTab);
     setTtFormDate('');
+    setTtNotify(true);
     setTtError(null);
     setShowTtModal(true);
   };
@@ -963,6 +1130,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           newId = ref.id;
         } catch (e) {}
         setTimetables(prev => [{ id: newId, ...payload, createdAt: new Date().toISOString() }, ...prev]);
+
+        if (ttNotify) {
+          const topic = `dept-${getDepartmentTopicSlug(ttFormDept)}-${ttFormLevel.toLowerCase()}`;
+          await dispatchPushNotification(
+            {
+              topic,
+              title: `New Timetable Entry: ${ttFormCourseCode.trim().toUpperCase()}`,
+              body: `${ttFormDay} ${ttFormStartTime} - ${ttFormEndTime} at ${ttFormVenue.trim()}`,
+              link: '/dashboard?tab=timetables'
+            },
+            user
+          );
+        }
       }
       setShowTtModal(false);
       setEditingTtId(null);
@@ -1026,6 +1206,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     }
   };
 
+  const handleDeleteMessage = async (id: string, name?: string) => {
+    if (!confirm(`Permanently delete this message from ${name || 'user'}?`)) return;
+    try {
+      await deleteDoc(doc(db, 'messages', id));
+    } catch (e: any) {
+      console.warn('Delete message error:', e);
+    }
+    const updated = messages.filter(m => m.id !== id);
+    setMessages(updated);
+    localStorage.setItem('sot_local_messages', JSON.stringify(updated));
+  };
+
+  const handleClearReply = async (msg: ContactMessage) => {
+    if (!confirm(`Clear recorded official reply for ${msg.name}?`)) return;
+    try {
+      await updateDoc(doc(db, 'messages', msg.id), {
+        adminReply: '',
+        repliedAt: null,
+        status: 'Read'
+      });
+    } catch (e) {}
+    const updated = messages.map(m =>
+      m.id === msg.id ? { ...m, adminReply: undefined, repliedAt: undefined, status: 'Read' as const } : m
+    );
+    setMessages(updated);
+    localStorage.setItem('sot_local_messages', JSON.stringify(updated));
+  };
+
   // -------------------------------------------------------------
   // ANNOUNCEMENTS MANAGEMENT
   // -------------------------------------------------------------
@@ -1064,6 +1272,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         { id: newId, ...payload, createdAt: new Date().toISOString() } as AnnouncementItem,
         ...prev
       ]);
+
+      if (annNotify) {
+        const topic = annDepartment === 'All' ? 'all' : `dept-${getDepartmentTopicSlug(annDepartment)}`;
+        await dispatchPushNotification(
+          {
+            topic,
+            title: annUrgent ? `🚨 Announcement: ${annTitle.trim()}` : `Announcement: ${annTitle.trim()}`,
+            body: annContent.trim().slice(0, 120),
+            link: '/dashboard?tab=announcements'
+          },
+          user
+        );
+      }
     }
 
     setShowAnnModal(false);
@@ -1245,7 +1466,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       };
       setResources(prev => [newRes, ...prev]);
 
-
+      if (uploadNotify) {
+        const topic = `dept-${getDepartmentTopicSlug(uploadDept)}-${uploadLevel.toLowerCase()}`;
+        await dispatchPushNotification(
+          {
+            topic,
+            title: `New ${uploadType}: ${courseCodeVal || uploadTitle.trim()}`,
+            body: `${uploadTitle.trim()} (${uploadDept} ${uploadLevel})`,
+            link: '/dashboard?tab=courses'
+          },
+          user
+        );
+      }
 
       setUploadSuccess('Saved successfully! Item is now live in the student portal.');
       setUploadTitle('');
@@ -1291,6 +1523,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     'rep-activity': 'Rep Activity',
     courses: 'Courses',
     'past-questions': 'Past Questions',
+    quizzes: 'Quizzes',
     timetables: 'Timetables',
     announcements: 'Announcements',
     messages: 'Messages',
@@ -1459,6 +1692,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <div className="flex items-center gap-2.5">
                 <FileText className="w-4 h-4 text-[#FFC700]" />
                 <span>Past Questions</span>
+              </div>
+            </button>
+
+            {/* Quizzes */}
+            <button
+              onClick={() => { setActiveTab('quizzes'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'quizzes'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <FileQuestion className="w-4 h-4 text-[#FFC700]" />
+                <span>Quizzes</span>
               </div>
             </button>
 
@@ -1819,6 +2067,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           )}
 
           {/* ======================================================== */}
+          {/* TAB: QUIZZES                                             */}
+          {/* ======================================================== */}
+          {activeTab === 'quizzes' && (
+            <AdminQuizzesView
+              adminUid={user?.uid || ''}
+              adminName={profile?.fullName || 'Administrator'}
+              isRepMode={false}
+            />
+          )}
+
+          {/* ======================================================== */}
           {/* TAB 3: STUDENTS DIRECTORY                                */}
           {/* ======================================================== */}
           {activeTab === 'students' && (
@@ -1859,6 +2118,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   </select>
 
                   <button
+                    onClick={handleOpenCreateStudent}
+                    className="px-3 py-1.5 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(47,82,255,0.3)] transition-colors"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Student</span>
+                  </button>
+
+                  <button
                     onClick={handleExportCSV}
                     className="px-3 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1.5 cursor-pointer shadow-[0_0_10px_rgba(255,199,0,0.2)]"
                   >
@@ -1867,6 +2134,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   </button>
                 </div>
               </div>
+
+              {studentSuccessMessage && (
+                <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/50 text-xs text-emerald-300 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <span>{studentSuccessMessage}</span>
+                </div>
+              )}
 
               <div className="rounded-xl bg-[#0F1E36] border border-[#1E2E52] overflow-hidden">
                 <div className="overflow-x-auto">
@@ -1944,6 +2218,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                               )}
                             </td>
                             <td className="py-2.5 px-3.5 text-right space-x-1.5">
+                              {/* Edit Student Button */}
+                              <button
+                                onClick={() => handleOpenEditStudent(student)}
+                                title="Edit student profile"
+                                className="p-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-[#FFC700] hover:border-[#FFC700]/50 cursor-pointer transition-colors"
+                              >
+                                <Edit2 className="w-3.5 h-3.5" />
+                              </button>
+
                               {/* Make / Remove Course Rep Button */}
                               {student.role !== 'admin' && (
                                 <button
@@ -2294,9 +2577,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                           </span>
                         </div>
 
-                        <span className="text-[11px]  text-[#9AA8C7]">
-                          {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[11px]  text-[#9AA8C7]">
+                            {msg.createdAt ? new Date(msg.createdAt).toLocaleString() : ''}
+                          </span>
+                          <button
+                            onClick={() => handleDeleteMessage(msg.id, msg.name)}
+                            title="Delete message"
+                            className="p-1 rounded-md bg-[#070D1A] border border-[#1E2E52] text-[#9AA8C7] hover:text-rose-400 hover:border-rose-500/50 cursor-pointer transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </div>
 
                       <div>
@@ -2311,9 +2603,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                       {/* Display existing admin reply */}
                       {msg.adminReply && (
                         <div className="p-3 rounded-lg bg-[#121C36] border border-emerald-500/30 space-y-1">
-                          <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                            <CheckCircle className="w-3 h-3" />
-                            <span>Official Admin Reply (Recorded)</span>
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
+                              <CheckCircle className="w-3 h-3" />
+                              <span>Official Admin Reply (Recorded)</span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleClearReply(msg)}
+                              title="Clear official reply"
+                              className="text-[10px] text-[#9AA8C7] hover:text-rose-400 flex items-center gap-1 cursor-pointer transition-colors"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                              <span>Clear</span>
+                            </button>
                           </div>
                           <p className="text-xs text-[#E6ECFA] whitespace-pre-wrap">{msg.adminReply}</p>
                           {msg.repliedAt && (
@@ -3276,6 +3579,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 />
               </div>
 
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="uploadNotifyAdmin"
+                  checked={uploadNotify}
+                  onChange={(e) => setUploadNotify(e.target.checked)}
+                  className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] cursor-pointer"
+                />
+                <label htmlFor="uploadNotifyAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
+                  Notify students (Push notification to {uploadDept} {uploadLevel})
+                </label>
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button
                   type="button"
@@ -3438,6 +3754,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </div>
               </div>
 
+              {!editingTtId && (
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="ttNotifyAdmin"
+                    checked={ttNotify}
+                    onChange={(e) => setTtNotify(e.target.checked)}
+                    className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] cursor-pointer"
+                  />
+                  <label htmlFor="ttNotifyAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
+                    Notify students (Push notification to {ttFormDept} {ttFormLevel})
+                  </label>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button
                   type="button"
@@ -3558,6 +3889,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 />
               </div>
 
+              {!editingAnnId && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="annNotifyAdmin"
+                    checked={annNotify}
+                    onChange={(e) => setAnnNotify(e.target.checked)}
+                    className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] cursor-pointer"
+                  />
+                  <label htmlFor="annNotifyAdmin" className="text-xs text-[#E6ECFA] cursor-pointer">
+                    Notify students (Push notification to {annDepartment === 'All' ? 'all students' : annDepartment})
+                  </label>
+                </div>
+              )}
+
               <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button
                   type="button"
@@ -3631,6 +3977,198 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                   className="px-4 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] cursor-pointer"
                 >
                   {editingFaqId ? 'Update FAQ' : 'Save FAQ'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT / CREATE STUDENT PROFILE */}
+      {showEditStudentModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/80 backdrop-blur-sm">
+          <div className="bg-[#0F1E36] border border-[#1E2E52] rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1E2E52]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#070D1A] border border-[#2F52FF]/50 flex items-center justify-center text-[#2F52FF]">
+                  <Users className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-display font-bold text-sm text-[#E6ECFA]">
+                    {isCreatingStudent ? 'Add New Student Record' : 'Edit Student Profile'}
+                  </h3>
+                  <p className="text-[11px] text-[#9AA8C7]">
+                    {isCreatingStudent
+                      ? 'Create and authorize a student account in the SOT portal'
+                      : `Update credentials and clearance for ${editingStudent?.email || 'student'}`}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEditStudentModal(false)}
+                className="text-[#9AA8C7] hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {studentModalError && (
+              <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                <span>{studentModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleSaveStudentProfile} className="space-y-3.5 text-xs">
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editStudentName}
+                  onChange={(e) => setEditStudentName(e.target.value)}
+                  placeholder="e.g. Samuel Adekunle"
+                  className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  disabled={!isCreatingStudent}
+                  value={editStudentEmail}
+                  onChange={(e) => setEditStudentEmail(e.target.value)}
+                  placeholder="student@example.com"
+                  className={`w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF] ${
+                    !isCreatingStudent ? 'opacity-60 cursor-not-allowed' : ''
+                  }`}
+                />
+                {!isCreatingStudent && (
+                  <p className="text-[10px] text-[#9AA8C7]/70 mt-1">
+                    Email is linked to Firebase Authentication and cannot be changed here.
+                  </p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Department *
+                  </label>
+                  <select
+                    value={editStudentDept}
+                    onChange={(e) => setEditStudentDept(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                  >
+                    {SOT_DEPARTMENTS_LIST.map((d) => (
+                      <option key={d} value={d}>
+                        {d}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Academic Level *
+                  </label>
+                  <select
+                    value={editStudentLevel}
+                    onChange={(e) => setEditStudentLevel(e.target.value)}
+                    className="w-full px-2.5 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                  >
+                    {ACADEMIC_LEVELS.map((lvl) => (
+                      <option key={lvl} value={lvl}>
+                        {lvl}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Matriculation Number
+                  </label>
+                  <input
+                    type="text"
+                    value={editStudentMatric}
+                    onChange={(e) => setEditStudentMatric(e.target.value)}
+                    placeholder="e.g. F/HD/23/3210001"
+                    className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    JAMB Registration No.
+                  </label>
+                  <input
+                    type="text"
+                    value={editStudentJamb}
+                    onChange={(e) => setEditStudentJamb(e.target.value)}
+                    placeholder="e.g. 202412345678AB"
+                    className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#FFC700] font-mono placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Portal Clearance / Role
+                  </label>
+                  <select
+                    value={editStudentRole}
+                    onChange={(e) => setEditStudentRole(e.target.value as any)}
+                    className="w-full px-2.5 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none font-bold"
+                  >
+                    <option value="student">Student (Standard)</option>
+                    <option value="rep">Course Representative</option>
+                    <option value="admin">Administrator</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col justify-end">
+                  <label className="flex items-center gap-2 p-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] cursor-pointer hover:border-[#2F52FF]/60 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={editStudentDisabled}
+                      onChange={(e) => setEditStudentDisabled(e.target.checked)}
+                      className="rounded bg-[#070D1A] border-[#1E2E52] text-rose-500 focus:ring-0"
+                    />
+                    <span className="text-[11px] font-semibold text-rose-300">
+                      Disable Account
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-[#1E2E52]">
+                <button
+                  type="button"
+                  onClick={() => setShowEditStudentModal(false)}
+                  className="px-3.5 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-white"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={studentSaving}
+                  className="px-5 py-2 rounded-lg bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] cursor-pointer transition-colors shadow-[0_0_12px_rgba(47,82,255,0.4)] disabled:opacity-50"
+                >
+                  {studentSaving
+                    ? 'Saving Profile...'
+                    : isCreatingStudent
+                    ? 'Create Student'
+                    : 'Save Changes'}
                 </button>
               </div>
             </form>

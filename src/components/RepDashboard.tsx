@@ -21,6 +21,12 @@ import {
 } from '../data/coursesAndTimetables';
 import { PWAInstallRow } from './PWAInstallRow';
 import { AdminPastQuestionsView } from './AdminPastQuestionsView';
+import { AdminQuizzesView } from './AdminQuizzesView';
+import {
+  dispatchPushNotification,
+  getDepartmentTopicSlug,
+  unsubscribeFromPhoneNotifications
+} from '../lib/pushNotifications';
 import {
   LayoutDashboard,
   UploadCloud,
@@ -44,7 +50,8 @@ import {
   Video,
   FileCheck,
   Tag,
-  Menu
+  Menu,
+  FileQuestion
 } from 'lucide-react';
 
 interface RepDashboardProps {
@@ -52,7 +59,7 @@ interface RepDashboardProps {
   onNavigateHome: () => void;
 }
 
-type RepTab = 'overview' | 'upload' | 'past-questions' | 'announcement' | 'my-uploads';
+type RepTab = 'overview' | 'upload' | 'past-questions' | 'quizzes' | 'announcement' | 'my-uploads';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
@@ -76,6 +83,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
 
   const handleConfirmLogout = async () => {
     try {
+      await unsubscribeFromPhoneNotifications(user, profile?.department, profile?.level).catch(() => {});
       sessionStorage.clear();
       localStorage.removeItem('sot_local_user');
       localStorage.removeItem('sot_local_profile');
@@ -83,6 +91,8 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       localStorage.removeItem('sot_notifications_last_seen');
       localStorage.removeItem('sot_daily_ai_timestamps');
       localStorage.removeItem('sot_ai_chat_session');
+      localStorage.removeItem('sot_fcm_token');
+      localStorage.removeItem('sot_phone_notifications_enabled');
       await logout();
     } catch (err) {
       console.warn('Logout error:', err);
@@ -112,6 +122,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [uploadSaving, setUploadSaving] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
+  const [notifyUploadStudents, setNotifyUploadStudents] = useState(true);
 
   // -------------------------------------------------------------
   // FORM: POST ANNOUNCEMENT
@@ -122,6 +133,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [annSaving, setAnnSaving] = useState(false);
   const [annError, setAnnError] = useState<string | null>(null);
   const [annSuccess, setAnnSuccess] = useState<string | null>(null);
+  const [notifyAnnStudents, setNotifyAnnStudents] = useState(true);
 
   // -------------------------------------------------------------
   // EDIT MODAL (FOR RESOURCES OR ANNOUNCEMENTS)
@@ -283,6 +295,19 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       };
       setMyResources(prev => [newResource, ...prev]);
 
+      if (notifyUploadStudents) {
+        const topic = `dept-${getDepartmentTopicSlug(repDepartment)}-${uploadLevel.toLowerCase()}`;
+        await dispatchPushNotification(
+          {
+            topic,
+            title: `New ${uploadCategory}: ${courseCodeVal || uploadTitle.trim()}`,
+            body: `${uploadTitle.trim()} (${repDepartment} ${uploadLevel})`,
+            link: '/dashboard?tab=courses'
+          },
+          user
+        );
+      }
+
       setUploadSuccess(`Saved successfully! "${uploadTitle.trim()}" published to ${repDepartment} students.`);
       // Reset form
       setUploadTitle('');
@@ -334,6 +359,20 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
         ...payload
       } as any;
       setMyAnnouncements(prev => [newAnn, ...prev]);
+
+      if (notifyAnnStudents) {
+        const topic = `dept-${getDepartmentTopicSlug(repDepartment)}`;
+        await dispatchPushNotification(
+          {
+            topic,
+            title: annUrgent ? `🚨 Notice: ${annTitle.trim()}` : `Dept Notice: ${annTitle.trim()}`,
+            body: annMessage.trim().slice(0, 120),
+            link: '/dashboard?tab=announcements'
+          },
+          user
+        );
+      }
+
       setAnnSuccess('Announcement posted successfully to your department board!');
       setAnnTitle('');
       setAnnMessage('');
@@ -552,6 +591,19 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
             >
               <FileText className="w-4 h-4 text-[#FFC700]" />
               <span>Past Questions</span>
+            </button>
+
+            {/* Quizzes */}
+            <button
+              onClick={() => { setActiveTab('quizzes'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'quizzes'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <FileQuestion className="w-4 h-4 text-[#FFC700]" />
+              <span>Quizzes</span>
             </button>
 
             {/* 3. Post Announcement */}
@@ -1009,6 +1061,20 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                     />
                   </div>
 
+                  {/* Notify Students Checkbox */}
+                  <div className="flex items-center gap-2 pt-1">
+                    <input
+                      type="checkbox"
+                      id="repUploadNotify"
+                      checked={notifyUploadStudents}
+                      onChange={(e) => setNotifyUploadStudents(e.target.checked)}
+                      className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                    />
+                    <label htmlFor="repUploadNotify" className="text-xs text-[#E6ECFA] cursor-pointer">
+                      Notify students (Push notification to {repDepartment} {uploadLevel})
+                    </label>
+                  </div>
+
                   {/* Submit Button */}
                   <div className="pt-2 flex justify-end">
                     <button
@@ -1035,6 +1101,18 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               isRepMode={true}
               repDepartment={repDepartment}
               onNotify={fetchRepData}
+            />
+          )}
+
+          {/* ======================================================== */}
+          {/* VIEW: QUIZZES                                            */}
+          {/* ======================================================== */}
+          {activeTab === 'quizzes' && (
+            <AdminQuizzesView
+              userDepartment={repDepartment}
+              isRepMode={true}
+              adminUid={user?.uid || ''}
+              adminName={`${profile?.fullName || 'Rep'} (${repDepartment} Course Rep)`}
             />
           )}
 
@@ -1115,18 +1193,33 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                     />
                   </div>
 
-                  {/* Urgent Alert Checkbox */}
-                  <div className="flex items-center gap-2 pt-1">
-                    <input
-                      type="checkbox"
-                      id="annUrgent"
-                      checked={annUrgent}
-                      onChange={(e) => setAnnUrgent(e.target.checked)}
-                      className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
-                    />
-                    <label htmlFor="annUrgent" className="text-xs text-[#E6ECFA] cursor-pointer">
-                      Mark as <strong className="text-rose-400">Urgent Notice</strong> (Highlights badge for students)
-                    </label>
+                  {/* Urgent Alert & Notify Checkboxes */}
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-3 pt-1">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="annUrgent"
+                        checked={annUrgent}
+                        onChange={(e) => setAnnUrgent(e.target.checked)}
+                        className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                      />
+                      <label htmlFor="annUrgent" className="text-xs text-[#E6ECFA] cursor-pointer">
+                        Mark as <strong className="text-rose-400">Urgent Notice</strong>
+                      </label>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="repAnnNotify"
+                        checked={notifyAnnStudents}
+                        onChange={(e) => setNotifyAnnStudents(e.target.checked)}
+                        className="w-4 h-4 rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                      />
+                      <label htmlFor="repAnnNotify" className="text-xs text-[#E6ECFA] cursor-pointer">
+                        Notify students (Push notification to {repDepartment})
+                      </label>
+                    </div>
                   </div>
 
                   {/* Submit */}

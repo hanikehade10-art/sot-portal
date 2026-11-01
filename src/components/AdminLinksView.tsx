@@ -54,6 +54,7 @@ export const AdminLinksView: React.FC = () => {
   const [formAudience, setFormAudience] = useState<string>('All');
   const [formActive, setFormActive] = useState(true);
   const [formOrder, setFormOrder] = useState(0);
+  const [notifyStudents, setNotifyStudents] = useState(true);
 
   const fetchLinks = async () => {
     setLoading(true);
@@ -98,6 +99,7 @@ export const AdminLinksView: React.FC = () => {
     setFormAudience('All');
     setFormActive(true);
     setFormOrder(links.length + 1);
+    setNotifyStudents(true);
     setShowModal(true);
   };
 
@@ -154,6 +156,19 @@ export const AdminLinksView: React.FC = () => {
         };
         const ref = await addDoc(collection(db, 'links'), fullPayload);
         setLinks((prev) => [...prev, { id: ref.id, ...fullPayload }]);
+
+        if (formActive && notifyStudents) {
+          const topic = formAudience === 'All' ? 'all' : `dept-${getDepartmentTopicSlug(formAudience)}`;
+          await dispatchPushNotification(
+            {
+              topic,
+              title: 'New Community Link',
+              body: `${formName.trim()}: ${formDescription.trim() || 'New student link available'}`,
+              link: '/dashboard?tab=links'
+            },
+            auth.currentUser
+          );
+        }
       }
       setShowModal(false);
       setEditingId(null);
@@ -658,6 +673,21 @@ export const AdminLinksView: React.FC = () => {
                   Active (visible to students in Communities & Links page)
                 </label>
               </div>
+
+              {!editingId && (
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="linkNotifyCheck"
+                    checked={notifyStudents}
+                    onChange={(e) => setNotifyStudents(e.target.checked)}
+                    className="rounded bg-[#070D1A] border-[#1E2E52] text-[#2F52FF]"
+                  />
+                  <label htmlFor="linkNotifyCheck" className="text-xs text-[#E6ECFA] cursor-pointer">
+                    Notify students (Push notification to {formAudience === 'All' ? 'all students' : formAudience})
+                  </label>
+                </div>
+              )}
 
               <div className="flex justify-end gap-2 pt-2 border-t border-[#1F2C4C]">
                 <button

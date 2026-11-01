@@ -38,6 +38,7 @@ import { StudyPlanner } from './StudyPlanner';
 import { WhatsAppIcon } from './WhatsAppIcon';
 import { StudentResourcesView } from './StudentResourcesView';
 import { StudentPastQuestionsView } from './StudentPastQuestionsView';
+import { StudentQuizzesView } from './StudentQuizzesView';
 import { CommunitiesLinksView } from './CommunitiesLinksView';
 import { NotificationsPopover, DashboardNotificationItem } from './NotificationsPopover';
 import { PWAInstallRow } from './PWAInstallRow';
@@ -108,6 +109,7 @@ type TabType =
   | 'overview'
   | 'courses'
   | 'past-questions'
+  | 'quizzes'
   | 'ask-ai'
   | 'profile'
   | 'timetables'
@@ -884,6 +886,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         return 'Courses';
       case 'past-questions':
         return 'Past Questions';
+      case 'quizzes':
+        return 'Quizzes';
       case 'ask-ai':
         return 'Ask AI';
       case 'profile':
@@ -1285,6 +1289,22 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         Past Questions
                       </h4>
                       <p className="text-[10px] text-[#9AA8C7]">Exams &amp; sessions</p>
+                    </div>
+                  </div>
+
+                  {/* Tile: Quizzes */}
+                  <div
+                    onClick={() => navigateToTab('quizzes', 'Quizzes', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <FileQuestion className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Quizzes
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Practice &amp; tests</p>
                     </div>
                   </div>
 
@@ -2020,6 +2040,20 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               ))
             )}
           </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: QUIZZES                                            */}
+        {/* ======================================================== */}
+        {activeTab === 'quizzes' && (
+          <StudentQuizzesView
+            studentDepartment={studentDept}
+            studentLevel={profile?.level || 'ND1'}
+            studentName={profile?.fullName}
+            matricNumber={profile?.matricNumber || profile?.jambNumber}
+            uid={user?.uid || ''}
+            onBackToHome={handleGoBack}
+          />
         )}
       </main>
 

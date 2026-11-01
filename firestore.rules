@@ -72,11 +72,11 @@ service cloud.firestore {
       allow list: if isAdmin(); // Only admins can list users for the admin table
 
       // Create profile: own UID, defaults role to student unless admin
-      allow create: if isOwner(userId) && isValidId(userId) &&
+      allow create: if (isOwner(userId) && isValidId(userId) &&
                        incoming().uid == request.auth.uid &&
                        incoming().email is string &&
                        incoming().profileComplete is bool &&
-                       (incoming().role == 'student' || isAdmin());
+                       (incoming().role == 'student' || isAdmin())) || isAdmin();
 
       // Update profile:
       // Students/reps can update their own details (name, department, matric, lastSeenAnnouncements)
@@ -88,7 +88,7 @@ service cloud.firestore {
       );
 
       // Delete: only admins can delete an account
-      allow delete: if isAdmin() && isValidId(userId);
+      allow delete: if isAdmin();
     }
 
     // Admins Collection
@@ -100,6 +100,7 @@ service cloud.firestore {
     // Matric & JAMB Number Collections (For Uniqueness & Reservations)
     match /matricNumbers/{matricId} {
       allow read: if isSignedIn();
+      allow write: if isAdmin();
       allow create: if isSignedIn() &&
                        (incoming().uid == request.auth.uid || incoming().userId == request.auth.uid || isAdmin());
       allow update: if isSignedIn() &&
@@ -116,6 +117,7 @@ service cloud.firestore {
 
     match /matric_registry/{matricId} {
       allow read: if isSignedIn();
+      allow write: if isAdmin();
       allow create, update: if isSignedIn() &&
                        ((incoming().uid == request.auth.uid || incoming().userId == request.auth.uid) ||
                         isAdmin() ||
@@ -229,6 +231,51 @@ service cloud.firestore {
     match /courseSheets/{id} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
+    }
+
+    // Multiple Choice Quizzes (Questions with options only, NO correct answers)
+    match /quizzes/{quizId} {
+      allow read, list: if isSignedIn();
+      allow create: if isAdmin() || (
+        isRep() &&
+        incoming().department == myDept() &&
+        incoming().createdBy == request.auth.uid
+      );
+      allow update, delete: if isAdmin() || (
+        isRep() &&
+        (resource.data.department == myDept() || resource.data.createdBy == request.auth.uid)
+      );
+    }
+
+    // Quiz Answer Keys & Explanations (Separated so students cannot cheat)
+    match /quizKeys/{quizId} {
+      allow get: if isAdmin() ||
+                    (isRep() && resource.data.department == myDept()) ||
+                    (isSignedIn() && exists(/databases/$(database)/documents/quizAttempts/$(request.auth.uid + '_' + quizId)));
+      allow list: if isAdmin() || isRep();
+      allow create: if isAdmin() || (isRep() && incoming().department == myDept());
+      allow update: if isAdmin() || (isRep() && (incoming().department == myDept() || resource.data.department == myDept()));
+      allow delete: if isAdmin() || (isRep() && resource.data.department == myDept());
+    }
+
+    // Quiz Student Attempts & Results
+    match /quizAttempts/{attemptId} {
+      allow get: if isSignedIn() && (
+        resource.data.uid == request.auth.uid ||
+        isAdmin() ||
+        (isRep() && resource.data.department == myDept())
+      );
+      allow list: if isSignedIn() && (
+        isAdmin() ||
+        isRep() ||
+        resource.data.uid == request.auth.uid
+      );
+      allow create: if isSignedIn() &&
+                       incoming().uid == request.auth.uid &&
+                       attemptId == (request.auth.uid + '_' + incoming().quizId);
+      allow update: if isSignedIn() &&
+                       ((existing().uid == request.auth.uid && incoming().uid == request.auth.uid) || isAdmin());
+      allow delete: if isAdmin();
     }
   }
 }
