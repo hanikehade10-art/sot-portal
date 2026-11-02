@@ -96,11 +96,13 @@ import {
   FileQuestion,
   Download
 } from 'lucide-react';
+import { ShareButton } from './ShareButton';
 import { SITE_CONFIG } from '../config/site';
 
 interface StudentDashboardProps {
   onNavigateHome: () => void;
   onNavigateContact: () => void;
+  onNavigatePrivacy?: () => void;
   onNavigateAdmin?: () => void;
   onNavigateRep?: () => void;
 }
@@ -199,6 +201,7 @@ export function getLagosPeriodGreeting(): LagosGreetingResult {
 export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   onNavigateHome,
   onNavigateContact,
+  onNavigatePrivacy,
   onNavigateAdmin,
   onNavigateRep
 }) => {
@@ -370,6 +373,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     } else if (!window.history.state || !window.history.state.sotStudentNav) {
       // Initialize history state on mount
       window.history.replaceState({ sotStudentNav: true, tab: 'overview', isInner: false }, '');
+    }
+
+    // Check if there is a pending deep link from a shared link (e.g. ?open=quiz|past-question|announcement|course)
+    try {
+      const pendingRaw = sessionStorage.getItem('sot_deep_link');
+      if (pendingRaw) {
+        sessionStorage.removeItem('sot_deep_link');
+        const dl = JSON.parse(pendingRaw);
+        if (dl.open === 'quiz') {
+          setActiveTab('quizzes');
+          setIsInner(false);
+          window.history.replaceState({ sotStudentNav: true, tab: 'quizzes', isInner: false }, '');
+        } else if (dl.open === 'past-question') {
+          setActiveTab('past-questions');
+          setIsInner(false);
+          window.history.replaceState({ sotStudentNav: true, tab: 'past-questions', isInner: false }, '');
+        } else if (dl.open === 'announcement') {
+          setActiveTab('announcements');
+          setIsInner(true);
+          setInnerTitle('Announcements');
+          window.history.replaceState({ sotStudentNav: true, tab: 'announcements', isInner: true, innerTitle: 'Announcements' }, '');
+        } else if (dl.open === 'course') {
+          setActiveTab('courses');
+          setIsInner(false);
+          window.history.replaceState({ sotStudentNav: true, tab: 'courses', isInner: false }, '');
+        }
+      }
+    } catch (e) {
+      console.warn('Pending deep link parsing error:', e);
     }
 
     const handlePopState = (e: PopStateEvent) => {
@@ -1459,9 +1491,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         </p>
                       </div>
                     </div>
-                    <span className="text-[11px] font-bold text-[#2F52FF] hover:underline shrink-0 flex items-center gap-1">
-                      Read &rarr;
-                    </span>
+                    <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                      <ShareButton
+                        title={pinnedAnnouncement.title}
+                        itemType="announcement"
+                        id={pinnedAnnouncement.id}
+                        textDetails={pinnedAnnouncement.category}
+                        variant="compact"
+                      />
+                      <span className="text-[11px] font-bold text-[#2F52FF] hover:underline flex items-center gap-1">
+                        Read &rarr;
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -1817,6 +1858,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               <div className="pt-3 border-t border-[#24315A]">
                 <PWAInstallRow />
               </div>
+
+              {/* Privacy Policy & Data Rights (Requirement 1) */}
+              <div className="pt-3 border-t border-[#24315A] flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs text-[#9AA8C7]">
+                  <ShieldCheck className="w-4 h-4 text-[#FFC700]" />
+                  <span>Privacy Policy &amp; Data Rights</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={onNavigatePrivacy}
+                  className="text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer"
+                >
+                  View Policy &rarr;
+                </button>
+              </div>
             </div>
 
             {/* Red Outlined Full-Width Log Out Button */}
@@ -1945,9 +2001,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                     <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
                       {a.category}
                     </span>
-                    <span className="text-[10px] text-[#9AA8C7]">
-                      {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : ''}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-[#9AA8C7]">
+                        {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : ''}
+                      </span>
+                      <ShareButton
+                        title={a.title}
+                        itemType="announcement"
+                        id={a.id}
+                        textDetails={a.category}
+                        variant="compact"
+                      />
+                    </div>
                   </div>
                   <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">{a.title}</h4>
                   <p className="text-xs text-[#9AA8C7] leading-relaxed">{a.content}</p>

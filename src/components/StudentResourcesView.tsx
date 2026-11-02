@@ -31,6 +31,7 @@ import {
   Sparkles,
   Link2
 } from 'lucide-react';
+import { ShareButton } from './ShareButton';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -461,6 +462,14 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                               <span className="px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A] text-[10px] font-bold text-[#E6ECFA]">
                                 {course.units || 3} Units
                               </span>
+                              <ShareButton
+                                title={`${course.code}: ${course.title}`}
+                                itemType="course"
+                                code={course.code}
+                                id={course.id}
+                                textDetails={`${course.units || 3} Units`}
+                                variant="icon"
+                              />
                               <button
                                 onClick={() => toggleBookmark({
                                   id: course.id,

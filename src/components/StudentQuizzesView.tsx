@@ -36,6 +36,7 @@ import {
   Lightbulb,
   CheckSquare
 } from 'lucide-react';
+import { ShareButton } from './ShareButton';
 
 interface StudentQuizzesViewProps {
   studentDepartment: string;
@@ -1032,6 +1033,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                   >
                     <span>{hasAttempt ? 'Retake Quiz' : 'Take Quiz'}</span>
                   </button>
+
+                  <ShareButton
+                    title={`${quiz.courseCode}: ${quiz.title}`}
+                    itemType="quiz"
+                    id={quiz.id}
+                    textDetails={`${quiz.questionCount || quiz.questions?.length || 0} Questions`}
+                    variant="compact"
+                  />
 
                   {hasAttempt && (
                     <button

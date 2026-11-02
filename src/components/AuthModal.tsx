@@ -71,6 +71,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [privacyAgreed, setPrivacyAgreed] = useState(false);
 
   // Step 2 details
   const [selectedDept, setSelectedDept] = useState<SotDepartmentName | ''>(
@@ -91,6 +92,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setSuccessMsg(null);
     setEmailConflict(false);
     setMatricConflict(null);
+    setPrivacyAgreed(false);
   };
 
   // Password strength hint
@@ -133,6 +135,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     if (password !== confirmPassword) {
       setErrorMsg('Passwords do not match. Please re-enter carefully.');
+      return;
+    }
+
+    if (!privacyAgreed) {
+      setErrorMsg('You must agree to the privacy notice to create an account.');
       return;
     }
 
@@ -496,6 +503,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+            </div>
+
+            {/* Privacy Notice Card */}
+            <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
+              <p className="text-[11px] text-[#9AA8C7] leading-relaxed">
+                SOT Portal stores your email, name, department and matric or JAMB number to run the portal. Only admins can see your ID number. We never sell your data.
+              </p>
+              <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
+                <input
+                  type="checkbox"
+                  required
+                  checked={privacyAgreed}
+                  onChange={(e) => setPrivacyAgreed(e.target.checked)}
+                  className="rounded bg-[#121C36] border-[#24315A] text-[#FFC700] focus:ring-0 focus:ring-offset-0 w-4 h-4 cursor-pointer"
+                />
+                <span className="text-xs font-semibold text-[#E6ECFA]">I agree</span>
+              </label>
             </div>
 
             <button

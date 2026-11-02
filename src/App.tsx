@@ -18,12 +18,16 @@ import { DepartmentDetailPage } from './components/DepartmentDetailPage';
 import { FAQPage, PrivacyPolicyPage, TermsPage, NotFoundPage } from './components/InfoPages';
 import { DepartmentItem } from './types';
 import { DEPARTMENTS } from './data/departments';
-import { AlertTriangle, RefreshCw, ShieldAlert } from 'lucide-react';
+import { AlertTriangle, RefreshCw, ShieldAlert, WifiOff, Info } from 'lucide-react';
 import { SITE_CONFIG } from './config/site';
 import { AdminTopBarSwitcher, AdminViewMode } from './components/AdminTopBarSwitcher';
+import { useSiteSettings } from './hooks/useSiteSettings';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 function AppContent() {
   const { user, profile, loading, authReady, isAdmin, isRep, roleReadError, refreshProfile } = useAuth();
+  const { settings } = useSiteSettings();
+  const isOnline = useOnlineStatus();
 
   // View router
   const [currentView, setCurrentView] = useState<string>('landing');
@@ -33,6 +37,27 @@ function AppContent() {
   const [authModalOpen, setAuthModalOpen] = useState(false);
   const [authModalMode, setAuthModalMode] = useState<'login' | 'signup' | 'step2' | 'forgot'>('login');
   const [initialDepartment, setInitialDepartment] = useState<string | undefined>(undefined);
+
+  // Deep Link Ingestion: ?open=quiz|past-question|announcement|course
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const open = params.get('open');
+      if (open) {
+        const id = params.get('id');
+        const code = params.get('code');
+        sessionStorage.setItem('sot_deep_link', JSON.stringify({ open, id, code }));
+        if (user && (profile?.profileComplete || isAdmin)) {
+          navigateTo('dashboard');
+        } else if (!user) {
+          setAuthModalMode('login');
+          setAuthModalOpen(true);
+        }
+      }
+    } catch (e) {
+      console.warn('Deep link handling notice:', e);
+    }
+  }, [user, profile, isAdmin]);
 
   // Sync initial URL path
   useEffect(() => {
@@ -213,6 +238,32 @@ function AppContent() {
 
 
 
+      {/* Maintenance Mode Top Banner (Requirement 5) */}
+      {settings.maintenanceMode && (
+        <div className="bg-[#FFC700] text-[#0A1224] px-4 py-1.5 text-xs font-bold flex items-center justify-center gap-2 z-50 shadow-md">
+          <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-[#0A1224]" />
+          <span>
+            {isAdmin ? '[Admin Notice] Maintenance Mode is ON for students: ' : ''}
+            {settings.maintenanceMessage?.trim() || 'Portal maintenance is currently active. Some updates may take longer to reflect.'}
+          </span>
+        </div>
+      )}
+
+      {/* Offline Mode Alert Badge / Notice (Requirement 4) */}
+      {!isOnline && (
+        <div className="bg-[#121C36] border-b border-[#24315A] text-[#9AA8C7] px-4 py-1.5 text-xs flex items-center justify-between z-50">
+          <div className="flex items-center gap-2 max-w-5xl mx-auto w-full">
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-amber-500/20 text-[#FFC700] text-[10px] font-extrabold uppercase tracking-wider border border-[#FFC700]/30 shrink-0">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#FFC700] animate-pulse" />
+              Offline
+            </span>
+            <span className="text-xs text-[#E6ECFA]">
+              Offline mode active: cached screens are available. <strong>Note:</strong> Google Drive files still need an internet connection.
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Global Role Read Error Alert Banner */}
       {roleReadError && (
         <div className="bg-rose-950/90 border-b border-rose-500/60 px-4 py-2.5 text-xs text-rose-200 flex items-center justify-between z-50">
@@ -289,6 +340,7 @@ function AppContent() {
           <StudentDashboard
             onNavigateHome={() => navigateTo('landing')}
             onNavigateContact={() => navigateTo('contact')}
+            onNavigatePrivacy={() => navigateTo('privacy')}
             onNavigateAdmin={() => navigateTo('admin')}
             onNavigateRep={() => navigateTo('rep')}
           />
@@ -353,7 +405,12 @@ function AppContent() {
         {currentView === 'faq' && <FAQPage onNavigateHome={() => navigateTo('landing')} />}
 
         {/* 7. PRIVACY POLICY */}
-        {currentView === 'privacy' && <PrivacyPolicyPage onNavigateHome={() => navigateTo('landing')} />}
+        {currentView === 'privacy' && (
+          <PrivacyPolicyPage
+            onNavigateHome={() => navigateTo('landing')}
+            onNavigateContact={() => navigateTo('contact')}
+          />
+        )}
 
         {/* 8. TERMS PAGE */}
         {currentView === 'terms' && <TermsPage onNavigateHome={() => navigateTo('landing')} />}

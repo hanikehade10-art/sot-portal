@@ -5,6 +5,8 @@ import { db } from '../lib/firebase';
 export interface SiteSettings {
   whatsappChannelUrl?: string;
   aiDailyLimit?: number;
+  maintenanceMode?: boolean;
+  maintenanceMessage?: string;
   updatedAt?: string;
 }
 

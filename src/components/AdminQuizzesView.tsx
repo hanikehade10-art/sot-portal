@@ -41,9 +41,10 @@ import {
   Award,
   Users,
   Check,
-  ArrowUpDown,
   BookOpen
 } from 'lucide-react';
+import { ShareButton } from './ShareButton';
+import { logActivity } from '../lib/activityLogger';
 
 interface AdminQuizzesViewProps {
   userDepartment?: string;
@@ -264,6 +265,17 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         await deleteDoc(doc(db, 'quizKeys', quiz.id));
       } catch {}
       setQuizzes(prev => prev.filter(q => q.id !== quiz.id));
+
+      if (auth.currentUser) {
+        await logActivity({
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email || adminName,
+          role: isRepMode ? 'Rep' : 'Admin',
+          action: 'Deleted',
+          itemType: 'Quiz',
+          title: `${quiz.courseCode}: ${quiz.title}`
+        });
+      }
     } catch (err: any) {
       alert(`Could not delete quiz: ${err?.message || err}`);
     }
@@ -410,6 +422,17 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         setQuizzes(prev => prev.map(q => q.id === quizId ? quizPayload : q));
       } else {
         setQuizzes(prev => [quizPayload, ...prev]);
+      }
+
+      if (auth.currentUser) {
+        await logActivity({
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email || adminName,
+          role: isRepMode ? 'Rep' : 'Admin',
+          action: editingQuizId ? 'Updated' : 'Created',
+          itemType: 'Quiz',
+          title: `${quizPayload.courseCode}: ${quizPayload.title}`
+        });
       }
 
       if (formPublished && notifyStudents) {
@@ -732,6 +755,14 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                   <Award className="w-3.5 h-3.5 text-[#FFC700]" />
                   <span>Results</span>
                 </button>
+
+                <ShareButton
+                  title={`${quiz.courseCode}: ${quiz.title}`}
+                  itemType="quiz"
+                  id={quiz.id}
+                  textDetails={`${quiz.questionCount || quiz.questions?.length || 0} Questions`}
+                  variant="icon"
+                />
 
                 <button
                   onClick={() => handleOpenEdit(quiz)}

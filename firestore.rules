@@ -277,5 +277,12 @@ service cloud.firestore {
                        ((existing().uid == request.auth.uid && incoming().uid == request.auth.uid) || isAdmin());
       allow delete: if isAdmin();
     }
+
+    // Admin & Rep Activity Logs
+    match /activityLogs/{logId} {
+      allow create: if (isAdmin() || isRep()) && incoming().uid == request.auth.uid;
+      allow read: if isAdmin();
+      allow update, delete: if false;
+    }
   }
 }

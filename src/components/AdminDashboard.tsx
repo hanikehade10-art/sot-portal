@@ -82,6 +82,8 @@ import { AdminLinksView } from './AdminLinksView';
 import { AdminCoursesManager } from './AdminCoursesManager';
 import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 import { AdminQuizzesView } from './AdminQuizzesView';
+import { AdminActivityLogsView } from './AdminActivityLogsView';
+import { logActivity } from '../lib/activityLogger';
 import {
   dispatchPushNotification,
   getDepartmentTopicSlug,
@@ -104,6 +106,7 @@ type AdminTab =
   | 'messages'
   | 'faqs'
   | 'links'
+  | 'activity'
   | 'settings';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
@@ -270,6 +273,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   // -------------------------------------------------------------
   const [whatsappLink, setWhatsappLink] = useState('');
   const [aiDailyLimit, setAiDailyLimit] = useState<number>(60);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('We are currently performing scheduled maintenance. SOT Portal services will resume shortly.');
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsSuccess, setSettingsSuccess] = useState<string | null>(null);
   const [settingsError, setSettingsError] = useState<string | null>(null);
@@ -437,7 +442,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         console.warn('Resources load note:', err);
       }
 
-      // 8. Fetch Site Settings (WhatsApp Channel URL & AI Limit)
+      // 8. Fetch Site Settings (WhatsApp Channel URL, AI Limit & Maintenance Mode)
       try {
         const settingsSnap = await getDoc(doc(db, 'settings', 'site'));
         if (settingsSnap.exists()) {
@@ -447,6 +452,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           }
           if (sData.aiDailyLimit !== undefined) {
             setAiDailyLimit(Number(sData.aiDailyLimit) || 60);
+          }
+          if (sData.maintenanceMode !== undefined) {
+            setMaintenanceMode(Boolean(sData.maintenanceMode));
+          }
+          if (sData.maintenanceMessage !== undefined) {
+            setMaintenanceMessage(String(sData.maintenanceMessage));
           }
         }
       } catch (err) {
@@ -481,9 +492,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       await setDoc(doc(db, 'settings', 'site'), {
         whatsappChannelUrl: cleanUrl,
         aiDailyLimit: limitVal,
+        maintenanceMode: Boolean(maintenanceMode),
+        maintenanceMessage: maintenanceMessage.trim(),
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      setSettingsSuccess(cleanUrl ? 'Settings and AI limit saved! WhatsApp button is active.' : 'Settings and AI limit saved! (WhatsApp button hidden).');
+
+      await logActivity(
+        user,
+        profile?.role || 'admin',
+        'Updated',
+        'Settings',
+        `Portal settings (Maintenance: ${maintenanceMode ? 'Active' : 'Off'})`
+      );
+
+      setSettingsSuccess('Portal settings updated successfully!');
     } catch (err: any) {
       console.error('Settings save error:', err);
       setSettingsError(err.message || 'Failed to save settings.');
@@ -1144,6 +1166,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           );
         }
       }
+
+      await logActivity(
+        user,
+        profile?.role || 'admin',
+        editingTtId ? 'Updated' : 'Created',
+        'Timetable',
+        `${payload.courseCode} (${payload.day} ${payload.startTime} - ${payload.endTime})`
+      );
+
       setShowTtModal(false);
       setEditingTtId(null);
     } catch (err: any) {
@@ -1155,10 +1186,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
   const handleDeleteTt = async (id: string) => {
     if (!confirm('Are you sure you want to delete this timetable entry?')) return;
+    const targetTt = timetables.find(t => t.id === id);
     try {
       await deleteDoc(doc(db, 'timetables', id));
     } catch (e) {}
     setTimetables(prev => prev.filter(t => t.id !== id));
+    await logActivity(
+      user,
+      profile?.role || 'admin',
+      'Deleted',
+      'Timetable',
+      targetTt?.courseCode ? `${targetTt.courseCode} (${targetTt.day})` : 'Timetable Entry'
+    );
   };
 
   // -------------------------------------------------------------
@@ -1287,6 +1326,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       }
     }
 
+    await logActivity(
+      user,
+      profile?.role || 'admin',
+      editingAnnId ? 'Updated' : 'Created',
+      'Announcement',
+      annTitle.trim()
+    );
+
     setShowAnnModal(false);
     setEditingAnnId(null);
   };
@@ -1303,10 +1350,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
 
   const handleDeleteAnnouncement = async (id: string) => {
     if (!confirm('Are you sure you want to delete this announcement?')) return;
+    const targetAnn = announcements.find(a => a.id === id);
     try {
       await deleteDoc(doc(db, 'announcements', id));
     } catch (e) {}
     setAnnouncements(prev => prev.filter(a => a.id !== id));
+    await logActivity(
+      user,
+      profile?.role || 'admin',
+      'Deleted',
+      'Announcement',
+      targetAnn?.title || 'Announcement'
+    );
   };
 
   // -------------------------------------------------------------
@@ -1479,6 +1534,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         );
       }
 
+      await logActivity(
+        user,
+        profile?.role || 'admin',
+        'Created',
+        'Resource',
+        `${uploadDept} ${uploadLevel}: ${uploadTitle.trim()}`
+      );
+
       setUploadSuccess('Saved successfully! Item is now live in the student portal.');
       setUploadTitle('');
       setUploadCourseCode('');
@@ -1501,6 +1564,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     try {
       await deleteDoc(doc(db, 'resources', id));
       setResources(prev => prev.filter(r => r.id !== id));
+      await logActivity(
+        user,
+        profile?.role || 'admin',
+        'Deleted',
+        'Resource',
+        title
+      );
     } catch (e: any) {
       alert(`Could not delete material: ${e.message || e}`);
     }
@@ -1511,6 +1581,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     try {
       await deleteDoc(doc(db, 'announcements', id));
       setAnnouncements(prev => prev.filter(a => a.id !== id));
+      await logActivity(
+        user,
+        profile?.role || 'admin',
+        'Deleted',
+        'Announcement',
+        title
+      );
     } catch (e: any) {
       alert(`Could not delete announcement: ${e.message || e}`);
     }
@@ -1529,6 +1606,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     messages: 'Messages',
     faqs: 'Chatbot FAQs',
     links: 'Links & Communities',
+    activity: 'Activity Log',
     settings: 'Settings'
   };
 
@@ -1800,6 +1878,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <div className="flex items-center gap-2.5">
                 <Link2 className="w-4 h-4 text-[#FFC700]" />
                 <span>Links & Hubs</span>
+              </div>
+            </button>
+
+            {/* 7.8 Activity Log */}
+            <button
+              onClick={() => { setActiveTab('activity'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'activity'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Activity className="w-4 h-4 text-[#FFC700]" />
+                <span>Activity Log</span>
               </div>
             </button>
 
@@ -2771,6 +2864,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           {activeTab === 'links' && <AdminLinksView />}
 
           {/* ======================================================== */}
+          {/* TAB: ACTIVITY LOGS                                       */}
+          {/* ======================================================== */}
+          {activeTab === 'activity' && <AdminActivityLogsView />}
+
+          {/* ======================================================== */}
           {/* TAB 8: SETTINGS (WHATSAPP CHANNEL LINK & AI LIMIT)       */}
           {/* ======================================================== */}
           {activeTab === 'settings' && (
@@ -2850,6 +2948,49 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                     <p className="text-[11px] text-[#9AA8C7] mt-1.5 leading-relaxed">
                       Configures the daily AI study and portal assistance quota for all students. Saved in <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/site</code> (<code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">aiDailyLimit</code>).
                     </p>
+                  </div>
+
+                  {/* Maintenance Mode Configuration */}
+                  <div className="pt-4 border-t border-[#1E2E52]/70 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className={`w-4 h-4 ${maintenanceMode ? 'text-[#FFC700]' : 'text-[#9AA8C7]'}`} />
+                          <label className="text-xs font-bold text-[#E6ECFA] cursor-pointer" htmlFor="maintenanceModeSwitch">
+                            Maintenance Mode
+                          </label>
+                        </div>
+                        <p className="text-[11px] text-[#9AA8C7]">
+                          Display a slim yellow maintenance banner to students across all pages. Admins are not blocked.
+                        </p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer">
+                        <input
+                          id="maintenanceModeSwitch"
+                          type="checkbox"
+                          checked={maintenanceMode}
+                          onChange={(e) => setMaintenanceMode(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-11 h-6 bg-[#070D1A] border border-[#1E2E52] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-[#0A1224] after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-[#9AA8C7] peer-checked:after:bg-[#0A1224] peer-checked:bg-[#FFC700] after:border after:rounded-full after:h-5 after:w-5 after:transition-all" />
+                      </label>
+                    </div>
+
+                    <div className="space-y-1.5 pt-1">
+                      <label className="block text-[11px] font-semibold text-[#9AA8C7]">
+                        Maintenance banner message:
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={maintenanceMessage}
+                        onChange={(e) => setMaintenanceMessage(e.target.value)}
+                        placeholder="e.g. We are currently performing scheduled maintenance. SOT Portal services will resume shortly."
+                        className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
+                      />
+                      <p className="text-[10px] text-[#9AA8C7]">
+                        Saved in <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">settings/site</code> (<code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">maintenanceMode</code>, <code className="text-[#FFC700] bg-[#070D1A] px-1 py-0.5 rounded">maintenanceMessage</code>).
+                      </p>
+                    </div>
                   </div>
 
                   {/* Live preview */}

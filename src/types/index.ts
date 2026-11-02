@@ -70,6 +70,7 @@ export interface UserProfile {
   level?: 'ND1' | 'ND2' | 'HND1' | 'HND2' | string;
   gpaRecords?: Record<string, SemesterGpaRecord>;
   studyPlanner?: StudyPlannerTask[];
+  privacyAcceptedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -119,9 +120,9 @@ export interface ContactMessage {
 
 export type AcademicLevel = 'ND1' | 'ND2' | 'HND1' | 'HND2' | 'ND I' | 'ND II' | 'HND I' | 'HND II';
 
-export type ResourceType = 'Video' | 'Note' | 'Past Question' | 'Other';
+export type ResourceType = 'Video' | 'Note' | 'Past Question' | 'Solution' | 'Other';
 export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
-export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Video' | 'Assignment' | 'Other';
+export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Solution' | 'Video' | 'Assignment' | 'Other';
 
 export interface TopicItem {
   id: string;
@@ -157,6 +158,9 @@ export interface ResourceItem {
   year?: string;
   url: string;
   description?: string;
+  pastQuestionId?: string;
+  solutionType?: 'text' | 'link';
+  content?: string; // For typed solutions
   uploadedBy: string; // uid
   uploadedByEmail?: string;
   uploadedByRole?: string; // 'Course Rep' | 'admin' | string
@@ -316,6 +320,17 @@ export interface QuizAttempt {
   bestScore: number;
   submittedAt: string;
   updatedAt?: string;
+}
+
+export interface ActivityLog {
+  id?: string;
+  uid: string;
+  email: string;
+  role: string;
+  action: 'Created' | 'Updated' | 'Deleted' | string;
+  itemType: 'Course' | 'Topic' | 'Resource' | 'Past Question' | 'Quiz' | 'Announcement' | 'Link' | 'Solution' | string;
+  title: string;
+  createdAt: string;
 }
 
 

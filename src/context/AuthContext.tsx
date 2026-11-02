@@ -266,6 +266,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     try {
       const cred = await createUserWithEmailAndPassword(auth, email.trim(), password);
 
+      const nowIso = new Date().toISOString();
       const isConfigAdmin = cred.user.email?.toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase();
       const initialProfile: UserProfile = {
         uid: cred.user.uid,
@@ -273,7 +274,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fullName: fullName.trim(),
         profileComplete: false,
         role: isConfigAdmin ? 'admin' : 'student',
-        createdAt: new Date().toISOString()
+        privacyAcceptedAt: nowIso,
+        createdAt: nowIso
       };
 
       try {
@@ -310,13 +312,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } as unknown as User;
 
         const isConfigAdmin = email.trim().toLowerCase() === SITE_CONFIG.bootstrapAdminEmail.toLowerCase();
+        const fallbackNow = new Date().toISOString();
         const initialProfile: UserProfile = {
           uid: mockUid,
           email: email.trim(),
           fullName: fullName.trim(),
           profileComplete: false,
           role: isConfigAdmin ? 'admin' : 'student',
-          createdAt: new Date().toISOString()
+          privacyAcceptedAt: fallbackNow,
+          createdAt: fallbackNow
         };
 
         localStorage.setItem('sot_local_user', JSON.stringify(mockUser));
