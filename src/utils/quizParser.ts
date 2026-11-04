@@ -33,91 +33,179 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     return { items, errors: ['Please paste or type quiz questions to import.'] };
   }
 
-  // Split raw text into question blocks separated by one or more blank lines
-  const blocks = rawText
-    .split(/\n\s*\n+/)
-    .map(b => b.trim())
-    .filter(b => b.length > 0);
-
-  if (blocks.length === 0) {
-    return { items, errors: ['No question blocks detected. Separate questions with a blank line.'] };
+  // Split raw text by questions starting with Q: (or fallback to double blank lines if no Q: detected)
+  let rawBlocks: string[] = [];
+  const startsWithQRegex = /(?:^|\n)(?=[Qq](?:uestion|\d+)?\s*[:\.\-])/;
+  if (startsWithQRegex.test(rawText)) {
+    rawBlocks = rawText.split(startsWithQRegex).map(b => b.trim()).filter(Boolean);
+  } else {
+    rawBlocks = rawText.split(/\n\s*\n+/).map(b => b.trim()).filter(Boolean);
   }
 
-  blocks.forEach((block, blockIndex) => {
+  if (rawBlocks.length === 0) {
+    return { items, errors: ['No question blocks detected. Start each question with Q: or separate with blank lines.'] };
+  }
+
+  rawBlocks.forEach((block, blockIndex) => {
     const blockNum = blockIndex + 1;
-    const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
+    const lines = block.split('\n');
 
     let questionText = '';
+    let questionType: 'multiple-choice' | 'true-false' = 'multiple-choice';
     const optionMatches: { letter: string; text: string }[] = [];
     let answerLetter = '';
-    let explanationText = '';
+    const explanationLines: string[] = [];
+    const whyNotNotes: Record<string, string> = {};
 
-    // Step 1: Identify question text (first line(s) before options)
-    let readingQuestion = true;
+    let currentSection: 'question' | 'options' | 'explanation' | 'whyNot' = 'question';
+    let currentWhyNotTarget = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const trimmed = line.trim();
 
-      // Check if line is Answer line
-      const ansMatch = line.match(/^(?:Answer|Ans|Correct|Correct\s*Answer)\s*[:=\-]\s*([A-Fa-f0-9])/i);
-      if (ansMatch) {
-        readingQuestion = false;
-        answerLetter = ansMatch[1].toUpperCase();
+      // Check if line is Type line
+      const typeMatch = trimmed.match(/^(?:Type|Question\s*Type)\s*[:=\-]\s*(.*)$/i);
+      if (typeMatch) {
+        currentSection = 'options';
+        const typeVal = typeMatch[1].trim().toLowerCase();
+        if (typeVal.includes('true') || typeVal.includes('tf') || typeVal.includes('false')) {
+          questionType = 'true-false';
+        } else {
+          questionType = 'multiple-choice';
+        }
         continue;
       }
 
-      // Check if line is Explanation line
-      const expMatch = line.match(/^(?:Explanation|Explain|Reason)\s*[:=\-]\s*(.*)$/i);
-      if (expMatch) {
-        readingQuestion = false;
-        explanationText = expMatch[1].trim();
-        // If explanation spans subsequent lines until next question
-        for (let j = i + 1; j < lines.length; j++) {
-          explanationText += ' ' + lines[j].trim();
+      // Check if line is Answer line
+      const ansMatch = trimmed.match(/^(?:Answer|Ans|Correct|Correct\s*Answer)\s*[:=\-]\s*(.+)$/i);
+      if (ansMatch) {
+        currentSection = 'options';
+        const rawAns = ansMatch[1].trim();
+        if (/^(?:true|t)$/i.test(rawAns)) {
+          questionType = 'true-false';
+          answerLetter = 'TRUE';
+        } else if (/^(?:false|f)$/i.test(rawAns)) {
+          questionType = 'true-false';
+          answerLetter = 'FALSE';
+        } else {
+          const letterMatch = rawAns.match(/^([A-Fa-f0-9])/);
+          answerLetter = letterMatch ? letterMatch[1].toUpperCase() : rawAns.toUpperCase();
         }
-        break;
+        continue;
       }
 
-      // Check for options in line: handles A) text B) text ... or A. text
-      // Regex looks for ([A-F])[\)\.\:]\s*(.*?)(?=(?:[A-F][\)\.\:]|$))
-      const inlineOptionRegex = /([A-Fa-f])[\)\.\:]\s*([^A-Fa-f\)\.\:]+?(?=\s+[A-Fa-f][\)\.\:]|$))/g;
-      const singleOptionMatch = line.match(/^([A-Fa-f])[\)\.\:]\s*(.*)$/);
+      // Check if line is Why not line: e.g. "Why not A: ...", "Why not B: ..."
+      const whyNotMatch = trimmed.match(/^(?:Why\s+not|Why\s+isn't|Why\s+not\s+option)\s+([A-Fa-f]|True|False)\s*[:=\-]\s*(.*)$/i);
+      if (whyNotMatch) {
+        currentSection = 'whyNot';
+        currentWhyNotTarget = whyNotMatch[1].toUpperCase();
+        whyNotNotes[currentWhyNotTarget] = whyNotMatch[2].trim();
+        continue;
+      }
 
-      // Check if this line starts an option or contains inline options
-      if (singleOptionMatch && !line.includes(') ') && !line.includes('. ')) {
-        readingQuestion = false;
+      // Check if line starts the Explanation section
+      const expMatch = trimmed.match(/^(?:Explanation|Explain|Reason)\s*[:=\-]\s*(.*)$/i);
+      if (expMatch) {
+        currentSection = 'explanation';
+        if (expMatch[1].trim()) {
+          explanationLines.push(expMatch[1].trim());
+        }
+        continue;
+      }
+
+      // If we are currently reading the Explanation
+      if (currentSection === 'explanation') {
+        explanationLines.push(line);
+        continue;
+      }
+
+      // If we are currently reading Why not notes
+      if (currentSection === 'whyNot') {
+        if (currentWhyNotTarget && trimmed) {
+          whyNotNotes[currentWhyNotTarget] = `${whyNotNotes[currentWhyNotTarget]}\n${trimmed}`;
+        }
+        continue;
+      }
+
+      // Check for standalone option line: e.g. "A) option text" or "A. option text"
+      const singleOptionMatch = trimmed.match(/^([A-Fa-f])[\)\.\:]\s*(.*)$/);
+      if (singleOptionMatch && !trimmed.includes(') ') && !trimmed.includes('. ')) {
+        currentSection = 'options';
         optionMatches.push({
           letter: singleOptionMatch[1].toUpperCase(),
           text: singleOptionMatch[2].trim()
         });
-      } else {
-        // Attempt inline extraction if it contains multiple options e.g. "A) ... B) ... C) ..."
-        const matches: { letter: string; text: string }[] = [];
-        let m: RegExpExecArray | null;
-        const re = /([A-Fa-f])[\)\.\:]\s*(.*?)(?=\s+[A-Fa-f][\)\.\:]|$)/g;
-        while ((m = re.exec(line)) !== null) {
-          if (m[2].trim()) {
-            matches.push({ letter: m[1].toUpperCase(), text: m[2].trim() });
-          }
-        }
+        continue;
+      }
 
-        if (matches.length > 0) {
-          readingQuestion = false;
-          matches.forEach(opt => optionMatches.push(opt));
-        } else if (readingQuestion) {
-          // Still part of the question text
-          const cleanedLine = line.replace(/^(?:Q\d*|Question\s*\d*|\d+)[\:\.\)]\s*/i, '').trim();
-          questionText = questionText ? `${questionText} ${cleanedLine}` : cleanedLine;
+      // Check for inline options e.g. "A) option  B) option  C) option"
+      const inlineMatches: { letter: string; text: string }[] = [];
+      let m: RegExpExecArray | null;
+      const re = /([A-Fa-f])[\)\.\:]\s*(.*?)(?=\s+[A-Fa-f][\)\.\:]|$)/g;
+      while ((m = re.exec(trimmed)) !== null) {
+        if (m[2].trim()) {
+          inlineMatches.push({ letter: m[1].toUpperCase(), text: m[2].trim() });
+        }
+      }
+
+      if (inlineMatches.length > 0) {
+        currentSection = 'options';
+        inlineMatches.forEach(opt => optionMatches.push(opt));
+        continue;
+      }
+
+      // Otherwise, we are reading the question prompt text
+      if (currentSection === 'question') {
+        const cleanedLine = trimmed.replace(/^(?:Q\d*|Question\s*\d*|\d+)[\:\.\)]\s*/i, '').trim();
+        if (cleanedLine) {
+          questionText = questionText ? `${questionText}\n${cleanedLine}` : cleanedLine;
         }
       }
     }
 
-    // Validation for this question block
+    const fullExplanation = explanationLines.join('\n').trim();
+
+    // Validation for question text
     if (!questionText.trim()) {
       errors.push(`Question #${blockNum}: Missing question text.`);
       return;
     }
 
+    const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + blockNum;
+
+    // Handle True/False questions
+    if (questionType === 'true-false') {
+      let correctIndex = -1;
+      if (answerLetter === 'TRUE' || answerLetter === 'A' || answerLetter === '1') {
+        correctIndex = 0; // True
+      } else if (answerLetter === 'FALSE' || answerLetter === 'B' || answerLetter === '2') {
+        correctIndex = 1; // False
+      }
+
+      if (correctIndex === -1) {
+        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Answer must be "True" or "False".`);
+        return;
+      }
+
+      items.push({
+        question: {
+          id: qId,
+          text: questionText.trim(),
+          type: 'true-false',
+          options: ['True', 'False']
+        },
+        key: {
+          questionId: qId,
+          correctOptionIndex: correctIndex,
+          explanation: fullExplanation || `The statement is ${correctIndex === 0 ? 'True' : 'False'}.`,
+          whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+        }
+      });
+      return;
+    }
+
+    // Validation for Multiple Choice
     if (optionMatches.length < 2) {
       errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Requires at least 2 options (found ${optionMatches.length}).`);
       return;
@@ -152,18 +240,18 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       return;
     }
 
-    const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + blockNum;
-
     items.push({
       question: {
         id: qId,
         text: questionText.trim(),
+        type: 'multiple-choice',
         options: optionMatches.map(o => o.text.trim())
       },
       key: {
         questionId: qId,
         correctOptionIndex: correctIndex,
-        explanation: explanationText.trim() || `Option ${String.fromCharCode(65 + correctIndex)} is the correct answer.`
+        explanation: fullExplanation || `Option ${String.fromCharCode(65 + correctIndex)} is the correct answer.`,
+        whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
       }
     });
   });

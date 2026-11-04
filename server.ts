@@ -320,6 +320,199 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   }
 });
 
+// Quiz Review AI Explanation Route: /api/quiz-explain
+app.post('/api/quiz-explain', async (req: Request, res: Response) => {
+  try {
+    const {
+      questionText,
+      options,
+      correctAnswerText,
+      studentAnswerText,
+      creatorExplanation,
+      clientUid,
+      department,
+      maxDailyLimit
+    } = req.body;
+
+    if (!questionText || typeof questionText !== 'string') {
+      return res.status(400).json({ error: 'Question text is required.' });
+    }
+
+    const effectiveLimit = typeof maxDailyLimit === 'number' && maxDailyLimit > 0 ? maxDailyLimit : DEFAULT_MAX_REQUESTS_PER_DAY;
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || 'unknown';
+    const rateLimitKey = clientUid ? `uid_${clientUid}` : `ip_${clientIp}`;
+
+    const rateResult = checkRateLimitReadOnly(rateLimitKey, effectiveLimit);
+    if (!rateResult.allowed) {
+      return res.status(429).json({
+        error: `Daily AI limit reached (${effectiveLimit} requests). Resets in ~${rateResult.resetHours}h.`,
+        remaining: 0,
+        resetHours: rateResult.resetHours
+      });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      // Fallback structured explanation if key not configured
+      const fallbackText = `**1. Why the correct answer is right:**\n` +
+        `"${correctAnswerText}" is the technically established standard for this concept in ${department || 'School of Technology'}.\n\n` +
+        `**2. Why the chosen answer is incorrect:**\n` +
+        (studentAnswerText && studentAnswerText !== 'Not answered'
+          ? `Your choice of "${studentAnswerText}" does not fulfill the required technical criteria or principles of this question.`
+          : `No answer was chosen, leaving the question unattempted.`) +
+        `\n\n**3. Practical Example:**\n` +
+        (creatorExplanation ? `Reference Note: ${creatorExplanation}` : `Check your course lecture handouts and past revision notes for detailed laboratory and workshop examples.`);
+
+      const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
+      return res.json({ explanation: fallbackText, remaining });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+
+    const prompt = `You are a supportive, knowledgeable academic tutor for polytechnic students in the School of Technology (${department || 'General Technology'}).
+A student has finished taking a quiz and needs a clear, step-by-step breakdown of why this question has its specific correct answer.
+
+QUESTION:
+${questionText}
+
+AVAILABLE OPTIONS:
+${Array.isArray(options) ? options.map((opt: string, i: number) => `${String.fromCharCode(65 + i)}) ${opt}`).join('\n') : 'N/A'}
+
+CORRECT ANSWER:
+${correctAnswerText}
+
+STUDENT'S ANSWER:
+${studentAnswerText || 'Not answered'}
+
+CREATOR'S EXPLANATION (from quiz author):
+${creatorExplanation ? creatorExplanation : 'None provided'}
+
+INSTRUCTIONS:
+Provide a clear step-by-step explanation in simple, readable English. Structure your response into exactly three concise sections with clear bold headings:
+1. **Why the correct answer is right**: Explain the core technical rule or scientific concept in 2-3 clear sentences.
+2. **Why the student's answer is wrong**: Explain the exact misconception or reason why the student's choice (or unattempted choice) is incorrect.
+3. **One short example**: Give one relatable polytechnic workshop, lab, or real-world industry example that makes this principle stick.
+
+Keep language simple, encouraging, and easy to review before an exam.`;
+
+    const callModel = async (modelName: string): Promise<string> => {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.5
+        }
+      });
+      return response.text || '';
+    };
+
+    let explanation = '';
+    try {
+      explanation = await callModel('gemini-3.8-flash');
+    } catch (err1: any) {
+      console.warn('Quiz explain gemini-3.8-flash failed:', err1?.message || err1);
+      try {
+        explanation = await callModel('gemini-3.5-flash-lite');
+      } catch (err2: any) {
+        console.warn('Quiz explain gemini-3.5-flash-lite failed:', err2?.message || err2);
+        explanation = await callModel('gemini-flash-latest');
+      }
+    }
+
+    if (!explanation || !explanation.trim()) {
+      explanation = `**1. Why the correct answer is right:**\n"${correctAnswerText}" is the correct principle according to syllabus standards.\n\n` +
+        `**2. Why the student's answer is wrong:**\n${creatorExplanation || 'The chosen option differs from the standard definition.'}\n\n` +
+        `**3. One short example:**\nRefer to your departmental lecture notes for standard application examples.`;
+    }
+
+    const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
+    return res.json({ explanation: explanation.trim(), remaining });
+  } catch (error: any) {
+    console.error('Quiz explain endpoint error:', error);
+    return res.status(500).json({
+      error: `Could not generate AI explanation. Please check your network and try again.`
+    });
+  }
+});
+
+// Admin Route: Draft Quiz Explanation with AI: /api/quiz-draft-explanation
+app.post('/api/quiz-draft-explanation', async (req: Request, res: Response) => {
+  try {
+    const { questionText, options, correctAnswerText, department } = req.body;
+
+    if (!questionText || !correctAnswerText) {
+      return res.status(400).json({ error: 'Question and correct answer are required to draft explanation.' });
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      return res.json({
+        draft: `"${correctAnswerText}" is the correct answer because it directly aligns with standard ${department || 'curriculum'} principles.`
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build'
+        }
+      }
+    });
+
+    const prompt = `You are a curriculum assistant for the School of Technology (${department || 'General Technology'}).
+Draft a concise, accurate educational explanation for why this answer is correct in a polytechnic quiz.
+
+QUESTION:
+${questionText}
+
+OPTIONS:
+${Array.isArray(options) ? options.map((opt: string, i: number) => `${String.fromCharCode(65 + i)}) ${opt}`).join('\n') : 'N/A'}
+
+CORRECT ANSWER:
+${correctAnswerText}
+
+INSTRUCTIONS:
+Write 1 to 3 clear, educational sentences explaining directly why this answer is correct. Be factual, concise, and pedagogical. Do not repeat the prompt or add preamble.`;
+
+    const callModel = async (modelName: string): Promise<string> => {
+      const response = await ai.models.generateContent({
+        model: modelName,
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        config: {
+          temperature: 0.4
+        }
+      });
+      return response.text || '';
+    };
+
+    let draft = '';
+    try {
+      draft = await callModel('gemini-3.8-flash');
+    } catch (e1: any) {
+      console.warn('Draft explanation primary failed:', e1?.message || e1);
+      try {
+        draft = await callModel('gemini-3.5-flash-lite');
+      } catch (e2: any) {
+        draft = await callModel('gemini-flash-latest');
+      }
+    }
+
+    return res.json({ draft: draft.trim() });
+  } catch (err: any) {
+    console.error('Draft explanation endpoint error:', err);
+    return res.status(500).json({ error: 'Failed to draft explanation.' });
+  }
+});
+
+
 // Rule-based fallback if API is unreachable or key is missing
 function generateFallbackResponse(
   text: string,

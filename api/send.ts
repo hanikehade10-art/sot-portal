@@ -1,4 +1,4 @@
-import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug } from './lib/admin';
+import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin';
 
 // In-memory sliding window rate limiter: 20 sends per 1 hour per sender UID
 const sendRateLimits = new Map<string, number[]>();
@@ -39,6 +39,15 @@ export default async function handler(req: any, res: any) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+  }
+
+  // Gracefully handle unconfigured service account (push notifications are optional)
+  if (!isFirebaseAdminConfigured()) {
+    return res.status(200).json({
+      success: false,
+      skipped: true,
+      reason: 'FIREBASE_SERVICE_ACCOUNT is not configured on the server. Push notification broadcast was skipped.'
+    });
   }
 
   try {

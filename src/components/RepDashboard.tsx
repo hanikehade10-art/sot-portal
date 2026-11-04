@@ -22,6 +22,7 @@ import {
 import { PWAInstallRow } from './PWAInstallRow';
 import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 import { AdminQuizzesView } from './AdminQuizzesView';
+import { AdminCoursesManager } from './AdminCoursesManager';
 import {
   dispatchPushNotification,
   getDepartmentTopicSlug,
@@ -59,7 +60,7 @@ interface RepDashboardProps {
   onNavigateHome: () => void;
 }
 
-type RepTab = 'overview' | 'upload' | 'past-questions' | 'quizzes' | 'announcement' | 'my-uploads';
+type RepTab = 'overview' | 'courses' | 'upload' | 'past-questions' | 'quizzes' | 'announcement' | 'my-uploads';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
@@ -565,6 +566,19 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
             >
               <LayoutDashboard className="w-4 h-4 text-[#FFC700]" />
               <span>Overview</span>
+            </button>
+
+            {/* Courses & Lessons */}
+            <button
+              onClick={() => { setActiveTab('courses'); setSidebarOpen(false); }}
+              className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'courses'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <BookOpen className="w-4 h-4 text-[#FFC700]" />
+              <span>Courses &amp; Lessons</span>
             </button>
 
             {/* 2. Upload Materials */}
@@ -1091,6 +1105,17 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               </div>
 
             </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* VIEW: COURSES & LESSONS (REP OWN DEPARTMENT)             */}
+          {/* ======================================================== */}
+          {activeTab === 'courses' && (
+            <AdminCoursesManager
+              userDepartment={repDepartment}
+              isRepMode={true}
+              onNotify={fetchRepData}
+            />
           )}
 
           {/* ======================================================== */}

@@ -92,6 +92,7 @@ import {
   CheckCheck,
   FileBadge2,
   ArrowLeft,
+  ArrowRight,
   ChevronRight,
   FileQuestion,
   Download
@@ -260,6 +261,64 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   // Bookmark Toast
   const [bookmarkToast, setBookmarkToast] = useState<string | null>(null);
+
+  // Course & Lesson Resume State
+  const [resumeCourseId, setResumeCourseId] = useState<string | null>(null);
+  const [resumeTopicId, setResumeTopicId] = useState<string | null>(null);
+  const [aiPromptContext, setAiPromptContext] = useState<string | null>(null);
+
+  const handleUpdateCompletedTopics = async (completed: string[]) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        completedTopics: completed
+      });
+      await refreshProfile();
+    } catch (err) {
+      console.warn('Failed to save completedTopics:', err);
+    }
+  };
+
+  const handleUpdateLastTopic = async (last: {
+    topicId: string;
+    topicTitle: string;
+    courseId: string;
+    courseCode: string;
+    courseTitle: string;
+  }) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        lastTopic: last
+      });
+      await refreshProfile();
+    } catch (err) {
+      console.warn('Failed to save lastTopic:', err);
+    }
+  };
+
+  const handleResumeLastTopic = (lastTopic: {
+    courseId: string;
+    topicId: string;
+    courseCode?: string;
+    courseTitle?: string;
+    topicTitle?: string;
+  }) => {
+    setResumeCourseId(lastTopic.courseId);
+    setResumeTopicId(lastTopic.topicId);
+    setActiveTab('courses');
+    setIsInner(true);
+    setInnerTitle(lastTopic.courseCode || 'Course');
+  };
+
+  const handleAskAiAboutTopic = (contextText: string, topicTitle: string) => {
+    setAiPromptContext(
+      `Regarding the syllabus topic "${topicTitle}":\n\n${contextText}\n\nPlease explain the core concepts and give me practical polytechnic exam tips on this.`
+    );
+    setActiveTab('ask-ai');
+    setIsInner(true);
+    setInnerTitle('Ask AI');
+  };
 
   // Phone Push Notifications State
   const [phoneNotificationsEnabled, setPhoneNotificationsEnabled] = useState<boolean>(() => {
@@ -648,7 +707,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   }, [user?.uid, profile?.lastActiveDate]);
 
   // Bookmarks Helper
-  const isBookmarked = (type: 'course' | 'material' | 'announcement', id: string): boolean => {
+  const isBookmarked = (type: string, id: string): boolean => {
     return (profile?.bookmarks || []).some((b) => b.type === type && b.id === id);
   };
 
@@ -1154,6 +1213,32 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               )}
             </div>
 
+            {/* CONTINUE LEARNING CARD */}
+            {profile?.lastTopic && (
+              <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#162548] to-[#1A2E63] border border-[#2F52FF]/50 shadow-md flex items-center justify-between gap-3">
+                <div className="min-w-0 space-y-0.5">
+                  <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-[#FFC700] tracking-wider">
+                    <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
+                    <span>Continue Learning</span>
+                  </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
+                    {profile.lastTopic.topicTitle || 'Current Topic'}
+                  </h3>
+                  <p className="text-[11px] text-[#9AA8C7] truncate">
+                    {profile.lastTopic.courseCode ? `${profile.lastTopic.courseCode}: ` : ''}{profile.lastTopic.courseTitle || 'Course Lesson'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleResumeLastTopic(profile.lastTopic!)}
+                  className="px-3.5 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold shrink-0 flex items-center gap-1.5 shadow-[0_0_12px_rgba(47,82,255,0.4)] transition-all cursor-pointer"
+                >
+                  <span>Resume</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+
             {/* INSTANT SEARCH RESULTS OVERLAY */}
             {homeSearchResults && (
               <div className="p-3.5 rounded-2xl bg-[#0A1224] border border-[#2F52FF]/50 shadow-xl space-y-3">
@@ -1598,6 +1683,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             toggleBookmark={toggleBookmark}
             bookmarks={profile?.bookmarks || []}
             onNavigateLinks={() => navigateToTab('links', 'Communities & Links', true)}
+            studentProfile={profile}
+            onUpdateCompletedTopics={handleUpdateCompletedTopics}
+            onUpdateLastTopic={handleUpdateLastTopic}
+            onTakeQuiz={() => {
+              navigateToTab('quizzes', 'Practice Quizzes', true);
+            }}
+            onAskAiAboutTopic={handleAskAiAboutTopic}
+            initialCourseId={resumeCourseId}
+            initialTopicId={resumeTopicId}
           />
         )}
 
@@ -1619,7 +1713,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* VIEW 4: ASK AI (Smart Assistant)                        */}
         {/* ======================================================== */}
         {activeTab === 'ask-ai' && (
-          <AskAiView />
+          <AskAiView
+            initialPrompt={aiPromptContext}
+            onClearInitialPrompt={() => setAiPromptContext(null)}
+          />
         )}
 
         {/* ======================================================== */}
@@ -2118,6 +2215,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             matricNumber={profile?.matricNumber || profile?.jambNumber}
             uid={user?.uid || ''}
             onBackToHome={handleGoBack}
+            isBookmarked={isBookmarked}
+            toggleBookmark={toggleBookmark}
+            bookmarks={profile?.bookmarks || []}
           />
         )}
       </main>

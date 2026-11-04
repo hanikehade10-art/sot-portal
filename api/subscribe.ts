@@ -1,4 +1,4 @@
-import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug } from './lib/admin';
+import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin';
 
 /**
  * Vercel Serverless Function & Express Route Handler
@@ -19,6 +19,15 @@ export default async function handler(req: any, res: any) {
 
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed. Use POST.' });
+  }
+
+  // Gracefully handle unconfigured service account (push notifications are optional)
+  if (!isFirebaseAdminConfigured()) {
+    return res.status(200).json({
+      success: false,
+      skipped: true,
+      reason: 'FIREBASE_SERVICE_ACCOUNT is not configured on the server. Topic subscription was skipped.'
+    });
   }
 
   try {

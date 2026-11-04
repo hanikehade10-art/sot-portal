@@ -2,7 +2,7 @@ export type UserRole = 'student' | 'rep' | 'admin';
 
 export interface BookmarkItem {
   id: string; // unique id (or target id)
-  type: 'course' | 'topic' | 'material' | 'resource' | 'announcement';
+  type: 'course' | 'topic' | 'material' | 'resource' | 'announcement' | 'quiz-question';
   title: string;
   link?: string;
   url?: string;
@@ -12,6 +12,11 @@ export interface BookmarkItem {
   courseId?: string;
   topicId?: string;
   itemType?: string;
+  questionText?: string;
+  options?: string[];
+  correctAnswerText?: string;
+  explanation?: string;
+  whyNotNotes?: Record<string, string>;
   createdAt: string;
 }
 
@@ -71,6 +76,15 @@ export interface UserProfile {
   gpaRecords?: Record<string, SemesterGpaRecord>;
   studyPlanner?: StudyPlannerTask[];
   privacyAcceptedAt?: string;
+  completedTopics?: string[]; // IDs of completed syllabus topics
+  lastTopic?: {
+    topicId: string;
+    courseId: string;
+    courseCode?: string;
+    courseTitle?: string;
+    topicTitle?: string;
+    updatedAt: string;
+  };
   createdAt?: string;
   updatedAt?: string;
 }
@@ -124,6 +138,11 @@ export type ResourceType = 'Video' | 'Note' | 'Past Question' | 'Solution' | 'Ot
 export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
 export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Solution' | 'Video' | 'Assignment' | 'Other';
 
+export interface FurtherReadingItem {
+  title: string;
+  url: string;
+}
+
 export interface TopicItem {
   id: string;
   courseId: string;
@@ -132,6 +151,12 @@ export interface TopicItem {
   semester: string; // 'First Semester' | 'Second Semester'
   title: string;
   order: number;
+  estimatedMinutes?: number; // Estimated reading/learning time in minutes
+  videoUrl?: string; // YouTube or direct video link (embeddable)
+  notes?: string; // Notes with numbered section headings, bold, bullets
+  summary?: string; // Highlighted summary box / key takeaways
+  furtherReading?: FurtherReadingItem[]; // List of reference links
+  linkedQuizId?: string; // Document ID of linked quiz
   createdAt: string;
   updatedAt?: string;
 }
@@ -267,16 +292,20 @@ export interface ChatMessage {
   mode?: AiChatMode;
 }
 
+export type QuizQuestionType = 'multiple-choice' | 'true-false';
+
 export interface QuizQuestion {
   id: string;
   text: string;
-  options: string[]; // 2 to 6 options
+  type?: QuizQuestionType; // 'multiple-choice' | 'true-false'
+  options: string[]; // 2 to 6 options for MC, or ['True', 'False'] for true-false
 }
 
 export interface QuizKeyItem {
   questionId: string;
-  correctOptionIndex: number; // 0 for A, 1 for B, 2 for C, etc.
+  correctOptionIndex: number; // 0 for A (or True), 1 for B (or False), etc.
   explanation: string;
+  whyNotNotes?: Record<string, string>; // e.g. { 'A': '...', 'B': '...' }
 }
 
 export interface QuizItem {
@@ -285,9 +314,13 @@ export interface QuizItem {
   level: 'ND1' | 'ND2' | 'HND1' | 'HND2' | string;
   semester: 'First Semester' | 'Second Semester' | string;
   courseCode: string;
+  topicId?: string; // Optional link to a specific syllabus topic
   title: string;
   instructions?: string;
   timeLimit?: number; // In minutes (0 or undefined for no limit)
+  passingScore?: number; // Percentage needed to pass (e.g. 70, default 70)
+  attemptsAllowed?: number; // Allowed attempts (0 or undefined for unlimited)
+  pointsPerQuestion?: number; // Points per question (default 1)
   shuffle?: boolean;
   published: boolean;
   questionCount: number;
@@ -318,6 +351,9 @@ export interface QuizAttempt {
   total: number;
   attempts: number;
   bestScore: number;
+  passed?: boolean; // True if percentage >= passingScore
+  percentage?: number; // Calculated score percentage
+  aiExplanations?: Record<string, string>; // questionId -> cached AI generated explanation
   submittedAt: string;
   updatedAt?: string;
 }

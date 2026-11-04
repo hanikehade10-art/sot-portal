@@ -138,10 +138,17 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
 
-    // Topics Collection
+    // Topics Collection (Syllabus topics and interactive lessons)
     match /topics/{id} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin();
+      allow read, list: if isSignedIn();
+      allow create: if isAdmin() || (
+        isRep() &&
+        incoming().department == myDept()
+      );
+      allow update, delete: if isAdmin() || (
+        isRep() &&
+        resource.data.department == myDept()
+      );
     }
 
     // Timetables Collection (Class schedules & Exam timetables)

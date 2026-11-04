@@ -28,7 +28,15 @@ const PORTAL_QUICK_CHIPS = [
   'How do I submit an enquiry or complaint?'
 ];
 
-export const AskAiView: React.FC = () => {
+interface AskAiViewProps {
+  initialPrompt?: string | null;
+  onClearInitialPrompt?: () => void;
+}
+
+export const AskAiView: React.FC<AskAiViewProps> = ({
+  initialPrompt,
+  onClearInitialPrompt
+}) => {
   const { profile } = useAuth();
   const {
     mode,
@@ -46,6 +54,18 @@ export const AskAiView: React.FC = () => {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto-fill prompt when arriving from a topic or lesson
+  useEffect(() => {
+    if (initialPrompt) {
+      setInput(initialPrompt);
+      setMode('study');
+      onClearInitialPrompt?.();
+      setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+    }
+  }, [initialPrompt, onClearInitialPrompt, setMode]);
 
   // Set Ask AI page active to hide the floating button
   useEffect(() => {

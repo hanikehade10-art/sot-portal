@@ -88,6 +88,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [formTitle, setFormTitle] = useState('');
   const [formInstructions, setFormInstructions] = useState('');
   const [formTimeLimit, setFormTimeLimit] = useState<string>('15');
+  const [formPassingScore, setFormPassingScore] = useState<string>('70');
+  const [formAttemptsAllowed, setFormAttemptsAllowed] = useState<string>('0');
+  const [formPointsPerQuestion, setFormPointsPerQuestion] = useState<string>('1');
+  const [formTopicId, setFormTopicId] = useState<string>('');
   const [formHasTimer, setFormHasTimer] = useState<boolean>(true);
   const [formShuffle, setFormShuffle] = useState<boolean>(true);
   const [formPublished, setFormPublished] = useState<boolean>(true);
@@ -101,10 +105,12 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [questionInputMode, setQuestionInputMode] = useState<'single' | 'bulk'>('bulk');
 
   // Single question input state
+  const [singleType, setSingleType] = useState<'multiple-choice' | 'true-false'>('multiple-choice');
   const [singleText, setSingleText] = useState('');
   const [singleOptions, setSingleOptions] = useState<string[]>(['', '', '', '']);
   const [singleCorrectIndex, setSingleCorrectIndex] = useState<number>(0);
   const [singleExplanation, setSingleExplanation] = useState('');
+  const [singleWhyNotNotes, setSingleWhyNotNotes] = useState<Record<string, string>>({});
   const [singleError, setSingleError] = useState<string | null>(null);
 
   // Bulk question input state
@@ -126,8 +132,9 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [resultsAttempts, setResultsAttempts] = useState<QuizAttempt[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
   const [resultsSearch, setResultsSearch] = useState('');
+  const [availableTopics, setAvailableTopics] = useState<Array<{ id: string; title: string; courseCode?: string; department?: string }>>([]);
 
-  // Fetch quizzes
+  // Fetch quizzes and topics
   const fetchQuizzes = async () => {
     setLoading(true);
     setError(null);
@@ -146,6 +153,19 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       // Sort newest first
       loaded.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       setQuizzes(loaded);
+
+      // Fetch topics for linking
+      try {
+        const topSnap = await getDocs(collection(db, 'topics'));
+        const tops: Array<{ id: string; title: string; courseCode?: string; department?: string }> = [];
+        topSnap.forEach(tDoc => {
+          const tData = tDoc.data() as any;
+          tops.push({ id: tDoc.id, title: tData.title, courseCode: tData.courseCode, department: tData.department });
+        });
+        setAvailableTopics(tops);
+      } catch (tErr) {
+        console.warn('Could not load topics for linking:', tErr);
+      }
     } catch (err: any) {
       console.error('Error fetching quizzes:', err);
       setError(err?.message || 'Failed to load quizzes.');
@@ -168,6 +188,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormTitle('');
     setFormInstructions('Choose the best answer for each question. Click Submit when done.');
     setFormTimeLimit('15');
+    setFormPassingScore('70');
+    setFormAttemptsAllowed('0');
+    setFormPointsPerQuestion('1');
+    setFormTopicId('');
     setFormHasTimer(true);
     setFormShuffle(true);
     setFormPublished(true);
@@ -178,6 +202,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setBulkText('');
     setBulkErrors([]);
     setBulkSuccessMsg(null);
+    setSingleType('multiple-choice');
     setSingleText('');
     setSingleOptions(['', '', '', '']);
     setSingleCorrectIndex(0);
@@ -199,6 +224,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     const hasLimit = Boolean(quiz.timeLimit && Number(quiz.timeLimit) > 0);
     const existingLimit = hasLimit ? String(Math.min(180, Math.max(1, Math.round(Number(quiz.timeLimit))))) : '15';
     setFormTimeLimit(existingLimit);
+    setFormPassingScore(quiz.passingScore !== undefined ? String(quiz.passingScore) : '70');
+    setFormAttemptsAllowed(quiz.attemptsAllowed !== undefined ? String(quiz.attemptsAllowed) : '0');
+    setFormPointsPerQuestion(quiz.pointsPerQuestion !== undefined ? String(quiz.pointsPerQuestion) : '1');
+    setFormTopicId(quiz.topicId || '');
     setFormHasTimer(hasLimit);
     setFormShuffle(Boolean(quiz.shuffle));
     setFormPublished(quiz.published);
@@ -231,6 +260,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     }
 
     setQuestionInputMode('single');
+    setSingleType('multiple-choice');
     setBulkText('');
     setBulkErrors([]);
     setBulkSuccessMsg(null);
@@ -288,6 +318,38 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       setSingleError('Please enter question text.');
       return;
     }
+
+    const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+
+    if (singleType === 'true-false') {
+      const isTrue = singleCorrectIndex === 0;
+      const newQ: QuizQuestion = {
+        id: qId,
+        type: 'true-false',
+        text: singleText.trim(),
+        options: ['True', 'False']
+      };
+      const cleanWhyNot: Record<string, string> = {};
+      Object.entries(singleWhyNotNotes).forEach(([k, v]) => {
+        if (v && v.trim()) cleanWhyNot[k] = v.trim();
+      });
+
+      const newK: QuizKeyItem = {
+        questionId: qId,
+        correctOptionIndex: singleCorrectIndex,
+        explanation: singleExplanation.trim() || (isTrue ? 'True is the correct answer.' : 'False is the correct answer.'),
+        whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
+      };
+
+      setDraftQuestions(prev => [...prev, newQ]);
+      setDraftKeys(prev => [...prev, newK]);
+      setSingleText('');
+      setSingleExplanation('');
+      setSingleWhyNotNotes({});
+      setSingleCorrectIndex(0);
+      return;
+    }
+
     const cleanOpts = singleOptions.map(o => o.trim()).filter(Boolean);
     if (cleanOpts.length < 2) {
       setSingleError('Please provide at least 2 non-empty options.');
@@ -298,16 +360,22 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       return;
     }
 
-    const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
+    const cleanWhyNot: Record<string, string> = {};
+    Object.entries(singleWhyNotNotes).forEach(([k, v]) => {
+      if (v && v.trim()) cleanWhyNot[k] = v.trim();
+    });
+
     const newQ: QuizQuestion = {
       id: qId,
+      type: 'multiple-choice',
       text: singleText.trim(),
       options: cleanOpts
     };
     const newK: QuizKeyItem = {
       questionId: qId,
       correctOptionIndex: singleCorrectIndex,
-      explanation: singleExplanation.trim() || `Option ${String.fromCharCode(65 + singleCorrectIndex)} is correct.`
+      explanation: singleExplanation.trim() || `Option ${String.fromCharCode(65 + singleCorrectIndex)} is correct.`,
+      whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
     };
 
     setDraftQuestions(prev => [...prev, newQ]);
@@ -318,7 +386,16 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setSingleOptions(['', '', '', '']);
     setSingleCorrectIndex(0);
     setSingleExplanation('');
+    setSingleWhyNotNotes({});
   };
+
+  // Explanations count across draft questions
+  const explainedCount = useMemo(() => {
+    return draftQuestions.filter((q, idx) => {
+      const keyItem = draftKeys.find(k => k.questionId === q.id) || draftKeys[idx];
+      return Boolean(keyItem?.explanation && keyItem.explanation.trim().length > 0);
+    }).length;
+  }, [draftQuestions, draftKeys]);
 
   // Handle Parse Bulk Text
   const handleParseBulk = () => {
@@ -367,6 +444,17 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       return;
     }
 
+    // Block publishing only with a confirmation if some are missing explanations
+    const missingExplanationCount = draftQuestions.length - explainedCount;
+    if (formPublished && missingExplanationCount > 0) {
+      const confirmed = window.confirm(
+        `${missingExplanationCount} of ${draftQuestions.length} question(s) have no explanation. Students will not see revision notes for them. Publish anyway?`
+      );
+      if (!confirmed) {
+        return;
+      }
+    }
+
     setSavingQuiz(true);
     const quizId = editingQuizId || ('quiz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7));
 
@@ -382,6 +470,13 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         finalTimeLimit = parsed;
       }
 
+      const parsedPassing = Number(formPassingScore);
+      const passingScore = !isNaN(parsedPassing) ? Math.min(100, Math.max(1, Math.round(parsedPassing))) : 70;
+      const parsedAttempts = Number(formAttemptsAllowed);
+      const attemptsAllowed = !isNaN(parsedAttempts) && parsedAttempts >= 0 ? Math.round(parsedAttempts) : 0;
+      const parsedPoints = Number(formPointsPerQuestion);
+      const pointsPerQuestion = !isNaN(parsedPoints) && parsedPoints >= 1 ? Math.round(parsedPoints) : 1;
+
       const now = new Date().toISOString();
       const quizPayload: QuizItem = {
         id: quizId,
@@ -396,6 +491,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         published: formPublished,
         questionCount: draftQuestions.length,
         questions: draftQuestions, // Questions with options only, NO correct answers!
+        topicId: formTopicId.trim() || undefined,
+        passingScore,
+        attemptsAllowed,
+        pointsPerQuestion,
         createdBy: adminUid,
         createdByName: adminName,
         createdAt: editingQuizId
@@ -436,16 +535,20 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       }
 
       if (formPublished && notifyStudents) {
-        const topic = `dept-${getDepartmentTopicSlug(formDept)}-${formLevel.toLowerCase()}`;
-        await dispatchPushNotification(
-          {
-            topic,
-            title: `New Quiz: ${quizPayload.courseCode}`,
-            body: `${quizPayload.title} (${quizPayload.questionCount} questions)`,
-            link: '/dashboard?tab=quizzes'
-          },
-          auth.currentUser
-        );
+        try {
+          const topic = `dept-${getDepartmentTopicSlug(formDept)}-${formLevel.toLowerCase()}`;
+          await dispatchPushNotification(
+            {
+              topic,
+              title: `New Quiz: ${quizPayload.courseCode}`,
+              body: `${quizPayload.title} (${quizPayload.questionCount} questions)`,
+              link: '/dashboard?tab=quizzes'
+            },
+            auth.currentUser
+          );
+        } catch (pushErr) {
+          console.warn('Push notification dispatch notice (non-fatal):', pushErr);
+        }
       }
 
       setShowEditor(false);
@@ -918,8 +1021,72 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                   />
                 </div>
 
+                {/* Additional Quiz Parameters (Passing score, attempts, points, topic link) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-2.5 pt-2 border-t border-[#24315A]/60">
+                  <div>
+                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Passing Score (%)</label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        max={100}
+                        value={formPassingScore}
+                        onChange={e => setFormPassingScore(e.target.value)}
+                        placeholder="70"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#FFC700] text-center focus:outline-none focus:border-[#2F52FF]"
+                      />
+                      <span className="text-xs text-[#9AA8C7] font-semibold">%</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Attempts Allowed</label>
+                    <input
+                      type="number"
+                      min={0}
+                      max={20}
+                      value={formAttemptsAllowed}
+                      onChange={e => setFormAttemptsAllowed(e.target.value)}
+                      placeholder="0 (Unlimited)"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] text-center focus:outline-none focus:border-[#2F52FF]"
+                    />
+                    <span className="text-[9px] text-[#9AA8C7] block mt-0.5">0 = Unlimited retakes</span>
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Points / Question</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={formPointsPerQuestion}
+                      onChange={e => setFormPointsPerQuestion(e.target.value)}
+                      placeholder="1"
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#60A5FA] text-center focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Link to Topic (Optional)</label>
+                    <select
+                      value={formTopicId}
+                      onChange={e => setFormTopicId(e.target.value)}
+                      className="w-full px-2 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      <option value="">No linked topic</option>
+                      {availableTopics
+                        .filter(t => !formDept || !t.department || t.department === formDept)
+                        .map(top => (
+                          <option key={top.id} value={top.id}>
+                            {top.courseCode ? `${top.courseCode}: ` : ''}{top.title}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                </div>
+
                 {/* Timer & Shuffle row */}
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1 border-t border-[#24315A]/60">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-[#24315A]/60">
                   <div className="flex flex-col gap-1.5 p-2.5 rounded-xl bg-[#0A1224]/70 border border-[#24315A]/60">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -974,8 +1141,8 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                               onClick={() => setFormTimeLimit(String(mins))}
                               className={`px-1.5 py-0.5 text-[10px] rounded font-bold transition-colors cursor-pointer ${
                                 formTimeLimit === String(mins)
-                                  ? 'bg-[#FFC700] text-[#0A1224]'
-                                  : 'bg-[#121C36] text-[#9AA8C7] hover:text-white'
+                                    ? 'bg-[#FFC700] text-[#0A1224]'
+                                    : 'bg-[#121C36] text-[#9AA8C7] hover:text-white'
                               }`}
                             >
                               {mins}m
@@ -1067,15 +1234,26 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                 {questionInputMode === 'bulk' && (
                   <div className="space-y-2.5 pt-1">
                     <div className="p-2.5 rounded-lg bg-[#121C36]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1">
-                      <span className="font-bold text-[#FFC700] block">Expected Format (1 blank line between questions):</span>
-                      <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap">
+                      <span className="font-bold text-[#FFC700] block">Format Guidelines (Multi-line explanations &amp; 'Why not B' notes supported):</span>
+                      <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap leading-relaxed">
 {`Q: Which device operates at the Network Layer of the OSI Model?
 A) Switch  B) Router  C) Hub  D) Repeater
 Answer: B
-Explanation: Routers forward data packets across logical networks using IP addressing.`}
+Explanation: Routers forward data packets across logical networks using IP addressing.
+They determine optimal routing paths between distinct subnets.
+• Layer 3 header processing
+• **IP Routing** table lookups
+Why not A: Switches operate at the Data Link Layer (Layer 2).
+Why not C: Hubs are physical layer repeaters (Layer 1).
+
+Q: A stack follows the LIFO principle.
+Type: True/False
+Answer: True
+Explanation: Last In, First Out. Elements placed last are retrieved first.
+Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                       </pre>
                       <p className="text-[10px] text-[#9AA8C7]/80">
-                        * Supports 2 to 6 options (A through F). Options can be in a single line or on separate lines.
+                        * The Explanation continues on following lines until the next Q:. Optional wrong-option notes start with "Why not A:", "Why not B:", etc. Mixed Multiple Choice and True/False questions are fully supported.
                       </p>
                     </div>
 
@@ -1127,110 +1305,259 @@ Explanation: Routers forward data packets across logical networks using IP addre
                       </div>
                     )}
 
+                    {/* Question Type Switcher */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-[#9AA8C7] font-semibold">Question Type:</span>
+                      <div className="flex items-center p-0.5 rounded-lg bg-[#121C36] border border-[#24315A]">
+                        <button
+                          type="button"
+                          onClick={() => setSingleType('multiple-choice')}
+                          className={`px-3 py-1 rounded text-xs font-bold cursor-pointer transition-colors ${
+                            singleType === 'multiple-choice'
+                              ? 'bg-[#2F52FF] text-white shadow-sm'
+                              : 'text-[#9AA8C7] hover:text-white'
+                          }`}
+                        >
+                          Multiple Choice
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSingleType('true-false');
+                            setSingleCorrectIndex(0);
+                          }}
+                          className={`px-3 py-1 rounded text-xs font-bold cursor-pointer transition-colors ${
+                            singleType === 'true-false'
+                              ? 'bg-[#2F52FF] text-white shadow-sm'
+                              : 'text-[#9AA8C7] hover:text-white'
+                          }`}
+                        >
+                          True / False
+                        </button>
+                      </div>
+                    </div>
+
                     <div>
                       <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Question Text</label>
                       <input
                         type="text"
                         value={singleText}
                         onChange={e => setSingleText(e.target.value)}
-                        placeholder="e.g. Which of the following is an input device?"
+                        placeholder={
+                          singleType === 'true-false'
+                            ? 'e.g. A stack follows the Last In, First Out (LIFO) principle.'
+                            : 'e.g. Which of the following is an input device?'
+                        }
                         className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                       />
                     </div>
 
-                    {/* Options (2 to 6) */}
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[11px] text-[#9AA8C7] font-semibold">Options &amp; Correct Answer</label>
-                        <div className="flex items-center gap-1.5">
-                          {singleOptions.length < 6 && (
-                            <button
-                              type="button"
-                              onClick={() => setSingleOptions(prev => [...prev, ''])}
-                              className="text-[10px] font-bold text-[#60A5FA] hover:text-white"
-                            >
-                              + Add Option
-                            </button>
-                          )}
-                          {singleOptions.length > 2 && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSingleOptions(prev => prev.slice(0, prev.length - 1));
-                                if (singleCorrectIndex >= singleOptions.length - 1) {
-                                  setSingleCorrectIndex(0);
-                                }
-                              }}
-                              className="text-[10px] font-bold text-rose-400 hover:text-white ml-2"
-                            >
-                              - Remove Option
-                            </button>
-                          )}
+                    {/* True / False Selection Buttons */}
+                    {singleType === 'true-false' ? (
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] text-[#9AA8C7] font-semibold">Correct Answer (Click to select)</label>
+                        <div className="grid grid-cols-2 gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setSingleCorrectIndex(0)}
+                            className={`p-3 rounded-xl border font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                              singleCorrectIndex === 0
+                                ? 'bg-emerald-600/25 border-emerald-500 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                                : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-white'
+                            }`}
+                          >
+                            <span>True</span>
+                            {singleCorrectIndex === 0 && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => setSingleCorrectIndex(1)}
+                            className={`p-3 rounded-xl border font-bold text-sm flex items-center justify-center gap-2 cursor-pointer transition-all ${
+                              singleCorrectIndex === 1
+                                ? 'bg-emerald-600/25 border-emerald-500 text-emerald-300 shadow-[0_0_12px_rgba(16,185,129,0.3)]'
+                                : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-white'
+                            }`}
+                          >
+                            <span>False</span>
+                            {singleCorrectIndex === 1 && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
+                          </button>
                         </div>
                       </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {singleOptions.map((opt, optIdx) => {
-                          const letter = String.fromCharCode(65 + optIdx);
-                          const isCorrect = singleCorrectIndex === optIdx;
-                          return (
-                            <div
-                              key={optIdx}
-                              className={`p-2 rounded-lg border flex items-center gap-2 transition-colors ${
-                                isCorrect
-                                  ? 'bg-emerald-950/20 border-emerald-500/50'
-                                  : 'bg-[#121C36] border-[#24315A]'
-                              }`}
-                            >
+                    ) : (
+                      /* Multiple Choice Options (2 to 6) */
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-[#9AA8C7] font-semibold">Options &amp; Correct Answer</label>
+                          <div className="flex items-center gap-1.5">
+                            {singleOptions.length < 6 && (
                               <button
                                 type="button"
-                                onClick={() => setSingleCorrectIndex(optIdx)}
-                                title={`Mark ${letter} as correct`}
-                                className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 cursor-pointer ${
+                                onClick={() => setSingleOptions(prev => [...prev, ''])}
+                                className="text-[10px] font-bold text-[#60A5FA] hover:text-white"
+                              >
+                                + Add Option
+                              </button>
+                            )}
+                            {singleOptions.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSingleOptions(prev => prev.slice(0, prev.length - 1));
+                                  if (singleCorrectIndex >= singleOptions.length - 1) {
+                                    setSingleCorrectIndex(0);
+                                  }
+                                }}
+                                className="text-[10px] font-bold text-rose-400 hover:text-white ml-2"
+                              >
+                                - Remove Option
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {singleOptions.map((opt, optIdx) => {
+                            const letter = String.fromCharCode(65 + optIdx);
+                            const isCorrect = singleCorrectIndex === optIdx;
+                            return (
+                              <div
+                                key={optIdx}
+                                className={`p-2 rounded-lg border flex items-center gap-2 transition-colors ${
                                   isCorrect
-                                    ? 'bg-emerald-500 text-white shadow-sm'
-                                    : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]'
+                                    ? 'bg-emerald-950/20 border-emerald-500/50'
+                                    : 'bg-[#121C36] border-[#24315A]'
                                 }`}
                               >
-                                {letter}
-                              </button>
-                              <input
-                                type="text"
-                                value={opt}
-                                onChange={e => {
-                                  const val = e.target.value;
-                                  setSingleOptions(prev => {
-                                    const next = [...prev];
-                                    next[optIdx] = val;
-                                    return next;
-                                  });
-                                }}
-                                placeholder={`Option ${letter}`}
-                                className="flex-1 bg-transparent text-xs text-[#E6ECFA] focus:outline-none"
-                              />
-                            </div>
-                          );
-                        })}
+                                <button
+                                  type="button"
+                                  onClick={() => setSingleCorrectIndex(optIdx)}
+                                  title={`Mark ${letter} as correct`}
+                                  className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-xs shrink-0 cursor-pointer ${
+                                    isCorrect
+                                      ? 'bg-emerald-500 text-white shadow-sm'
+                                      : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]'
+                                  }`}
+                                >
+                                  {letter}
+                                </button>
+                                <input
+                                  type="text"
+                                  value={opt}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setSingleOptions(prev => {
+                                      const next = [...prev];
+                                      next[optIdx] = val;
+                                      return next;
+                                    });
+                                  }}
+                                  placeholder={`Option ${letter}`}
+                                  className="flex-1 bg-transparent text-xs text-[#E6ECFA] focus:outline-none"
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
-                    {/* Explanation */}
-                    <div>
-                      <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Explanation (Why this answer is correct)</label>
-                      <input
-                        type="text"
+                    {/* Explanation (Multi-line) */}
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <label className="text-[11px] text-[#9AA8C7] font-semibold">
+                          Explanation (Why this answer is correct)
+                        </label>
+                        <span className="text-[10px] text-[#FFC700]">
+                          Line breaks, bullets (• or -) and **bold** are kept
+                        </span>
+                      </div>
+
+                      {!singleExplanation.trim() && (
+                        <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-center gap-1.5">
+                          <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span>No explanation written yet. Questions without explanations will trigger a warning.</span>
+                        </div>
+                      )}
+
+                      <textarea
+                        rows={4}
                         value={singleExplanation}
                         onChange={e => setSingleExplanation(e.target.value)}
-                        placeholder="e.g. A keyboard provides input data to the central processing unit."
-                        className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                        placeholder="e.g. A stack operates on a Last In, First Out (LIFO) basis because elements inserted last are popped first.&#10;&#10;Key points:&#10;• Insertion and deletion happen at the top&#10;• **Push** adds an element, **Pop** removes it"
+                        className="w-full px-3 py-2 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] leading-relaxed"
                       />
+                    </div>
+
+                    {/* Optional Wrong-Option Notes ('Why not B' style notes) */}
+                    <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
+                      <span className="text-[11px] font-bold text-[#60A5FA] block">
+                        Optional: Wrong-Option Notes ('Why not B' notes)
+                      </span>
+                      <p className="text-[10px] text-[#9AA8C7]">
+                        Explain specifically why wrong options are incorrect so students learn from their mistakes.
+                      </p>
+
+                      <div className="space-y-2 pt-1">
+                        {singleType === 'true-false' ? (
+                          (() => {
+                            const wrongLabel = singleCorrectIndex === 0 ? 'False' : 'True';
+                            const wrongKey = wrongLabel.toUpperCase();
+                            return (
+                              <div className="space-y-1">
+                                <label className="text-[10px] text-[#9AA8C7] font-bold">
+                                  Why not {wrongLabel}:
+                                </label>
+                                <input
+                                  type="text"
+                                  value={singleWhyNotNotes[wrongKey] || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setSingleWhyNotNotes(prev => ({
+                                      ...prev,
+                                      [wrongKey]: val
+                                    }));
+                                  }}
+                                  placeholder={`e.g. The statement is not ${wrongLabel} because...`}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                                />
+                              </div>
+                            );
+                          })()
+                        ) : (
+                          singleOptions.map((opt, optIdx) => {
+                            if (optIdx === singleCorrectIndex) return null;
+                            const letter = String.fromCharCode(65 + optIdx);
+                            return (
+                              <div key={optIdx} className="space-y-1">
+                                <label className="text-[10px] text-[#9AA8C7] font-bold">
+                                  Why not {letter} ({opt || `Option ${letter}`}):
+                                </label>
+                                <input
+                                  type="text"
+                                  value={singleWhyNotNotes[letter] || ''}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setSingleWhyNotNotes(prev => ({
+                                      ...prev,
+                                      [letter]: val
+                                    }));
+                                  }}
+                                  placeholder={`e.g. Option ${letter} describes a queue rather than a stack.`}
+                                  className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                                />
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex justify-end">
                       <button
                         type="button"
                         onClick={handleAddSingleQuestion}
-                        className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-bold text-xs cursor-pointer"
+                        className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-bold text-xs cursor-pointer shadow-sm transition-all"
                       >
                         Add Question to List
                       </button>
@@ -1242,20 +1569,27 @@ Explanation: Routers forward data packets across logical networks using IP addre
               {/* 3. PREVIEW & MANAGE QUESTIONS */}
               {draftQuestions.length > 0 && (
                 <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#24315A] pb-2">
                     <div>
                       <span className="text-[10px] uppercase font-bold text-[#FFC700] tracking-wider block">
                         3. Questions Review ({draftQuestions.length} Questions)
                       </span>
-                      <p className="text-[10px] text-[#9AA8C7]">
-                        Preview before saving. Questions are stored without answers in the public doc.
-                      </p>
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <span className="text-xs font-bold text-[#E6ECFA]">
+                          {explainedCount} of {draftQuestions.length} questions have explanations
+                        </span>
+                        {explainedCount < draftQuestions.length && (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 text-[10px] font-bold border border-amber-500/40">
+                            ⚠️ {draftQuestions.length - explainedCount} missing
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     <button
                       type="button"
                       onClick={() => setShowStudentPreview(!showStudentPreview)}
-                      className="px-2.5 py-1 rounded-lg bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-[#E6ECFA] text-xs font-semibold flex items-center gap-1 cursor-pointer"
+                      className="px-2.5 py-1 rounded-lg bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-[#E6ECFA] text-xs font-semibold flex items-center gap-1 cursor-pointer self-start sm:self-auto"
                     >
                       <Eye className="w-3.5 h-3.5 text-[#2F52FF]" />
                       <span>{showStudentPreview ? 'Show Editor List' : 'Student Mode Preview'}</span>
@@ -1316,10 +1650,15 @@ Explanation: Routers forward data packets across logical networks using IP addre
                       {draftQuestions.map((q, idx) => {
                         const keyItem = draftKeys.find(k => k.questionId === q.id) || draftKeys[idx];
                         const correctIdx = keyItem ? keyItem.correctOptionIndex : 0;
+                        const hasExplanation = Boolean(keyItem?.explanation && keyItem.explanation.trim().length > 0);
+                        const hasWhyNotNotes = Boolean(keyItem?.whyNotNotes && Object.keys(keyItem.whyNotNotes).length > 0);
+
                         return (
                           <div
                             key={q.id || idx}
-                            className="p-3 rounded-xl bg-[#121C36] border border-[#24315A] flex items-start justify-between gap-3 text-xs"
+                            className={`p-3 rounded-xl bg-[#121C36] border flex items-start justify-between gap-3 text-xs ${
+                              hasExplanation ? 'border-[#24315A]' : 'border-amber-500/40 bg-amber-500/5'
+                            }`}
                           >
                             <div className="space-y-1.5 flex-1">
                               <h5 className="font-bold text-[#E6ECFA] flex items-baseline gap-1.5">
@@ -1347,11 +1686,28 @@ Explanation: Routers forward data packets across logical networks using IP addre
                                 })}
                               </div>
 
-                              {keyItem?.explanation && (
-                                <p className="text-[10px] text-[#9AA8C7] bg-[#0A1224] p-1.5 rounded border border-[#24315A]/60">
-                                  <strong className="text-[#60A5FA]">Explanation: </strong>
-                                  {keyItem.explanation}
-                                </p>
+                              {hasExplanation ? (
+                                <div className="text-[10px] text-[#9AA8C7] bg-[#0A1224] p-2 rounded-lg border border-[#24315A]/70 space-y-1">
+                                  <p className="whitespace-pre-line text-[#E6ECFA]">
+                                    <strong className="text-[#FFC700]">Explanation: </strong>
+                                    {keyItem.explanation}
+                                  </p>
+                                  {hasWhyNotNotes && (
+                                    <div className="pt-1 border-t border-[#24315A]/60 space-y-0.5">
+                                      {Object.entries(keyItem.whyNotNotes!).map(([k, note]) => (
+                                        <p key={k} className="text-[#9AA8C7]">
+                                          <strong className="text-[#60A5FA]">Why not {k}: </strong>
+                                          {note}
+                                        </p>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-center gap-1.5 p-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[10px]">
+                                  <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                                  <span className="font-semibold">⚠️ No explanation provided for this question</span>
+                                </div>
                               )}
                             </div>
 

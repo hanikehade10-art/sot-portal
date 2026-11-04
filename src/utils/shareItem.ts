@@ -1,6 +1,6 @@
 export interface ShareOptions {
   title: string;
-  itemType: 'past-question' | 'announcement' | 'quiz' | 'course';
+  itemType: 'past-question' | 'announcement' | 'quiz' | 'course' | 'topic';
   id?: string;
   code?: string;
   textDetails?: string;
@@ -19,7 +19,7 @@ export async function shareItem(options: ShareOptions): Promise<void> {
     link = `${baseUrl}/?open=announcement&id=${encodeURIComponent(options.id || '')}`;
   } else if (options.itemType === 'quiz') {
     link = `${baseUrl}/?open=quiz&id=${encodeURIComponent(options.id || '')}`;
-  } else if (options.itemType === 'course') {
+  } else if (options.itemType === 'course' || options.itemType === 'topic') {
     link = `${baseUrl}/?open=course&code=${encodeURIComponent(options.code || options.id || '')}`;
   }
 

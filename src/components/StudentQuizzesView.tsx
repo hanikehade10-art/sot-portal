@@ -11,6 +11,8 @@ import {
   getDoc,
   doc,
   setDoc,
+  updateDoc,
+  arrayUnion,
   query,
   where
 } from 'firebase/firestore';
@@ -25,18 +27,19 @@ import {
   ChevronRight,
   ArrowLeft,
   Search,
-  Filter,
   RefreshCw,
   Award,
   RotateCcw,
   BookOpen,
   Check,
   X,
+  Flag,
   HelpCircle,
-  Lightbulb,
-  CheckSquare
+  Share2,
+  Bookmark
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
+import { BookmarkItem } from '../types';
 
 interface StudentQuizzesViewProps {
   studentDepartment: string;
@@ -44,7 +47,14 @@ interface StudentQuizzesViewProps {
   studentName?: string;
   matricNumber?: string;
   uid: string;
+  initialQuizId?: string;
+  topicTitle?: string;
+  onBackToTopic?: () => void;
   onBackToHome?: () => void;
+  onTopicCompleted?: (topicId: string) => void;
+  isBookmarked?: (type: string, id: string) => boolean;
+  toggleBookmark?: (item: any) => Promise<void>;
+  bookmarks?: BookmarkItem[];
 }
 
 const ACADEMIC_LEVELS = ['All', 'ND1', 'ND2', 'HND1', 'HND2'] as const;
@@ -55,10 +65,17 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   studentName,
   matricNumber,
   uid,
-  onBackToHome
+  initialQuizId,
+  topicTitle,
+  onBackToTopic,
+  onBackToHome,
+  onTopicCompleted,
+  isBookmarked,
+  toggleBookmark,
+  bookmarks
 }) => {
-  // Navigation Screens: 'list' | 'taking' | 'review'
-  const [currentScreen, setCurrentScreen] = useState<'list' | 'taking' | 'review'>('list');
+  // Navigation Screens: 'list' | 'intro' | 'taking' | 'review'
+  const [currentScreen, setCurrentScreen] = useState<'list' | 'intro' | 'taking' | 'review'>('list');
 
   // Quizzes list state
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
@@ -76,16 +93,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const [activeQuestions, setActiveQuestions] = useState<QuizQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
+  const [flaggedQuestions, setFlaggedQuestions] = useState<Record<string, boolean>>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [timerRunning, setTimerRunning] = useState(false);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [wasAutoSubmitted, setWasAutoSubmitted] = useState(false);
+  const [topicAutoCompletedNotice, setTopicAutoCompletedNotice] = useState<boolean>(false);
 
-  // Review screen states
+  // Review screen states: Missed (shown first), Correct, All
   const [reviewKeys, setReviewKeys] = useState<QuizKeyDoc | null>(null);
   const [reviewAttempt, setReviewAttempt] = useState<QuizAttempt | null>(null);
-  const [wrongOnly, setWrongOnly] = useState(false);
+  const [reviewTab, setReviewTab] = useState<'missed' | 'correct' | 'all'>('missed');
+  const [localBookmarks, setLocalBookmarks] = useState<Record<string, boolean>>({});
 
   // Timer interval reference
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -123,6 +143,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         });
         setAttemptsMap(map);
       }
+
+      // Check initialQuizId if passed from a lesson
+      if (initialQuizId) {
+        const target = list.find(q => q.id === initialQuizId);
+        if (target) {
+          handleOpenIntro(target);
+        }
+      }
     } catch (err: any) {
       console.error('Failed to load student quizzes:', err);
       setError(err?.message || 'Failed to load quizzes.');
@@ -133,43 +161,48 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   useEffect(() => {
     fetchData();
-  }, [studentDepartment, uid]);
+  }, [studentDepartment, uid, initialQuizId]);
 
-  // Handle Starting a Quiz (fetches fresh quiz doc so new attempts immediately use updated time limits or settings)
-  const handleStartQuiz = async (quiz: QuizItem) => {
-    let targetQuiz = quiz;
+  // Open Intro Card before starting a quiz
+  const handleOpenIntro = async (quiz: QuizItem) => {
+    let target = quiz;
     try {
-      const snap = await getDoc(doc(db, 'quizzes', quiz.id));
-      if (snap.exists()) {
-        targetQuiz = { id: snap.id, ...snap.data() } as QuizItem;
-        // Update local quiz list so card displays the freshest time limit
-        setQuizzes(prev => prev.map(q => q.id === targetQuiz.id ? targetQuiz : q));
+      const freshSnap = await getDoc(doc(db, 'quizzes', quiz.id));
+      if (freshSnap.exists()) {
+        target = { id: freshSnap.id, ...freshSnap.data() } as QuizItem;
       }
-    } catch (err) {
-      console.warn('Could not re-fetch latest quiz settings:', err);
-    }
+    } catch {}
+    setActiveQuiz(target);
+    setCurrentScreen('intro');
+  };
 
-    setActiveQuiz(targetQuiz);
+  // Start Taking Quiz after reviewing Intro Card
+  const handleStartTakingQuiz = () => {
+    if (!activeQuiz) return;
     setWasAutoSubmitted(false);
+    setTopicAutoCompletedNotice(false);
 
     // Shuffle questions if quiz.shuffle is enabled
-    let qList = [...(targetQuiz.questions || [])];
-    if (targetQuiz.shuffle) {
+    let qList = [...(activeQuiz.questions || [])];
+    if (activeQuiz.shuffle) {
       qList = qList.sort(() => Math.random() - 0.5);
     }
     setActiveQuestions(qList);
-
     setCurrentQuestionIndex(0);
+
     // Initialize answers with -1 (unanswered)
     const initAnswers: Record<string, number> = {};
+    const initFlags: Record<string, boolean> = {};
     qList.forEach(q => {
       initAnswers[q.id] = -1;
+      initFlags[q.id] = false;
     });
     setSelectedAnswers(initAnswers);
+    setFlaggedQuestions(initFlags);
 
-    // Setup timer using fresh timeLimit (whole number from 1 to 180 minutes)
-    const minutes = (targetQuiz.timeLimit && Number(targetQuiz.timeLimit) > 0)
-      ? Math.min(180, Math.max(1, Math.round(Number(targetQuiz.timeLimit))))
+    // Setup timer
+    const minutes = (activeQuiz.timeLimit && Number(activeQuiz.timeLimit) > 0)
+      ? Math.min(180, Math.max(1, Math.round(Number(activeQuiz.timeLimit))))
       : 0;
 
     if (minutes > 0) {
@@ -184,7 +217,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setCurrentScreen('taking');
   };
 
-  // Timer countdown hook: ticks down every second while timerRunning is true
+  // Timer countdown hook
   useEffect(() => {
     if (!timerRunning || timeLeft === null) {
       if (timerRef.current) {
@@ -220,7 +253,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }
   }, [timeLeft, timerRunning]);
 
-  // Format Timer String (supports hours if >= 60 minutes)
+  // Format Timer String
   const formatTime = (totalSeconds: number): string => {
     const hrs = Math.floor(totalSeconds / 3600);
     const mins = Math.floor((totalSeconds % 3600) / 60);
@@ -241,6 +274,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }));
   };
 
+  // Toggle mark for review
+  const handleToggleFlag = () => {
+    if (!activeQuestions[currentQuestionIndex]) return;
+    const qId = activeQuestions[currentQuestionIndex].id;
+    setFlaggedQuestions(prev => ({
+      ...prev,
+      [qId]: !prev[qId]
+    }));
+  };
+
   // Submit Quiz Logic
   const handleSubmitQuiz = async (autoSubmitted = false) => {
     if (!activeQuiz || submitting) return;
@@ -258,11 +301,10 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       const now = new Date().toISOString();
       const attemptDocId = `${uid}_${activeQuiz.id}`;
 
-      // 1. First record student attempt document with answers
       const existingAttempt = attemptsMap[activeQuiz.id];
       const attemptNumber = (existingAttempt?.attempts || 0) + 1;
 
-      // 2. Read Quiz Keys doc to score the student's submission
+      // Read Quiz Keys doc to score the student's submission
       let score = 0;
       let keysDocData: QuizKeyDoc | null = null;
       try {
@@ -285,6 +327,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
       const total = activeQuestions.length;
       const bestScore = Math.max(existingAttempt?.bestScore || 0, score);
+      const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
+      const passRequirement = activeQuiz.passingScore || 70;
+      const passed = percentage >= passRequirement;
 
       const attemptPayload: QuizAttempt = {
         id: attemptDocId,
@@ -298,12 +343,27 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         total,
         attempts: attemptNumber,
         bestScore,
+        passed,
+        percentage,
         submittedAt: now,
         updatedAt: now
       };
 
-      // 3. Save attempt to Firestore
+      // Save attempt to Firestore
       await setDoc(doc(db, 'quizAttempts', attemptDocId), attemptPayload);
+
+      // If passed and linked to a topic, mark the topic as completed on the student profile!
+      if (passed && activeQuiz.topicId) {
+        try {
+          await updateDoc(doc(db, 'users', uid), {
+            completedTopics: arrayUnion(activeQuiz.topicId)
+          });
+          onTopicCompleted?.(activeQuiz.topicId);
+          setTopicAutoCompletedNotice(true);
+        } catch (e) {
+          console.warn('Failed to mark topic complete after passed quiz:', e);
+        }
+      }
 
       // Update local state map
       setAttemptsMap(prev => ({
@@ -311,10 +371,10 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         [activeQuiz.id]: attemptPayload
       }));
 
-      // Set review screen data
+      // Set review screen data with Missed tab shown first
       setReviewAttempt(attemptPayload);
       setReviewKeys(keysDocData);
-      setWrongOnly(false);
+      setReviewTab('missed');
       setShowSubmitModal(false);
       setCurrentScreen('review');
     } catch (err: any) {
@@ -339,7 +399,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
       setReviewAttempt(attempt);
       setReviewKeys(kData);
-      setWrongOnly(false);
+      setReviewTab('missed');
       setCurrentScreen('review');
     } catch (err) {
       console.warn('Failed to load review keys:', err);
@@ -348,13 +408,147 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }
   };
 
+  // -------------------------------------------------------------
+  // FORMATTED EXPLANATION RENDERER (Supports bold, bullets & line breaks)
+  // -------------------------------------------------------------
+  const renderFormattedExplanation = (text: string) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    return (
+      <div className="space-y-1 text-xs text-[#E6ECFA] leading-relaxed">
+        {lines.map((line, idx) => {
+          const trimmed = line.trim();
+          if (!trimmed) {
+            return <div key={idx} className="h-1" />;
+          }
+
+          const isBullet = trimmed.startsWith('•') || trimmed.startsWith('- ') || trimmed.startsWith('* ');
+          const content = isBullet ? trimmed.replace(/^[•\-\*]\s*/, '') : line;
+
+          // Parse **bold text** into strong tags
+          const parts = content.split(/(\*\*[^*]+\*\*)/g);
+          const renderedParts = parts.map((part, pIdx) => {
+            if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
+              return (
+                <strong key={pIdx} className="font-extrabold text-[#FFC700]">
+                  {part.slice(2, -2)}
+                </strong>
+              );
+            }
+            return <span key={pIdx}>{part}</span>;
+          });
+
+          if (isBullet) {
+            return (
+              <div key={idx} className="flex items-start gap-1.5 pl-1.5">
+                <span className="text-[#FFC700] select-none text-xs leading-4 shrink-0">•</span>
+                <div className="flex-1 leading-snug">{renderedParts}</div>
+              </div>
+            );
+          }
+
+          return (
+            <div key={idx} className="leading-snug">
+              {renderedParts}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  // -------------------------------------------------------------
+  // BOOKMARK QUESTION FOR REVISION
+  // -------------------------------------------------------------
+  const isQuestionBookmarked = (qId: string): boolean => {
+    if (!activeQuiz) return false;
+    const bookmarkId = `quiz_${activeQuiz.id}_q_${qId}`;
+    if (isBookmarked) {
+      return isBookmarked('quiz-question', bookmarkId);
+    }
+    return Boolean(localBookmarks[bookmarkId] || (bookmarks || []).some(b => b.id === bookmarkId));
+  };
+
+  const handleToggleQuestionBookmark = async (
+    q: QuizQuestion,
+    matchingKey: any,
+    questionNumber: number
+  ) => {
+    if (!activeQuiz) return;
+    const bookmarkId = `quiz_${activeQuiz.id}_q_${q.id}`;
+    const optionsList =
+      q.options && q.options.length > 0
+        ? q.options
+        : q.type === 'true-false'
+        ? ['True', 'False']
+        : [];
+    const correctIdx = matchingKey?.correctOptionIndex ?? 0;
+    const correctText = optionsList[correctIdx] || `Option ${String.fromCharCode(65 + correctIdx)}`;
+
+    const willBookmark = !isQuestionBookmarked(q.id);
+    setLocalBookmarks(prev => ({ ...prev, [bookmarkId]: willBookmark }));
+
+    if (toggleBookmark) {
+      await toggleBookmark({
+        id: bookmarkId,
+        type: 'quiz-question',
+        title: `${activeQuiz.courseCode} Q${questionNumber}: ${q.text.slice(0, 70)}`,
+        code: activeQuiz.courseCode,
+        department: activeQuiz.department || studentDepartment,
+        questionText: q.text,
+        options: optionsList,
+        correctAnswerText: correctText,
+        explanation: matchingKey?.explanation || '',
+        whyNotNotes: matchingKey?.whyNotNotes,
+        createdAt: new Date().toISOString()
+      });
+    } else {
+      try {
+        const userDocRef = doc(db, 'users', uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const currentBookmarks = (userDoc.data().bookmarks || []) as BookmarkItem[];
+          const exists = currentBookmarks.some(b => b.id === bookmarkId);
+          let nextBookmarks: BookmarkItem[];
+          if (exists) {
+            nextBookmarks = currentBookmarks.filter(b => b.id !== bookmarkId);
+          } else {
+            nextBookmarks = [
+              {
+                id: bookmarkId,
+                type: 'quiz-question',
+                title: `${activeQuiz.courseCode} Q${questionNumber}: ${q.text.slice(0, 70)}`,
+                code: activeQuiz.courseCode,
+                department: activeQuiz.department || studentDepartment,
+                questionText: q.text,
+                options: optionsList,
+                correctAnswerText: correctText,
+                explanation: matchingKey?.explanation || '',
+                whyNotNotes: matchingKey?.whyNotNotes,
+                createdAt: new Date().toISOString()
+              },
+              ...currentBookmarks
+            ];
+          }
+          await updateDoc(userDocRef, { bookmarks: nextBookmarks });
+        }
+      } catch (bErr) {
+        console.warn('Bookmark error:', bErr);
+      }
+    }
+  };
+
   // Quit taking confirmation
   const handleQuitQuiz = () => {
-    if (confirm('Quit quiz? Your answers will not be saved.')) {
+    if (confirm('Quit quiz? Your answers for this attempt will not be saved.')) {
       if (timerRef.current) clearInterval(timerRef.current);
       setTimerRunning(false);
-      setActiveQuiz(null);
-      setCurrentScreen('list');
+      if (onBackToTopic && activeQuiz?.topicId) {
+        onBackToTopic();
+      } else {
+        setActiveQuiz(null);
+        setCurrentScreen('list');
+      }
     }
   };
 
@@ -373,89 +567,325 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Answered questions count
   const answeredCount = useMemo(() => {
-    return Object.values(selectedAnswers).filter(val => val !== undefined && val >= 0).length;
+    return Object.values(selectedAnswers).filter(ans => ans !== -1).length;
   }, [selectedAnswers]);
 
-  const unansweredCount = (activeQuestions.length || 0) - answeredCount;
+  const unansweredCount = activeQuestions.length - answeredCount;
 
-  // =========================================================================
-  // SCREEN 1: TAKING QUIZ
-  // =========================================================================
-  if (currentScreen === 'taking' && activeQuiz) {
-    const currentQuestion = activeQuestions[currentQuestionIndex];
-    const progressPct = Math.round(((currentQuestionIndex + 1) / activeQuestions.length) * 100);
-    const isLastQuestion = currentQuestionIndex === activeQuestions.length - 1;
-    const currentSelectedOption = currentQuestion ? selectedAnswers[currentQuestion.id] : -1;
+  // Current active question
+  const currentQ = activeQuestions[currentQuestionIndex];
+  const currentQAnswer = currentQ ? selectedAnswers[currentQ.id] : -1;
+  const currentQIsFlagged = currentQ ? !!flaggedQuestions[currentQ.id] : false;
+  const isCurrentTrueFalse = currentQ?.type === 'true-false';
+
+  // Attempts info for intro card
+  const existingAttemptForActive = activeQuiz ? attemptsMap[activeQuiz.id] : null;
+  const usedAttempts = existingAttemptForActive?.attempts || 0;
+  const maxAttempts = activeQuiz?.attemptsAllowed || 0;
+  const canAttempt = maxAttempts === 0 || usedAttempts < maxAttempts;
+
+  // ==============================================================
+  // SCREEN 1: INTRO CARD BEFORE STARTING
+  // ==============================================================
+  if (currentScreen === 'intro' && activeQuiz) {
+    const timeLimitMins = activeQuiz.timeLimit || 0;
+    const passScore = activeQuiz.passingScore || 70;
+    const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
+    const totalPoints = activeQuiz.questionCount * ptsPerQ;
 
     return (
-      <div className="space-y-4 pt-1">
-        {/* Sticky Top Header with Back Arrow and Timer */}
-        <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-md flex items-center justify-between gap-3 sticky top-14 z-20">
+      <div className="space-y-4 max-w-xl mx-auto">
+        {/* Back Button */}
+        <div className="flex items-center justify-between">
           <button
-            type="button"
-            onClick={handleQuitQuiz}
-            className="flex items-center gap-1 text-xs font-bold text-[#9AA8C7] hover:text-white transition-colors cursor-pointer"
+            onClick={() => {
+              if (onBackToTopic && activeQuiz.topicId) {
+                onBackToTopic();
+              } else {
+                setCurrentScreen('list');
+              }
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
           >
-            <ArrowLeft className="w-4 h-4 text-[#2F52FF]" />
-            <span>Exit</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>{onBackToTopic && activeQuiz.topicId ? 'Back to Topic' : 'Back to Quizzes'}</span>
           </button>
 
-          <div className="text-center truncate px-2">
-            <span className="font-heading font-extrabold text-xs text-[#FFC700] block">
-              {activeQuiz.courseCode}
-            </span>
-            <span className="text-[11px] text-[#E6ECFA] font-bold truncate block max-w-[200px] sm:max-w-xs">
+          <ShareButton
+            title={`${activeQuiz.courseCode}: ${activeQuiz.title}`}
+            itemType="quiz"
+            code={activeQuiz.courseCode}
+            id={activeQuiz.id}
+            textDetails={`Practice quiz: ${activeQuiz.questionCount} questions`}
+            variant="compact"
+          />
+        </div>
+
+        {/* Intro Card */}
+        <div className="p-5 sm:p-6 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-5 shadow-lg">
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="px-2.5 py-1 rounded bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-xs font-bold">
+                {activeQuiz.courseCode}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#9AA8C7] border border-[#24315A] text-[10px]">
+                {activeQuiz.department} • {activeQuiz.level}
+              </span>
+            </div>
+
+            <h1 className="font-heading font-extrabold text-lg sm:text-xl text-[#E6ECFA]">
               {activeQuiz.title}
-            </span>
+            </h1>
+
+            {topicTitle && (
+              <p className="text-xs text-[#60A5FA] flex items-center gap-1">
+                <BookOpen className="w-3.5 h-3.5" />
+                <span>Linked to Topic: {topicTitle}</span>
+              </p>
+            )}
+
+            {activeQuiz.instructions && (
+              <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] leading-relaxed">
+                <strong className="text-[#E6ECFA] block mb-1">Instructions:</strong>
+                {activeQuiz.instructions}
+              </div>
+            )}
           </div>
 
-          {/* Countdown Timer (if timeLimit > 0) */}
-          {timeLeft !== null ? (
-            <div
-              className={`flex items-center gap-1 px-2.5 py-1 rounded-xl font-mono text-xs font-bold shadow-inner ${
-                timeLeft < 60
-                  ? 'bg-rose-950/60 text-rose-400 border border-rose-600 animate-pulse'
-                  : timeLeft < 300
-                  ? 'bg-amber-950/40 text-amber-400 border border-amber-600'
-                  : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
+          {/* Quiz Parameters Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-center">
+            <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+              <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">Questions</span>
+              <span className="text-base font-black text-[#E6ECFA]">{activeQuiz.questionCount}</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+              <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">Time Limit</span>
+              <span className="text-base font-black text-[#FFC700]">
+                {timeLimitMins > 0 ? `${timeLimitMins}m` : 'Untimed'}
+              </span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+              <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">Passing Score</span>
+              <span className="text-base font-black text-emerald-400">{passScore}%</span>
+            </div>
+
+            <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+              <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">Total Points</span>
+              <span className="text-base font-black text-[#60A5FA]">{totalPoints} pts</span>
+            </div>
+          </div>
+
+          {/* Attempt Status Banner */}
+          <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-between text-xs">
+            <div className="space-y-0.5">
+              <span className="text-[11px] text-[#9AA8C7]">Attempts Allowed:</span>
+              <p className="font-bold text-[#E6ECFA]">
+                {maxAttempts === 0 ? 'Unlimited Attempts' : `${usedAttempts} of ${maxAttempts} used`}
+              </p>
+            </div>
+
+            {existingAttemptForActive && (
+              <div className="text-right">
+                <span className="text-[10px] text-[#9AA8C7]">Best Score:</span>
+                <p className="font-extrabold text-[#FFC700]">
+                  {existingAttemptForActive.bestScore} / {existingAttemptForActive.total} ({Math.round((existingAttemptForActive.bestScore / (existingAttemptForActive.total || 1)) * 100)}%)
+                </p>
+              </div>
+            )}
+          </div>
+
+          {/* Start Actions */}
+          <div className="space-y-2 pt-2">
+            {canAttempt ? (
+              <button
+                onClick={handleStartTakingQuiz}
+                className="w-full py-3 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white font-black text-sm shadow-[0_0_20px_rgba(47,82,255,0.4)] transition-all cursor-pointer flex items-center justify-center gap-2"
+              >
+                <span>Start Quiz Now</span>
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            ) : (
+              <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs text-center font-bold">
+                You have reached the maximum allowed attempts ({maxAttempts}) for this quiz.
+              </div>
+            )}
+
+            {existingAttemptForActive && (
+              <button
+                onClick={() => handleViewExistingReview(activeQuiz)}
+                className="w-full py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#60A5FA] text-[#E6ECFA] text-xs font-bold transition-all cursor-pointer"
+              >
+                Review Previous Answers &amp; Explanations
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==============================================================
+  // SCREEN 2: TAKING A QUIZ
+  // ==============================================================
+  if (currentScreen === 'taking' && activeQuiz && currentQ) {
+    const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
+
+    return (
+      <div className="space-y-4 max-w-xl mx-auto">
+        {/* Top Header & Breadcrumb */}
+        <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <button
+              onClick={handleQuitQuiz}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" />
+              <span>Quit Quiz</span>
+            </button>
+
+            {/* Countdown Timer */}
+            {timeLeft !== null && (
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-xs font-bold ${
+                  timeLeft <= 60
+                    ? 'bg-rose-950 text-rose-400 border border-rose-500/60 animate-pulse'
+                    : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>{formatTime(timeLeft)}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Breadcrumb Path */}
+          <div className="flex items-center justify-between pt-1 border-t border-[#24315A]/60 text-xs">
+            <div className="truncate pr-2">
+              <span className="font-bold text-[#FFC700] mr-1.5">{activeQuiz.courseCode}</span>
+              <span className="text-[#9AA8C7] truncate">{activeQuiz.title}</span>
+            </div>
+            <span className="text-[11px] text-[#60A5FA] font-bold shrink-0">
+              {answeredCount} of {activeQuestions.length} Answered
+            </span>
+          </div>
+        </div>
+
+        {/* Question Palette (Numbers 1..N showing Answered, Flagged, Unanswered) */}
+        <div className="p-3 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-2">
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="text-[#9AA8C7] font-semibold">Question Palette</span>
+            <div className="flex items-center gap-2.5 text-[10px]">
+              <span className="flex items-center gap-1 text-[#60A5FA]">
+                <span className="w-2 h-2 rounded-full bg-[#2F52FF]" /> Answered
+              </span>
+              <span className="flex items-center gap-1 text-[#FFC700]">
+                <span className="w-2 h-2 rounded-full bg-[#FFC700]" /> Flagged
+              </span>
+              <span className="flex items-center gap-1 text-[#9AA8C7]">
+                <span className="w-2 h-2 rounded-full bg-[#0A1224] border border-[#24315A]" /> Blank
+              </span>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+            {activeQuestions.map((q, idx) => {
+              const isAnswered = selectedAnswers[q.id] !== undefined && selectedAnswers[q.id] !== -1;
+              const isFlagged = !!flaggedQuestions[q.id];
+              const isCurrent = idx === currentQuestionIndex;
+
+              return (
+                <button
+                  key={q.id}
+                  onClick={() => setCurrentQuestionIndex(idx)}
+                  className={`relative w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center ${
+                    isCurrent
+                      ? 'ring-2 ring-[#FFC700] ring-offset-1 ring-offset-[#0A1224]'
+                      : ''
+                  } ${
+                    isFlagged
+                      ? 'bg-[#FFC700] text-[#0A1224]'
+                      : isAnswered
+                      ? 'bg-[#2F52FF] text-white'
+                      : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]'
+                  }`}
+                >
+                  <span>{idx + 1}</span>
+                  {isFlagged && (
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Current Question Card */}
+        <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 shadow-sm">
+          {/* Question Meta Row */}
+          <div className="flex items-center justify-between pb-2 border-b border-[#24315A]/70 text-xs">
+            <div className="flex items-center gap-2">
+              <span className="font-extrabold text-sm text-[#FFC700]">
+                Question {currentQuestionIndex + 1} of {activeQuestions.length}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
+                [{ptsPerQ} {ptsPerQ === 1 ? 'Point' : 'Points'}]
+              </span>
+            </div>
+
+            {/* Mark for Review Button */}
+            <button
+              onClick={handleToggleFlag}
+              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                currentQIsFlagged
+                  ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/60'
+                  : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#E6ECFA]'
               }`}
             >
-              <Clock className="w-3.5 h-3.5" />
-              <span>{formatTime(timeLeft)}</span>
+              <Flag className={`w-3.5 h-3.5 ${currentQIsFlagged ? 'fill-current text-[#FFC700]' : ''}`} />
+              <span>{currentQIsFlagged ? 'Flagged' : 'Mark for review'}</span>
+            </button>
+          </div>
+
+          {/* Question Text */}
+          <div className="text-sm sm:text-base font-bold text-[#E6ECFA] leading-relaxed">
+            {currentQ.text}
+          </div>
+
+          {/* Question Options */}
+          {isCurrentTrueFalse ? (
+            /* True / False Two Big Buttons */
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={() => handleSelectOption(0)}
+                className={`py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
+                  currentQAnswer === 0
+                    ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_20px_rgba(47,82,255,0.5)] scale-[1.02]'
+                    : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+                }`}
+              >
+                True
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSelectOption(1)}
+                className={`py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
+                  currentQAnswer === 1
+                    ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_20px_rgba(47,82,255,0.5)] scale-[1.02]'
+                    : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+                }`}
+              >
+                False
+              </button>
             </div>
           ) : (
-            <span className="text-[10px] text-[#9AA8C7] font-semibold">Untimed</span>
-          )}
-        </div>
-
-        {/* Progress Bar & Counter */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] font-bold text-[#9AA8C7]">
-            <span className="text-[#E6ECFA]">
-              Question {currentQuestionIndex + 1} of {activeQuestions.length}
-            </span>
-            <span>{answeredCount} answered</span>
-          </div>
-          <div className="h-2 w-full rounded-full bg-[#121C36] border border-[#24315A] overflow-hidden">
-            <div
-              className="h-full bg-gradient-to-r from-[#2F52FF] to-[#5271FF] transition-all duration-300"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-        </div>
-
-        {/* QUESTION CARD */}
-        {currentQuestion && (
-          <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-md space-y-4">
-            <h3 className="font-heading font-bold text-sm sm:text-base text-[#E6ECFA] leading-snug">
-              {currentQuestion.text}
-            </h3>
-
-            {/* Options List */}
-            {/* CRITICAL RULE: "Do NOT show right or wrong or any score during the quiz." */}
-            <div className="space-y-2.5">
-              {currentQuestion.options.map((optionText, optIdx) => {
-                const isSelected = currentSelectedOption === optIdx;
+            /* Multiple Choice Options List */
+            <div className="space-y-2.5 pt-1">
+              {(currentQ.options || []).map((optText, optIdx) => {
+                const isSelected = currentQAnswer === optIdx;
                 const letter = String.fromCharCode(65 + optIdx);
 
                 return (
@@ -463,163 +893,104 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     key={optIdx}
                     type="button"
                     onClick={() => handleSelectOption(optIdx)}
-                    className={`w-full p-3 rounded-xl border text-left flex items-center gap-3 transition-all cursor-pointer ${
+                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                       isSelected
-                        ? 'bg-[#2F52FF]/15 border-[#2F52FF] shadow-[0_0_15px_rgba(47,82,255,0.25)] text-white'
-                        : 'bg-[#0A1224] border-[#24315A] hover:border-[#2F52FF]/50 text-[#E6ECFA]'
+                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                     }`}
                   >
-                    <div
-                      className={`w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs shrink-0 transition-colors ${
+                    <span
+                      className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 border ${
                         isSelected
-                          ? 'bg-[#2F52FF] text-white shadow-sm'
-                          : 'bg-[#121C36] text-[#9AA8C7] border border-[#24315A]'
+                          ? 'bg-white text-[#2F52FF] border-white'
+                          : 'bg-[#121C36] text-[#FFC700] border-[#24315A]'
                       }`}
                     >
                       {letter}
-                    </div>
-                    <span className="text-xs sm:text-sm font-medium flex-1">
-                      {optionText}
                     </span>
+                    <span className="text-xs sm:text-sm font-semibold">{optText}</span>
                   </button>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        {/* Bottom Navigation Buttons */}
-        <div className="flex items-center justify-between gap-3 pt-1">
+        {/* Navigation & Submit Bar */}
+        <div className="flex items-center justify-between gap-2 pt-2">
           <button
-            type="button"
-            disabled={currentQuestionIndex === 0}
             onClick={() => setCurrentQuestionIndex(prev => Math.max(0, prev - 1))}
-            className="px-4 py-2 rounded-xl bg-[#121C36] hover:bg-[#1A2E63] disabled:opacity-30 disabled:hover:bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] flex items-center gap-1.5 transition-colors cursor-pointer"
+            disabled={currentQuestionIndex === 0}
+            className="px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
           >
             <ChevronLeft className="w-4 h-4" />
             <span>Previous</span>
           </button>
 
-          {isLastQuestion ? (
-            <button
-              type="button"
-              onClick={() => setShowSubmitModal(true)}
-              className="px-5 py-2 rounded-xl bg-[#FFC700] hover:bg-[#FFE066] text-[#0A1224] font-heading font-extrabold text-xs shadow-[0_0_15px_rgba(255,199,0,0.3)] transition-all cursor-pointer"
-            >
-              Submit Quiz
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => setCurrentQuestionIndex(prev => Math.min(activeQuestions.length - 1, prev + 1))}
-              className="px-5 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-heading font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-            >
-              <span>Next</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          )}
+          <button
+            onClick={() => setShowSubmitModal(true)}
+            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer transition-all"
+          >
+            Submit Quiz
+          </button>
+
+          <button
+            onClick={() => setCurrentQuestionIndex(prev => Math.min(activeQuestions.length - 1, prev + 1))}
+            disabled={currentQuestionIndex === activeQuestions.length - 1}
+            className="px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
+          >
+            <span>Next</span>
+            <ChevronRight className="w-4 h-4" />
+          </button>
         </div>
 
-        {/* QUESTION NAVIGATOR GRID */}
-        <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-2">
-          <div className="flex items-center justify-between text-[11px] text-[#9AA8C7]">
-            <span className="font-bold text-[#FFC700]">Question Navigator</span>
-            <button
-              type="button"
-              onClick={() => setShowSubmitModal(true)}
-              className="text-xs font-bold text-[#60A5FA] hover:text-white"
-            >
-              Finish &amp; Submit &rarr;
-            </button>
-          </div>
-
-          <div className="flex flex-wrap gap-1.5 pt-1">
-            {activeQuestions.map((q, idx) => {
-              const isCurrent = currentQuestionIndex === idx;
-              const isAnswered = selectedAnswers[q.id] !== undefined && selectedAnswers[q.id] >= 0;
-
-              return (
-                <button
-                  key={q.id || idx}
-                  type="button"
-                  onClick={() => setCurrentQuestionIndex(idx)}
-                  className={`w-8 h-8 rounded-lg font-bold text-xs flex items-center justify-center transition-all cursor-pointer ${
-                    isCurrent
-                      ? 'border-2 border-[#FFC700] text-[#FFC700] bg-[#0A1224] scale-105 shadow-sm'
-                      : isAnswered
-                      ? 'bg-[#2F52FF] text-white shadow-sm'
-                      : 'bg-[#0A1224] text-[#9AA8C7] border border-[#24315A] hover:border-[#60A5FA]'
-                  }`}
-                >
-                  {idx + 1}
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="flex items-center gap-4 text-[10px] text-[#9AA8C7] pt-1">
-            <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded bg-[#2F52FF]" /> Answered
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded border border-[#FFC700]" /> Current
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-2.5 h-2.5 rounded bg-[#0A1224] border border-[#24315A]" /> Unanswered
-            </span>
-          </div>
-        </div>
-
-        {/* SUBMIT CONFIRMATION MODAL */}
+        {/* Submit Confirmation Dialog */}
         {showSubmitModal && (
-          <div className="fixed inset-0 z-50 bg-[#0A1224]/85 backdrop-blur-sm flex items-center justify-center p-4">
-            <div className="bg-[#121C36] border border-[#24315A] rounded-2xl w-full max-w-sm p-4 space-y-3.5 shadow-2xl animate-in fade-in zoom-in-95">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700]">
-                  <CheckSquare className="w-5 h-5" />
-                </div>
-                <div>
-                  <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                    Submit Quiz?
-                  </h4>
-                  <p className="text-[11px] text-[#9AA8C7]">
-                    Finalize and calculate your test score
-                  </p>
-                </div>
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm">
+            <div className="relative w-full max-w-sm bg-[#121C36] border-2 border-[#24315A] rounded-2xl p-5 space-y-4 shadow-2xl">
+              <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
+                <h3 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
+                  Ready to submit?
+                </h3>
+                <button
+                  onClick={() => setShowSubmitModal(false)}
+                  className="text-[#9AA8C7] hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
               </div>
 
-              {unansweredCount > 0 ? (
-                <div className="p-2.5 rounded-xl bg-amber-950/40 border border-amber-600/50 text-amber-300 text-xs flex items-start gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-bold">You have {unansweredCount} unanswered question{unansweredCount > 1 ? 's' : ''}!</span>
-                    <p className="text-[11px] text-amber-200/80 mt-0.5">
-                      Unanswered questions will be marked incorrect. Are you sure you want to proceed?
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA]">
-                  You have answered all <strong>{activeQuestions.length}</strong> questions! Ready to see your score?
-                </div>
-              )}
+              <div className="space-y-2 text-xs text-[#E6ECFA]">
+                <p>
+                  You have answered <strong className="text-emerald-400">{answeredCount}</strong> out of{' '}
+                  <strong>{activeQuestions.length}</strong> questions.
+                </p>
 
-              <div className="flex items-center justify-end gap-2 pt-1">
+                {unansweredCount > 0 && (
+                  <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                    <span>
+                      You have <strong>{unansweredCount}</strong> unanswered questions. Unanswered questions will receive 0 points.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#24315A]">
                 <button
                   type="button"
-                  disabled={submitting}
                   onClick={() => setShowSubmitModal(false)}
-                  className="px-3 py-1.5 rounded-xl bg-[#0A1224] hover:bg-[#1A2E63] text-xs font-semibold text-[#E6ECFA] transition-colors cursor-pointer"
+                  className="px-3.5 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
-                  Keep Reviewing
+                  Review Questions
                 </button>
                 <button
                   type="button"
                   disabled={submitting}
                   onClick={() => handleSubmitQuiz(false)}
-                  className="px-4 py-1.5 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
+                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {submitting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
+                  {submitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   <span>{submitting ? 'Submitting...' : 'Yes, Submit Now'}</span>
                 </button>
               </div>
@@ -630,268 +1001,543 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     );
   }
 
-  // =========================================================================
-  // SCREEN 2: POST-QUIZ RESULTS & QUESTION REVIEW
-  // =========================================================================
+  // ==============================================================
+  // SCREEN 3: RESULT & REVIEW SCREEN
+  // ==============================================================
   if (currentScreen === 'review' && activeQuiz && reviewAttempt) {
-    const totalQ = reviewAttempt.total || activeQuestions.length || 1;
-    const score = reviewAttempt.score;
-    const pct = Math.round((score / totalQ) * 100);
-    const isPassed = pct >= 50;
+    const keys = reviewKeys?.keys || [];
+    const passingThreshold = activeQuiz.passingScore || 70;
+    const studentScore = reviewAttempt.score;
+    const studentTotal = reviewAttempt.total || 1;
+    const studentPct = Math.round((studentScore / studentTotal) * 100);
+    const hasPassed = studentPct >= passingThreshold;
 
-    const keyItems = reviewKeys?.keys || [];
-
-    // Filter questions if "wrong only" is checked
-    const questionsToReview = activeQuestions.filter(q => {
-      if (!wrongOnly) return true;
-      const chosen = reviewAttempt.answers[q.id];
-      const matchKey = keyItems.find(k => k.questionId === q.id);
-      return !matchKey || chosen !== matchKey.correctOptionIndex;
+    // Filter into Missed, Correct, and All lists
+    const missedQuestions: { q: QuizQuestion; originalIndex: number }[] = [];
+    const correctQuestions: { q: QuizQuestion; originalIndex: number }[] = [];
+    const allQuestionsWithIndex = activeQuestions.map((q, idx) => {
+      const matchingKey = keys.find(k => k.questionId === q.id);
+      const correctIdx = matchingKey?.correctOptionIndex ?? -1;
+      const chosenIdx = reviewAttempt.answers[q.id];
+      const isCorrect = chosenIdx !== undefined && chosenIdx !== -1 && chosenIdx === correctIdx;
+      if (isCorrect) {
+        correctQuestions.push({ q, originalIndex: idx });
+      } else {
+        missedQuestions.push({ q, originalIndex: idx });
+      }
+      return { q, originalIndex: idx };
     });
 
+    const activeDisplayList =
+      reviewTab === 'missed'
+        ? missedQuestions
+        : reviewTab === 'correct'
+        ? correctQuestions
+        : allQuestionsWithIndex;
+
     return (
-      <div className="space-y-4 pt-1">
-        {/* Header with Back Arrow */}
-        <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm flex items-center justify-between gap-3">
+      <div className="space-y-4 max-w-xl mx-auto">
+        {/* Navigation Bar */}
+        <div className="flex items-center justify-between">
           <button
-            type="button"
-            onClick={() => setCurrentScreen('list')}
-            className="flex items-center gap-1.5 text-xs font-bold text-[#2F52FF] hover:text-[#5271FF] transition-colors cursor-pointer"
+            onClick={() => {
+              if (onBackToTopic && activeQuiz.topicId) {
+                onBackToTopic();
+              } else {
+                setCurrentScreen('list');
+              }
+            }}
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
           >
-            <ArrowLeft className="w-4 h-4 text-[#2F52FF]" />
-            <span className="text-[#E6ECFA]">Back to Quizzes</span>
+            <ArrowLeft className="w-3.5 h-3.5" />
+            <span>{onBackToTopic && activeQuiz.topicId ? 'Back to Topic' : 'Back to Quizzes'}</span>
           </button>
 
-          <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-            {activeQuiz.courseCode}
-          </span>
+          <ShareButton
+            title={`I scored ${studentScore}/${studentTotal} (${studentPct}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}!`}
+            itemType="quiz"
+            code={activeQuiz.courseCode}
+            id={activeQuiz.id}
+            textDetails={`Scored ${studentScore}/${studentTotal} on SOT Quiz Portal`}
+            variant="compact"
+          />
         </div>
 
-        {/* HERO SCORE CARD */}
-        <div className="p-5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-lg text-center space-y-3 relative overflow-hidden">
-          {wasAutoSubmitted && (
-            <div className="p-2.5 rounded-xl bg-amber-950/60 border border-amber-500/50 text-amber-300 text-xs font-bold flex items-center justify-center gap-2">
-              <Clock className="w-4 h-4 text-[#FFC700] shrink-0" />
-              <span>Time expired! Your quiz was automatically submitted.</span>
-            </div>
-          )}
+        {/* Auto-completed Topic Banner */}
+        {topicAutoCompletedNotice && (
+          <div className="p-3.5 rounded-2xl bg-emerald-500/20 border-2 border-emerald-500/60 text-emerald-300 text-xs font-bold flex items-center justify-between gap-2 shadow-[0_0_20px_rgba(16,185,129,0.25)]">
+            <span className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <span>Great job! Topic syllabus progress has been marked as complete!</span>
+            </span>
+            {onBackToTopic && (
+              <button
+                onClick={onBackToTopic}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shrink-0 cursor-pointer"
+              >
+                Resume Topic
+              </button>
+            )}
+          </div>
+        )}
 
-          <div className="w-12 h-12 rounded-2xl bg-[#0A1224] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700] mx-auto shadow-[0_0_15px_rgba(255,199,0,0.2)]">
-            <Award className="w-6 h-6" />
+        {/* Auto-submit Notice */}
+        {wasAutoSubmitted && (
+          <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2">
+            <Clock className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>Time ran out! Your quiz answers were automatically submitted.</span>
+          </div>
+        )}
+
+        {/* Result Score Card */}
+        <div className="p-5 sm:p-6 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-4 shadow-xl text-center">
+          <div className="space-y-1">
+            <span className="text-xs font-bold text-[#9AA8C7] uppercase tracking-wider">
+              {activeQuiz.courseCode} • Quiz Result
+            </span>
+            <h2 className="font-heading font-extrabold text-lg text-[#E6ECFA]">
+              {activeQuiz.title}
+            </h2>
           </div>
 
-          <div>
-            <h2 className="font-heading font-extrabold text-2xl sm:text-3xl text-[#E6ECFA]">
-              {score} / {totalQ}
-            </h2>
-            <div className="flex items-center justify-center gap-2 mt-1">
-              <span
-                className={`px-3 py-0.5 rounded-full text-xs font-extrabold ${
-                  pct >= 70
-                    ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/50'
-                    : pct >= 50
-                    ? 'bg-amber-950/60 text-amber-400 border border-amber-500/50'
-                    : 'bg-rose-950/60 text-rose-400 border border-rose-500/50'
-                }`}
-              >
-                {pct}% — {pct >= 70 ? 'Excellent!' : pct >= 50 ? 'Good Effort!' : 'Keep Practicing!'}
-              </span>
+          {/* Pass / Fail Badge & Big Score */}
+          <div className="py-2 space-y-2">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider border">
+              {hasPassed ? (
+                <span className="bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 px-3 py-1 rounded-full flex items-center gap-1.5 shadow-[0_0_15px_rgba(16,185,129,0.3)]">
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>Passed ({studentPct}% &ge; {passingThreshold}%)</span>
+                </span>
+              ) : (
+                <span className="bg-rose-500/20 text-rose-400 border border-rose-500/50 px-3 py-1 rounded-full flex items-center gap-1.5">
+                  <XCircle className="w-4 h-4" />
+                  <span>Failed ({studentPct}% &lt; {passingThreshold}% Required)</span>
+                </span>
+              )}
             </div>
-            <p className="text-xs text-[#9AA8C7] mt-1.5 max-w-sm mx-auto">
-              Attempt #{reviewAttempt.attempts || 1} &bull; Best Score: {reviewAttempt.bestScore || score}/{totalQ}
+
+            <div className="text-3xl sm:text-4xl font-heading font-black text-[#FFC700]">
+              {studentScore} <span className="text-lg font-bold text-[#9AA8C7]">/ {studentTotal}</span>
+            </div>
+
+            <p className="text-xs text-[#9AA8C7]">
+              {studentPct}% final score • Attempt #{reviewAttempt.attempts || 1} • Best score: {reviewAttempt.bestScore}/{studentTotal}
             </p>
           </div>
 
-          {/* Action Buttons: Retake vs Back */}
-          <div className="flex items-center justify-center gap-2.5 pt-2 border-t border-[#24315A]/60">
-            <button
-              type="button"
-              onClick={() => handleStartQuiz(activeQuiz)}
-              className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-heading font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-              <span>Retake Quiz</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentScreen('list')}
-              className="px-4 py-2 rounded-xl bg-[#0A1224] hover:bg-[#1A2E63] border border-[#24315A] text-xs font-bold text-[#E6ECFA] transition-colors cursor-pointer"
-            >
-              Quizzes List
-            </button>
+          {/* Retake & Action Buttons */}
+          <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 border-t border-[#24315A]/70">
+            {canAttempt ? (
+              <button
+                onClick={handleStartTakingQuiz}
+                className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+              >
+                <RotateCcw className="w-3.5 h-3.5" />
+                <span>
+                  Retake Quiz
+                  {maxAttempts > 0 && ` (${maxAttempts - usedAttempts} attempt${maxAttempts - usedAttempts === 1 ? '' : 's'} left)`}
+                </span>
+              </button>
+            ) : (
+              <div className="px-3.5 py-1.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-[11px] font-semibold text-[#9AA8C7] flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-400" />
+                <span>No attempts left (Maximum {maxAttempts} reached)</span>
+              </div>
+            )}
+
+            {onBackToTopic && activeQuiz.topicId && (
+              <button
+                onClick={onBackToTopic}
+                className="px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#FFC700] text-[#E6ECFA] text-xs font-bold transition-all cursor-pointer"
+              >
+                Back to Lesson Topic
+              </button>
+            )}
           </div>
         </div>
 
-        {/* REVIEW FILTER BAR */}
-        <div className="p-3 rounded-2xl bg-[#121C36] border border-[#24315A] flex items-center justify-between">
-          <span className="font-heading font-bold text-xs text-[#E6ECFA]">
-            Answers &amp; Explanations ({questionsToReview.length} questions)
-          </span>
+        {/* ----------------------------------------------------------- */}
+        {/* REVIEW SECTION WITH TABS: Missed (First), Correct, All      */}
+        {/* ----------------------------------------------------------- */}
+        <div className="space-y-3">
+          {/* Tabs Selector Bar */}
+          <div className="p-1 rounded-xl bg-[#0A1224] border border-[#24315A] grid grid-cols-3 gap-1">
+            <button
+              type="button"
+              onClick={() => setReviewTab('missed')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                reviewTab === 'missed'
+                  ? 'bg-rose-600 text-white shadow-sm'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+              }`}
+            >
+              <span>Missed</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  reviewTab === 'missed' ? 'bg-white/20 text-white' : 'bg-[#121C36] text-rose-400'
+                }`}
+              >
+                {missedQuestions.length}
+              </span>
+            </button>
 
-          <label className="flex items-center gap-2 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={wrongOnly}
-              onChange={e => setWrongOnly(e.target.checked)}
-              className="w-4 h-4 rounded text-[#2F52FF] bg-[#0A1224] border-[#24315A] cursor-pointer"
-            />
-            <span className="text-xs font-semibold text-[#FFC700]">
-              Wrong answers only
-            </span>
-          </label>
-        </div>
+            <button
+              type="button"
+              onClick={() => setReviewTab('correct')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                reviewTab === 'correct'
+                  ? 'bg-emerald-600 text-white shadow-sm'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+              }`}
+            >
+              <span>Correct</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  reviewTab === 'correct' ? 'bg-white/20 text-white' : 'bg-[#121C36] text-emerald-400'
+                }`}
+              >
+                {correctQuestions.length}
+              </span>
+            </button>
 
-        {/* QUESTION-BY-QUESTION REVIEW LIST */}
-        <div className="space-y-3.5">
-          {questionsToReview.length === 0 ? (
-            <div className="p-8 text-center rounded-2xl bg-[#121C36] border border-[#24315A] text-xs text-emerald-400 font-bold">
-              🎉 Congratulations! You answered all questions correctly!
+            <button
+              type="button"
+              onClick={() => setReviewTab('all')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
+                reviewTab === 'all'
+                  ? 'bg-[#2F52FF] text-white shadow-sm'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
+              }`}
+            >
+              <span>All</span>
+              <span
+                className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                  reviewTab === 'all' ? 'bg-white/20 text-white' : 'bg-[#121C36] text-[#E6ECFA]'
+                }`}
+              >
+                {activeQuestions.length}
+              </span>
+            </button>
+          </div>
+
+          {/* Empty State for Selected Tab */}
+          {activeDisplayList.length === 0 ? (
+            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
+              {reviewTab === 'missed' ? (
+                <>
+                  <CheckCircle2 className="w-9 h-9 text-emerald-400 mx-auto" />
+                  <h4 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
+                    🎉 Perfect score on this attempt!
+                  </h4>
+                  <p className="text-xs text-[#9AA8C7]">
+                    You didn't miss any questions. Switch to the <strong>Correct</strong> or <strong>All</strong> tab to review your answers.
+                  </p>
+                </>
+              ) : reviewTab === 'correct' ? (
+                <>
+                  <XCircle className="w-9 h-9 text-rose-400 mx-auto" />
+                  <h4 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
+                    No correct answers yet
+                  </h4>
+                  <p className="text-xs text-[#9AA8C7]">
+                    Review the <strong>Missed</strong> questions tab to learn the principles and try retaking!
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-[#9AA8C7]">No questions found in this quiz.</p>
+              )}
             </div>
           ) : (
-            questionsToReview.map((q, idx) => {
-              const studentChosenIdx = reviewAttempt.answers[q.id];
-              const keyItem = keyItems.find(k => k.questionId === q.id);
-              const correctIdx = keyItem ? keyItem.correctOptionIndex : 0;
-              const isCorrect = studentChosenIdx === correctIdx;
+            /* Questions Review List */
+            <div className="space-y-3.5">
+              {activeDisplayList.map(({ q, originalIndex }) => {
+                const matchingKey = keys.find(k => k.questionId === q.id);
+                const correctIdx = matchingKey?.correctOptionIndex ?? -1;
+                const chosenIdx = reviewAttempt.answers[q.id];
+                const isCorrect = chosenIdx !== undefined && chosenIdx !== -1 && chosenIdx === correctIdx;
+                const isUnanswered = chosenIdx === undefined || chosenIdx === -1;
+                const isTrueFalse = q.type === 'true-false';
+                const optionsList =
+                  q.options && q.options.length > 0
+                    ? q.options
+                    : isTrueFalse
+                    ? ['True', 'False']
+                    : [];
 
-              return (
-                <div
-                  key={q.id || idx}
-                  className={`p-4 rounded-2xl border bg-[#121C36] shadow-sm space-y-3 transition-colors ${
-                    isCorrect
-                      ? 'border-emerald-500/30'
-                      : 'border-rose-500/30'
-                  }`}
-                >
-                  {/* Question Header */}
-                  <div className="flex items-start justify-between gap-2">
-                    <h4 className="font-heading font-bold text-xs sm:text-sm text-[#E6ECFA]">
-                      <span className="text-[#FFC700] mr-1.5 font-mono">Q{idx + 1}.</span>
-                      {q.text}
-                    </h4>
-                    <span
-                      className={`px-2 py-0.5 rounded text-[10px] font-extrabold shrink-0 flex items-center gap-1 ${
-                        isCorrect
-                          ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-500/50'
-                          : 'bg-rose-950/60 text-rose-400 border border-rose-500/50'
-                      }`}
-                    >
-                      {isCorrect ? (
-                        <>
-                          <CheckCircle2 className="w-3 h-3" />
-                          <span>Correct</span>
-                        </>
-                      ) : (
-                        <>
-                          <XCircle className="w-3 h-3" />
-                          <span>Wrong</span>
-                        </>
-                      )}
-                    </span>
-                  </div>
+                const chosenOptionText =
+                  !isUnanswered && chosenIdx >= 0 && chosenIdx < optionsList.length
+                    ? optionsList[chosenIdx]
+                    : null;
+                const correctOptionText =
+                  correctIdx >= 0 && correctIdx < optionsList.length
+                    ? optionsList[correctIdx]
+                    : 'Option ' + String.fromCharCode(65 + Math.max(0, correctIdx));
 
-                  {/* Options List with color-coded marks */}
-                  <div className="space-y-1.5">
-                    {q.options.map((optText, oIdx) => {
-                      const letter = String.fromCharCode(65 + oIdx);
-                      const isStudentChoice = studentChosenIdx === oIdx;
-                      const isActualCorrect = correctIdx === oIdx;
+                const bookmarked = isQuestionBookmarked(q.id);
+                const whyNotNotes = matchingKey?.whyNotNotes || {};
 
-                      let optStyle = 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]';
-                      if (isActualCorrect) {
-                        optStyle = 'bg-emerald-950/30 border-emerald-500 text-emerald-200 font-bold';
-                      } else if (isStudentChoice && !isCorrect) {
-                        optStyle = 'bg-rose-950/30 border-rose-500 text-rose-200';
-                      }
+                // Determine student's chosen option key (e.g. 'A', 'B', 'True', 'False')
+                const chosenKey = !isUnanswered
+                  ? isTrueFalse
+                    ? chosenIdx === 0
+                      ? 'TRUE'
+                      : chosenIdx === 1
+                      ? 'FALSE'
+                      : ''
+                    : chosenIdx >= 0
+                    ? String.fromCharCode(65 + chosenIdx)
+                    : ''
+                  : '';
 
-                      return (
-                        <div
-                          key={oIdx}
-                          className={`p-2.5 rounded-xl border flex items-center justify-between gap-2 text-xs transition-colors ${optStyle}`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <span className="w-5 h-5 rounded-full bg-[#121C36] border border-[#24315A] flex items-center justify-center font-bold text-[10px] shrink-0">
-                              {letter}
-                            </span>
-                            <span>{optText}</span>
-                          </div>
+                // Check if the creator provided a specific 'Why not [Option]' note for student's choice
+                const studentChosenWhyNotKey = chosenKey
+                  ? Object.keys(whyNotNotes).find(k => k.toUpperCase() === chosenKey.toUpperCase())
+                  : null;
+                const studentChosenWhyNotText = studentChosenWhyNotKey
+                  ? whyNotNotes[studentChosenWhyNotKey]
+                  : null;
 
-                          <div className="flex items-center gap-1 shrink-0">
-                            {isActualCorrect && (
-                              <span className="px-1.5 py-0.2 rounded bg-emerald-500 text-white font-extrabold text-[9px] flex items-center gap-0.5">
-                                <Check className="w-2.5 h-2.5" />
-                                <span>Correct Answer</span>
-                              </span>
-                            )}
-                            {isStudentChoice && !isActualCorrect && (
-                              <span className="px-1.5 py-0.2 rounded bg-rose-500 text-white font-extrabold text-[9px] flex items-center gap-0.5">
-                                <X className="w-2.5 h-2.5" />
-                                <span>Your Answer</span>
-                              </span>
-                            )}
-                            {isStudentChoice && isActualCorrect && (
-                              <span className="px-1.5 py-0.2 rounded bg-emerald-600 text-white font-extrabold text-[9px]">
-                                Your Answer
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                // Other wrong options notes
+                const otherWhyNotEntries = Object.entries(whyNotNotes).filter(
+                  ([k]) => !studentChosenWhyNotKey || k.toUpperCase() !== studentChosenWhyNotKey.toUpperCase()
+                );
 
-                  {/* Explanation Card */}
-                  {keyItem?.explanation && (
-                    <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
-                      <div className="flex items-center gap-1 text-[11px] font-bold text-[#FFC700]">
-                        <Lightbulb className="w-3.5 h-3.5 text-[#FFC700]" />
-                        <span>Explanation</span>
+                return (
+                  <div
+                    key={q.id}
+                    className={`p-4 rounded-2xl border space-y-3 transition-all ${
+                      isCorrect
+                        ? 'bg-[#121C36] border-emerald-500/40 shadow-sm'
+                        : isUnanswered
+                        ? 'bg-[#121C36] border-amber-500/30'
+                        : 'bg-[#121C36] border-rose-500/40 shadow-sm'
+                    }`}
+                  >
+                    {/* Header: Question Number, Result Badge & Bookmark */}
+                    <div className="flex items-center justify-between gap-2 border-b border-[#24315A] pb-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-heading font-extrabold text-[#FFC700] text-sm">
+                          Question {originalIndex + 1}
+                        </span>
+                        {isCorrect ? (
+                          <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[10px] flex items-center gap-1 border border-emerald-500/30">
+                            <Check className="w-3 h-3" /> Correct
+                          </span>
+                        ) : isUnanswered ? (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] flex items-center gap-1 border border-amber-500/30">
+                            Unanswered
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px] flex items-center gap-1 border border-rose-500/30">
+                            <X className="w-3 h-3" /> Incorrect
+                          </span>
+                        )}
                       </div>
-                      <p className="text-xs text-[#E6ECFA] leading-relaxed">
-                        {keyItem.explanation}
-                      </p>
+
+                      {/* Bookmark Button to Save for Revision */}
+                      <button
+                        type="button"
+                        onClick={() => handleToggleQuestionBookmark(q, matchingKey, originalIndex + 1)}
+                        title={bookmarked ? 'Remove from revision bookmarks' : 'Bookmark question for revision'}
+                        className={`p-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                          bookmarked
+                            ? 'bg-[#FFC700]/15 border-[#FFC700] text-[#FFC700]'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF]'
+                        }`}
+                      >
+                        <Bookmark className={`w-3.5 h-3.5 ${bookmarked ? 'fill-current text-[#FFC700]' : ''}`} />
+                        <span className="text-[10px] hidden sm:inline">
+                          {bookmarked ? 'Bookmarked' : 'Bookmark'}
+                        </span>
+                      </button>
                     </div>
-                  )}
-                </div>
-              );
-            })
+
+                    {/* Question Prompt Text */}
+                    <p className="text-xs sm:text-sm font-bold text-[#E6ECFA] leading-snug">
+                      {q.text}
+                    </p>
+
+                    {/* Answer Comparison: 'Your answer' in red (or grey), 'Correct answer' in green */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                      {/* Your Answer */}
+                      <div
+                        className={`p-3 rounded-xl border text-xs space-y-1 ${
+                          isCorrect
+                            ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                            : isUnanswered
+                            ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
+                            : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                        }`}
+                      >
+                        <span
+                          className={`text-[10px] uppercase font-bold tracking-wider block ${
+                            isCorrect
+                              ? 'text-emerald-400'
+                              : isUnanswered
+                              ? 'text-[#9AA8C7]'
+                              : 'text-rose-400'
+                          }`}
+                        >
+                          Your answer
+                        </span>
+                        {isUnanswered ? (
+                          <span className="font-medium text-[#9AA8C7] italic">Not answered</span>
+                        ) : (
+                          <div className="font-bold flex items-center gap-1.5">
+                            {!isTrueFalse && chosenIdx >= 0 && (
+                              <span className="font-mono text-xs">{String.fromCharCode(65 + chosenIdx)})</span>
+                            )}
+                            <span className={!isCorrect ? 'line-through text-rose-300' : 'text-emerald-200'}>
+                              {chosenOptionText}
+                            </span>
+                            {isCorrect ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
+                            ) : (
+                              <X className="w-3.5 h-3.5 text-rose-400 ml-auto shrink-0" />
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Correct Answer */}
+                      <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/60 text-xs space-y-1 text-emerald-200">
+                        <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider block">
+                          Correct answer
+                        </span>
+                        <div className="font-bold flex items-center gap-1.5">
+                          {!isTrueFalse && correctIdx >= 0 && (
+                            <span className="font-mono text-xs">{String.fromCharCode(65 + correctIdx)})</span>
+                          )}
+                          <span>{correctOptionText}</span>
+                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Multiple Choice Options Note (when student made an error) */}
+                    {!isTrueFalse && !isCorrect && (
+                      <div className="p-2.5 rounded-xl bg-[#0A1224]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1.5">
+                        <span className="font-semibold text-[#E6ECFA] block">Options Overview:</span>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                          {optionsList.map((opt, oIdx) => {
+                            const isChosen = chosenIdx === oIdx;
+                            const isRight = correctIdx === oIdx;
+                            return (
+                              <div
+                                key={oIdx}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] flex items-center justify-between gap-1.5 border ${
+                                  isRight
+                                    ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-200 font-bold'
+                                    : isChosen
+                                    ? 'bg-rose-950/70 border-rose-500/60 text-rose-200 line-through'
+                                    : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7]'
+                                }`}
+                              >
+                                <span>{String.fromCharCode(65 + oIdx)}) {opt}</span>
+                                {isRight && <span className="text-emerald-400 text-[10px] font-bold">✓ Correct</span>}
+                                {isChosen && !isRight && <span className="text-rose-400 text-[10px] font-bold">✗ Your choice</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 'Why this is the answer' Box with Creator's Explanation */}
+                    <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#FFC700]/30 space-y-2">
+                      <div className="flex items-center gap-1.5 text-xs font-bold text-[#FFC700]">
+                        <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                        <span>Why this is the answer:</span>
+                      </div>
+                      {matchingKey?.explanation && matchingKey.explanation.trim() ? (
+                        renderFormattedExplanation(matchingKey.explanation.trim())
+                      ) : (
+                        <p className="text-xs text-[#9AA8C7] italic">
+                          No explanation was written by the quiz creator for this question.
+                        </p>
+                      )}
+                    </div>
+
+                    {/* WRONG OPTION NOTES: 'Why not B' style notes written by the creator */}
+                    {studentChosenWhyNotText && (
+                      <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/40 text-xs space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-rose-400">
+                          <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                          <span>Why not {studentChosenWhyNotKey}:</span>
+                        </div>
+                        <div className="text-rose-100 pl-1">
+                          {renderFormattedExplanation(studentChosenWhyNotText)}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Additional wrong option notes (if author provided them) */}
+                    {otherWhyNotEntries.length > 0 && (
+                      <div className="space-y-1.5 pt-1">
+                        <span className="text-[10px] font-bold text-[#9AA8C7] uppercase tracking-wider block">
+                          Notes on other options:
+                        </span>
+                        <div className="space-y-1.5">
+                          {otherWhyNotEntries.map(([optKey, note]) => (
+                            <div
+                              key={optKey}
+                              className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs space-y-1"
+                            >
+                              <span className="font-bold text-[#60A5FA] block">Why not {optKey}:</span>
+                              <div className="text-[#9AA8C7]">
+                                {renderFormattedExplanation(note)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
     );
   }
 
-  // =========================================================================
-  // SCREEN 3: QUIZZES DIRECTORY (MAIN STUDENT PAGE)
-  // =========================================================================
+  // ==============================================================
+  // SCREEN 4: STUDENT QUIZZES LIST & DIRECTORY
+  // ==============================================================
   return (
-    <div className="space-y-4 pt-1">
-      {/* Page Header */}
-      <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-[#0A1224] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700]">
-              <FileQuestion className="w-4 h-4" />
-            </div>
-            <div>
-              <h2 className="font-heading font-bold text-base text-[#E6ECFA]">
-                Department Quizzes
-              </h2>
-              <p className="text-xs text-[#9AA8C7]">
-                Practice tests &amp; multiple choice mock exams
-              </p>
-            </div>
+    <div className="space-y-4">
+      {/* Top Header Card */}
+      <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#FFC700]/40 flex items-center justify-center text-[#FFC700]">
+            <FileQuestion className="w-5 h-5" />
           </div>
-
-          <span className="px-2.5 py-1 rounded-lg text-xs font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-            {studentDepartment}
-          </span>
+          <div>
+            <h2 className="font-heading font-bold text-base text-[#E6ECFA]">
+              Department Quizzes
+            </h2>
+            <p className="text-xs text-[#9AA8C7]">
+              Practice tests and timed knowledge checks for {studentDepartment}
+            </p>
+          </div>
         </div>
 
-        {/* 1st Sem / 2nd Sem / All Switch and Level Dropdown */}
-        <div className="pt-2 border-t border-[#24315A]/60 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+        <button
+          onClick={fetchData}
+          title="Refresh quizzes"
+          className="self-end sm:self-auto p-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] transition-colors cursor-pointer"
+        >
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#FFC700]' : ''}`} />
+        </button>
+      </div>
+
+      {/* Filter Row: Level dropdown, Semester switcher, Search input */}
+      <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
+          {/* Semester Switcher */}
           <div className="flex items-center p-0.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
-            {(['First Semester', 'Second Semester', 'All'] as const).map(sem => (
+            {(['All', 'First Semester', 'Second Semester'] as const).map(sem => (
               <button
                 key={sem}
                 type="button"
@@ -902,156 +1548,154 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
                 }`}
               >
-                {sem === 'First Semester' ? '1st Sem' : sem === 'Second Semester' ? '2nd Sem' : 'All'}
+                {sem === 'All' ? 'All' : sem === 'First Semester' ? '1st Sem' : '2nd Sem'}
               </button>
             ))}
           </div>
 
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <span className="text-[11px] text-[#9AA8C7] font-semibold">Level:</span>
+          {/* Level Dropdown */}
+          <div className="flex items-center gap-2 self-end sm:self-auto text-xs">
+            <span className="text-[#9AA8C7] text-[11px] font-semibold">Level:</span>
             <select
               value={levelFilter}
               onChange={e => setLevelFilter(e.target.value)}
               className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
             >
               {ACADEMIC_LEVELS.map(lvl => (
-                <option key={lvl} value={lvl}>
-                  {lvl}
-                </option>
+                <option key={lvl} value={lvl}>{lvl}</option>
               ))}
             </select>
           </div>
         </div>
-      </div>
 
-      {/* Search Input */}
-      <div className="relative">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={e => setSearchQuery(e.target.value)}
-          placeholder="Search quizzes by title or course code..."
-          className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF] shadow-sm"
-        />
-        <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-3" />
-        {searchQuery && (
-          <button
-            onClick={() => setSearchQuery('')}
-            className="absolute right-3 top-3 text-[#9AA8C7] hover:text-[#E6ECFA]"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        )}
+        {/* Search input */}
+        <div className="relative">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            placeholder="Search quizzes by title or course code..."
+            className="w-full pl-8 pr-7 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+          />
+          <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2.5" />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2.5 top-2 text-[#9AA8C7] hover:text-[#E6ECFA]"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Quizzes List */}
       {loading ? (
-        <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A]">
-          <RefreshCw className="w-6 h-6 animate-spin text-[#FFC700] mx-auto mb-2" />
+        <div className="p-8 text-center space-y-2">
+          <RefreshCw className="w-6 h-6 animate-spin text-[#FFC700] mx-auto" />
           <p className="text-xs text-[#9AA8C7]">Loading department quizzes...</p>
         </div>
-      ) : error ? (
-        <div className="p-6 rounded-2xl bg-rose-950/30 border border-rose-800/50 text-rose-300 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
-          <span>{error}</span>
-        </div>
       ) : filteredQuizzes.length === 0 ? (
-        <div className="p-12 text-center rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3">
-          <div className="w-12 h-12 rounded-2xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#9AA8C7] mx-auto">
-            <FileQuestion className="w-6 h-6 text-[#9AA8C7]" />
-          </div>
-          <div>
-            <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">No Quizzes Available</h3>
-            <p className="text-xs text-[#9AA8C7] mt-0.5 max-w-sm mx-auto">
-              There are currently no practice quizzes published for this selection. Check back soon or check with your course representative!
-            </p>
-          </div>
+        <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
+          <FileQuestion className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
+          <p className="font-heading font-bold text-sm text-[#E6ECFA]">No quizzes found</p>
+          <p className="text-xs text-[#9AA8C7]">
+            Practice tests published by department administrators and reps will appear here.
+          </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filteredQuizzes.map(quiz => {
             const attempt = attemptsMap[quiz.id];
-            const hasAttempt = Boolean(attempt);
-            const totalQ = quiz.questionCount || quiz.questions?.length || 1;
-            const bestScore = attempt?.bestScore ?? attempt?.score;
-            const bestPct = bestScore !== undefined ? Math.round((bestScore / totalQ) * 100) : null;
+            const hasTaken = Boolean(attempt);
+            const timeLimitMins = quiz.timeLimit || 0;
+            const passRequirement = quiz.passingScore || 70;
 
             return (
               <div
                 key={quiz.id}
-                className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF]/60 flex flex-col justify-between gap-3 shadow-sm transition-all"
+                className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all flex flex-col justify-between space-y-3.5 shadow-sm group"
               >
-                <div>
-                  {/* Top Badges */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-extrabold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono font-black text-sm text-[#FFC700]">
                       {quiz.courseCode}
                     </span>
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A] text-[10px] text-[#9AA8C7]">
+                        {quiz.level}
+                      </span>
+                      <ShareButton
+                        title={`${quiz.courseCode}: ${quiz.title}`}
+                        itemType="quiz"
+                        code={quiz.courseCode}
+                        id={quiz.id}
+                        textDetails={`Practice quiz: ${quiz.questionCount} questions`}
+                        variant="icon"
+                      />
+                    </div>
+                  </div>
 
-                    {/* Best Score Badge */}
-                    {hasAttempt && bestScore !== undefined ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-950/40 text-emerald-400 border border-emerald-500/40 flex items-center gap-1">
-                        <Award className="w-3 h-3" />
-                        <span>Best: {bestScore}/{totalQ} ({bestPct}%)</span>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] group-hover:text-white transition-colors line-clamp-2">
+                    {quiz.title}
+                  </h3>
+
+                  {quiz.instructions && (
+                    <p className="text-xs text-[#9AA8C7] line-clamp-1">
+                      {quiz.instructions}
+                    </p>
+                  )}
+                </div>
+
+                {/* Metadata & Actions */}
+                <div className="pt-2 border-t border-[#24315A]/60 space-y-2.5">
+                  <div className="flex items-center justify-between text-xs text-[#9AA8C7]">
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <FileQuestion className="w-3.5 h-3.5 text-[#2F52FF]" />
+                        <span>{quiz.questionCount} Qs</span>
+                      </span>
+                      <span className="flex items-center gap-1 text-[11px]">
+                        <Clock className="w-3.5 h-3.5 text-[#FFC700]" />
+                        <span>{timeLimitMins > 0 ? `${timeLimitMins}m` : 'Untimed'}</span>
+                      </span>
+                    </div>
+
+                    {/* Best score pill */}
+                    {hasTaken ? (
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        (attempt.bestScore / (attempt.total || 1)) >= (passRequirement / 100)
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : 'bg-amber-500/20 text-amber-300'
+                      }`}>
+                        Best: {attempt.bestScore}/{attempt.total}
                       </span>
                     ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#0A1224] text-[#9AA8C7] border border-[#24315A]">
+                      <span className="text-[11px] text-[#9AA8C7]/70 italic">
                         Not taken
                       </span>
                     )}
                   </div>
 
-                  {/* Title */}
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-2">
-                    {quiz.title}
-                  </h3>
-
-                  {/* Level & Semester Subtitle */}
-                  <p className="text-[11px] text-[#9AA8C7] mt-1">
-                    {quiz.level} &bull; {quiz.semester}
-                  </p>
-
-                  {/* Quiz Details (Questions & Timer) */}
-                  <div className="flex items-center gap-3 text-[11px] text-[#9AA8C7] mt-3 pt-2 border-t border-[#24315A]/60">
-                    <span className="flex items-center gap-1">
-                      <FileQuestion className="w-3.5 h-3.5 text-[#2F52FF]" />
-                      <strong>{totalQ}</strong> Questions
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Clock className="w-3.5 h-3.5 text-[#FFC700]" />
-                      {quiz.timeLimit && quiz.timeLimit > 0 ? `${quiz.timeLimit} mins` : 'No limit'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Card Action Buttons */}
-                <div className="pt-2 border-t border-[#24315A]/60 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleStartQuiz(quiz)}
-                    className="flex-1 py-2 px-3 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white font-heading font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                  >
-                    <span>{hasAttempt ? 'Retake Quiz' : 'Take Quiz'}</span>
-                  </button>
-
-                  <ShareButton
-                    title={`${quiz.courseCode}: ${quiz.title}`}
-                    itemType="quiz"
-                    id={quiz.id}
-                    textDetails={`${quiz.questionCount || quiz.questions?.length || 0} Questions`}
-                    variant="compact"
-                  />
-
-                  {hasAttempt && (
+                  {/* Buttons */}
+                  <div className="flex items-center gap-2">
                     <button
-                      type="button"
-                      onClick={() => handleViewExistingReview(quiz)}
-                      title="View previous attempt results & answers"
-                      className="py-2 px-3 rounded-xl bg-[#0A1224] hover:bg-[#1A2E63] border border-[#24315A] text-xs font-bold text-[#E6ECFA] transition-colors cursor-pointer"
+                      onClick={() => handleOpenIntro(quiz)}
+                      className="flex-1 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold transition-all cursor-pointer text-center shadow-sm"
                     >
-                      Review
+                      {hasTaken ? 'Take Again' : 'Start Quiz'}
                     </button>
-                  )}
+
+                    {hasTaken && (
+                      <button
+                        onClick={() => handleViewExistingReview(quiz)}
+                        className="px-3 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#60A5FA] text-xs font-semibold text-[#E6ECFA] transition-colors cursor-pointer"
+                        title="View previous answers and explanations"
+                      >
+                        Review
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );

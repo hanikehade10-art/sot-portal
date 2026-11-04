@@ -13,6 +13,14 @@ let cachedDb: Firestore | null = null;
 let cachedMessaging: Messaging | null = null;
 
 /**
+ * Checks if the Firebase Service Account JSON is provided in environment variables.
+ */
+export function isFirebaseAdminConfigured(): boolean {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  return Boolean(raw && typeof raw === 'string' && raw.trim().length > 0);
+}
+
+/**
  * Initializes and returns the Firebase Admin SDK instances.
  * Reads the service account JSON from FIREBASE_SERVICE_ACCOUNT environment variable.
  */

@@ -164,34 +164,44 @@ export async function dispatchPushNotification(
     link?: string;
   },
   user?: User | null
-): Promise<{ success: boolean; messageId?: string }> {
+): Promise<{ success: boolean; skipped?: boolean; messageId?: string }> {
   if (!user) {
     console.warn('dispatchPushNotification skipped: User is not authenticated.');
-    return { success: false };
+    return { success: false, skipped: true };
   }
 
-  const idToken = await user.getIdToken();
+  try {
+    const idToken = await user.getIdToken();
 
-  const response = await fetch('/api/send', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${idToken}`
-    },
-    body: JSON.stringify({
-      ...params,
-      idToken
-    })
-  });
+    const response = await fetch('/api/send', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${idToken}`
+      },
+      body: JSON.stringify({
+        ...params,
+        idToken
+      })
+    });
 
-  const data = await response.json().catch(() => ({}));
+    const data = await response.json().catch(() => ({}));
 
-  if (!response.ok) {
-    throw new Error(data.error || 'Failed to dispatch push notification.');
+    if (!response.ok) {
+      console.warn('Push notification dispatch notice:', data.error || response.statusText);
+      return { success: false, skipped: true };
+    }
+
+    if (data.skipped) {
+      return { success: false, skipped: true };
+    }
+
+    return {
+      success: true,
+      messageId: data.messageId
+    };
+  } catch (err: any) {
+    console.warn('Push notification dispatch notice (non-fatal):', err?.message || err);
+    return { success: false, skipped: true };
   }
-
-  return {
-    success: true,
-    messageId: data.messageId
-  };
 }

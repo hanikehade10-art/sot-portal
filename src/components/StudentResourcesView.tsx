@@ -32,6 +32,8 @@ import {
   Link2
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
+import { StudentLessonView } from './StudentLessonView';
+import { QuizItem, UserProfile } from '../types';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -42,6 +44,13 @@ interface StudentResourcesViewProps {
   toggleBookmark: (item: any) => void;
   bookmarks: BookmarkItem[];
   onNavigateLinks?: () => void;
+  studentProfile?: UserProfile | null;
+  onUpdateCompletedTopics?: (completed: string[]) => void;
+  onUpdateLastTopic?: (last: { topicId: string; topicTitle: string; courseId: string; courseCode: string; courseTitle: string }) => void;
+  onTakeQuiz?: (quizId: string) => void;
+  onAskAiAboutTopic?: (contextText: string, topicTitle: string) => void;
+  initialCourseId?: string | null;
+  initialTopicId?: string | null;
 }
 
 type MainResourceTab = 'courses' | 'past-questions' | 'bookmarks';
@@ -58,7 +67,14 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   isBookmarked,
   toggleBookmark,
   bookmarks,
-  onNavigateLinks
+  onNavigateLinks,
+  studentProfile,
+  onUpdateCompletedTopics,
+  onUpdateLastTopic,
+  onTakeQuiz,
+  onAskAiAboutTopic,
+  initialCourseId,
+  initialTopicId
 }) => {
   const [activeTab, setActiveTab] = useState<MainResourceTab>('courses');
 
@@ -69,9 +85,13 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
 
   // Course Detail state (when a course is opened)
-  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(null);
+  const [selectedCourseId, setSelectedCourseId] = useState<string | null>(initialCourseId || null);
   const [courseDetailTab, setCourseDetailTab] = useState<CourseDetailTab>('topics');
   const [expandedTopicIds, setExpandedTopicIds] = useState<Record<string, boolean>>({});
+
+  // Lesson View state (interactive lesson experience)
+  const [selectedLessonTopic, setSelectedLessonTopic] = useState<TopicItem | null>(null);
+  const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
 
   // Past Questions tab course filter
   const [pqCourseFilter, setPqCourseFilter] = useState<string>('All');
@@ -145,9 +165,62 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
     return () => unsub();
   }, [department]);
 
-  // -------------------------------------------------------------
-  // COMPUTED LISTS & TAB COUNTS
-  // -------------------------------------------------------------
+  // Real-time listener for department quizzes (for lesson quiz linking)
+  useEffect(() => {
+    if (!department) return;
+    const q = query(collection(db, 'quizzes'), where('department', '==', department));
+    const unsub = onSnapshot(q, (snap) => {
+      const list: QuizItem[] = [];
+      snap.forEach(d => {
+        list.push({ id: d.id, ...(d.data() as any) });
+      });
+      setQuizzes(list);
+    }, (err) => {
+      console.warn('Quizzes listener notice:', err);
+    });
+    return () => unsub();
+  }, [department]);
+
+  // Handle deep-link props (initialCourseId, initialTopicId)
+  useEffect(() => {
+    if (initialCourseId) {
+      setSelectedCourseId(initialCourseId);
+    }
+  }, [initialCourseId]);
+
+  useEffect(() => {
+    if (initialTopicId && topics.length > 0) {
+      const found = topics.find(t => t.id === initialTopicId);
+      if (found) {
+        setSelectedCourseId(found.courseId);
+        setSelectedLessonTopic(found);
+      }
+    }
+  }, [initialTopicId, topics]);
+
+  // Completed topics helper
+  const completedTopicsList = useMemo(() => {
+    return studentProfile?.completedTopics || [];
+  }, [studentProfile?.completedTopics]);
+
+  const handleToggleTopicCompleted = (topicId: string) => {
+    const isCurrently = completedTopicsList.includes(topicId);
+    const updated = isCurrently
+      ? completedTopicsList.filter(id => id !== topicId)
+      : [...completedTopicsList, topicId];
+    onUpdateCompletedTopics?.(updated);
+  };
+
+  const handleOpenLesson = (topic: TopicItem, course: CourseItem) => {
+    setSelectedLessonTopic(topic);
+    onUpdateLastTopic?.({
+      topicId: topic.id,
+      topicTitle: topic.title,
+      courseId: course.id,
+      courseCode: course.code,
+      courseTitle: course.title
+    });
+  };
   // Filtered courses for active Level and Semester
   const filteredSemesterCourses = useMemo(() => {
     return courses.filter(c => {
@@ -412,8 +485,37 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
       {/* ========================================================= */}
       {activeTab === 'courses' && (
         <div>
-          {/* CASE 1A: NO COURSE OPENED -> CLEAN LIST OF COURSES */}
-          {!selectedCourse ? (
+          {/* CASE 1C: INTERACTIVE LESSON PAGE OPENED */}
+          {selectedCourse && selectedLessonTopic ? (
+            <StudentLessonView
+              course={selectedCourse}
+              topic={selectedLessonTopic}
+              allCourseTopics={courseTopics}
+              isCompleted={completedTopicsList.includes(selectedLessonTopic.id)}
+              onToggleComplete={handleToggleTopicCompleted}
+              onSelectTopic={(t) => handleOpenLesson(t, selectedCourse)}
+              onBackToCourse={() => setSelectedLessonTopic(null)}
+              onBackToCourses={() => {
+                setSelectedLessonTopic(null);
+                setSelectedCourseId(null);
+              }}
+              onStartQuiz={(quizId) => onTakeQuiz?.(quizId)}
+              onAskAiWithContext={(top, crs) =>
+                onAskAiAboutTopic?.(
+                  top.notes || top.summary || top.title,
+                  `${crs.code}: ${top.title}`
+                )
+              }
+              isBookmarked={isBookmarked}
+              toggleBookmark={toggleBookmark}
+              linkedQuiz={
+                selectedLessonTopic.linkedQuizId
+                  ? quizzes.find(q => q.id === selectedLessonTopic.linkedQuizId)
+                  : null
+              }
+            />
+          ) : !selectedCourse ? (
+            /* CASE 1A: NO COURSE OPENED -> CLEAN LIST OF COURSES WITH PROGRESS RINGS */
             <div className="space-y-3">
               <div className="flex items-center justify-between text-xs text-[#9AA8C7] px-1">
                 <span>
@@ -438,6 +540,11 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {displayedCourses.map(course => {
                     const courseTopicsList = topics.filter(t => t.courseId === course.id);
+                    const courseCompletedTopics = courseTopicsList.filter(t => completedTopicsList.includes(t.id));
+                    const progressPct = courseTopicsList.length > 0
+                      ? Math.round((courseCompletedTopics.length / courseTopicsList.length) * 100)
+                      : 0;
+
                     const coursePQsCount = resources.filter(
                       r => (r.courseId === course.id || r.courseCode === course.code) &&
                            (r.type === 'Past Question' || r.category === 'Past Question')
@@ -453,11 +560,43 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         }}
                         className="p-4 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all cursor-pointer group flex flex-col justify-between space-y-3 shadow-sm hover:shadow-[0_4px_20px_rgba(47,82,255,0.12)]"
                       >
-                        <div className="space-y-1.5">
+                        <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
-                            <span className="font-heading font-extrabold text-sm text-[#FFC700] tracking-wide">
-                              {course.code}
-                            </span>
+                            {/* Course Code with SVG Progress Ring */}
+                            <div className="flex items-center gap-2.5">
+                              <div className="relative w-9 h-9 flex items-center justify-center shrink-0">
+                                <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                                  <path
+                                    className="text-[#0A1224]"
+                                    strokeWidth="3.5"
+                                    stroke="currentColor"
+                                    fill="none"
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  />
+                                  <path
+                                    className="text-[#FFC700] transition-all duration-500 ease-out"
+                                    strokeDasharray={`${progressPct}, 100`}
+                                    strokeWidth="3.5"
+                                    strokeLinecap="round"
+                                    stroke="currentColor"
+                                    fill="none"
+                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                                  />
+                                </svg>
+                                <span className="absolute text-[8px] font-bold text-[#FFC700]">
+                                  {progressPct}%
+                                </span>
+                              </div>
+                              <div>
+                                <span className="font-heading font-extrabold text-sm text-[#FFC700] tracking-wide block leading-tight">
+                                  {course.code}
+                                </span>
+                                <span className="text-[10px] text-[#9AA8C7]">
+                                  {courseCompletedTopics.length}/{courseTopicsList.length} completed
+                                </span>
+                              </div>
+                            </div>
+
                             <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
                               <span className="px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A] text-[10px] font-bold text-[#E6ECFA]">
                                 {course.units || 3} Units
@@ -508,7 +647,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                             )}
                           </div>
                           <span className="text-[11px] font-semibold text-[#FFC700] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
-                            <span>Open</span>
+                            <span>Study Course</span>
                             <ChevronRight className="w-3.5 h-3.5" />
                           </span>
                         </div>
@@ -519,13 +658,16 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
               )}
             </div>
           ) : (
-            /* CASE 1B: COURSE PAGE OPENED -> TABS: TOPICS, PAST QUESTIONS, MATERIALS */
+            /* CASE 1B: COURSE PAGE OPENED -> TABS: TOPICS & MATERIALS */
             <div className="space-y-4">
               {/* Back Bar & Course Header */}
               <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3">
                 <div className="flex items-center justify-between gap-2">
                   <button
-                    onClick={() => setSelectedCourseId(null)}
+                    onClick={() => {
+                      setSelectedLessonTopic(null);
+                      setSelectedCourseId(null);
+                    }}
                     className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer"
                   >
                     <ArrowLeft className="w-3.5 h-3.5" />
@@ -605,7 +747,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 </div>
               </div>
 
-              {/* TAB 1: TOPICS (EXPANDABLE LIST WITH VIDEOS, NOTES & LINKS) */}
+              {/* TAB 1: TOPICS (STRUCTURED LESSON TOPICS) */}
               {courseDetailTab === 'topics' && (
                 <div className="space-y-3">
                   {courseTopics.length === 0 ? (
@@ -624,30 +766,57 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         const items = getTopicItems(topic.id);
                         const isExpanded = expandedTopicIds[topic.id] !== false; // default expanded
                         const topicBookmarked = isBookmarked('topic', topic.id);
+                        const isTopicDone = completedTopicsList.includes(topic.id);
 
                         return (
                           <div
                             key={topic.id}
-                            className="rounded-xl bg-[#121C36] border border-[#24315A] overflow-hidden transition-all shadow-sm"
+                            className={`rounded-xl bg-[#121C36] border transition-all shadow-sm ${
+                              isTopicDone ? 'border-emerald-500/40 bg-[#0c182c]' : 'border-[#24315A]'
+                            }`}
                           >
                             {/* Topic Card Header */}
                             <div
-                              onClick={() => toggleTopicExpand(topic.id)}
+                              onClick={() => handleOpenLesson(topic, selectedCourse)}
                               className="p-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-[#1A2E63]/40 transition-colors"
                             >
-                              <div className="flex items-center gap-3 min-w-0">
-                                <span className="w-6 h-6 rounded-md bg-[#0A1224] border border-[#24315A] text-[#FFC700] font-bold text-xs flex items-center justify-center shrink-0">
-                                  {idx + 1}
+                              <div className="flex items-center gap-3 min-w-0 flex-wrap">
+                                <span className={`w-6 h-6 rounded-md border font-bold text-xs flex items-center justify-center shrink-0 ${
+                                  isTopicDone
+                                    ? 'bg-emerald-950/60 border-emerald-500 text-emerald-400'
+                                    : 'bg-[#0A1224] border-[#24315A] text-[#FFC700]'
+                                }`}>
+                                  {isTopicDone ? '✓' : idx + 1}
                                 </span>
-                                <h4 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
-                                  {topic.title}
-                                </h4>
+                                <div>
+                                  <h4 className="font-heading font-bold text-sm text-[#E6ECFA] hover:text-[#FFC700] transition-colors break-words">
+                                    {topic.title}
+                                  </h4>
+                                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#9AA8C7] flex-wrap">
+                                    <span>{topic.estimatedMinutes || 15} mins read</span>
+                                    {isTopicDone && (
+                                      <span className="text-emerald-400 font-bold flex items-center gap-0.5">
+                                        • Completed
+                                      </span>
+                                    )}
+                                    {topic.videoUrl && (
+                                      <span className="text-rose-400 font-semibold">• Video available</span>
+                                    )}
+                                    {topic.linkedQuizId && (
+                                      <span className="text-[#FFC700] font-semibold">• Practice quiz</span>
+                                    )}
+                                  </div>
+                                </div>
                               </div>
 
                               <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                <span className="text-[11px] text-[#9AA8C7] hidden sm:inline">
-                                  {items.length} {items.length === 1 ? 'item' : 'items'}
-                                </span>
+                                <button
+                                  onClick={() => handleOpenLesson(topic, selectedCourse)}
+                                  className="px-3 py-1 rounded-lg bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                                >
+                                  <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                                  <span className="hidden sm:inline">Study</span>
+                                </button>
 
                                 <button
                                   onClick={() => toggleBookmark({
@@ -670,6 +839,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                 <button
                                   onClick={() => toggleTopicExpand(topic.id)}
                                   className="p-1 text-[#9AA8C7] hover:text-[#E6ECFA]"
+                                  title="Toggle resources"
                                 >
                                   {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                                 </button>

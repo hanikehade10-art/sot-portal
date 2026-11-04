@@ -11,7 +11,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, auth } from '../lib/firebase';
-import { CourseItem, TopicItem, ResourceItem, ResourceType } from '../types';
+import { CourseItem, TopicItem, ResourceItem, ResourceType, QuizItem } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import {
   normalizeCourseLevel,
@@ -20,6 +20,7 @@ import {
   getYouTubeEmbedUrl
 } from '../data/coursesAndTimetables';
 import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
+import { logActivity } from '../lib/activityLogger';
 import {
   BookOpen,
   Plus,
@@ -40,19 +41,33 @@ import {
   FolderOpen,
   Play,
   X,
-  RefreshCw
+  RefreshCw,
+  Clock,
+  Eye,
+  List,
+  Bold,
+  Heading,
+  Check
 } from 'lucide-react';
 
 const ACADEMIC_LEVELS: Array<'ND1' | 'ND2' | 'HND1' | 'HND2'> = ['ND1', 'ND2', 'HND1', 'HND2'];
 const SEMESTERS: Array<'First Semester' | 'Second Semester'> = ['First Semester', 'Second Semester'];
 
 interface AdminCoursesManagerProps {
-  onNotify?: (msg: string) => void;
+  onNotify?: (msg?: string) => void;
+  userDepartment?: string;
+  isRepMode?: boolean;
 }
 
-export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
-  // Filters
-  const [selectedDept, setSelectedDept] = useState<string>(SOT_DEPARTMENTS_LIST[0]);
+export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
+  onNotify,
+  userDepartment,
+  isRepMode
+}) => {
+  // Filters (locked to user's department for Reps)
+  const [selectedDept, setSelectedDept] = useState<string>(
+    userDepartment || SOT_DEPARTMENTS_LIST[0]
+  );
   const [selectedLevel, setSelectedLevel] = useState<'ND1' | 'ND2' | 'HND1' | 'HND2'>('ND1');
   const [selectedSemester, setSelectedSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
   const [searchQuery, setSearchQuery] = useState('');
@@ -122,7 +137,135 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
   });
   const [savingResource, setSavingResource] = useState(false);
 
-  // Fetch all courses, topics, and resources
+  // Lesson Editor State (Full Interactive Learning Experience)
+  const [showLessonModal, setShowLessonModal] = useState(false);
+  const [editingLessonTopic, setEditingLessonTopic] = useState<TopicItem | null>(null);
+  const [lessonTitle, setLessonTitle] = useState('');
+  const [lessonEstimatedMinutes, setLessonEstimatedMinutes] = useState('15');
+  const [lessonVideoUrl, setLessonVideoUrl] = useState('');
+  const [lessonNotes, setLessonNotes] = useState('');
+  const [lessonSummary, setLessonSummary] = useState('');
+  const [lessonFurtherReading, setLessonFurtherReading] = useState<Array<{ title: string; url: string }>>([]);
+  const [lessonOrder, setLessonOrder] = useState<number>(1);
+  const [lessonLinkedQuizId, setLessonLinkedQuizId] = useState<string>('');
+  const [lessonNotify, setLessonNotify] = useState<boolean>(true);
+  const [lessonLivePreview, setLessonLivePreview] = useState<boolean>(false);
+  const [savingLesson, setSavingLesson] = useState(false);
+  const [availableQuizzes, setAvailableQuizzes] = useState<QuizItem[]>([]);
+
+  // Open Lesson Editor
+  const handleOpenLessonEditor = (topic: TopicItem) => {
+    setEditingLessonTopic(topic);
+    setLessonTitle(topic.title || '');
+    setLessonEstimatedMinutes(topic.estimatedMinutes ? String(topic.estimatedMinutes) : '15');
+    setLessonVideoUrl(topic.videoUrl || '');
+    setLessonNotes(topic.notes || '');
+    setLessonSummary(topic.summary || '');
+    setLessonFurtherReading(topic.furtherReading && topic.furtherReading.length > 0 ? [...topic.furtherReading] : []);
+    setLessonOrder(topic.order || 1);
+    setLessonLinkedQuizId(topic.linkedQuizId || '');
+    setLessonNotify(true);
+    setLessonLivePreview(false);
+    setShowLessonModal(true);
+  };
+
+  // Add Further Reading Link
+  const handleAddFurtherReadingLink = () => {
+    setLessonFurtherReading(prev => [...prev, { title: '', url: '' }]);
+  };
+
+  const handleUpdateFurtherReadingLink = (index: number, field: 'title' | 'url', value: string) => {
+    setLessonFurtherReading(prev => {
+      const next = [...prev];
+      next[index] = { ...next[index], [field]: value };
+      return next;
+    });
+  };
+
+  const handleRemoveFurtherReadingLink = (index: number) => {
+    setLessonFurtherReading(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // Insert formatting into notes
+  const insertFormatting = (prefix: string, suffix: string = '') => {
+    setLessonNotes(prev => `${prev}${prev ? '\n' : ''}${prefix} ${suffix}`);
+  };
+
+  // Save Lesson Content
+  const handleSaveLesson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLessonTopic || !currentManagingCourse) return;
+    if (!lessonTitle.trim()) {
+      showError('Lesson topic title is required.');
+      return;
+    }
+
+    setSavingLesson(true);
+    try {
+      const nowIso = new Date().toISOString();
+      const parsedMinutes = Number(lessonEstimatedMinutes);
+      const estMinutes = !isNaN(parsedMinutes) && parsedMinutes > 0 ? Math.round(parsedMinutes) : 15;
+
+      const cleanReading = lessonFurtherReading
+        .map(r => ({ title: r.title.trim(), url: r.url.trim() }))
+        .filter(r => r.title && r.url);
+
+      const updatePayload: Partial<TopicItem> = {
+        title: lessonTitle.trim(),
+        estimatedMinutes: estMinutes,
+        videoUrl: lessonVideoUrl.trim() || undefined,
+        notes: lessonNotes,
+        summary: lessonSummary.trim() || undefined,
+        furtherReading: cleanReading.length > 0 ? cleanReading : undefined,
+        order: Number(lessonOrder) || 1,
+        linkedQuizId: lessonLinkedQuizId.trim() || undefined,
+        updatedAt: nowIso
+      };
+
+      await updateDoc(doc(db, 'topics', editingLessonTopic.id), updatePayload as any);
+
+      setTopics(prev =>
+        prev.map(t => (t.id === editingLessonTopic.id ? { ...t, ...updatePayload } : t))
+      );
+
+      // Record Activity
+      if (auth.currentUser) {
+        await logActivity({
+          uid: auth.currentUser.uid,
+          email: auth.currentUser.email || 'Admin/Rep',
+          role: isRepMode ? 'Rep' : 'Admin',
+          action: 'Updated',
+          itemType: 'Topic',
+          title: `${currentManagingCourse.code}: ${lessonTitle.trim()}`
+        }).catch(() => {});
+      }
+
+      // Notify students if requested
+      if (lessonNotify && auth.currentUser) {
+        const topicPushSlug = `dept-${getDepartmentTopicSlug(currentManagingCourse.department)}-${currentManagingCourse.level.toLowerCase()}`;
+        dispatchPushNotification(
+          {
+            topic: topicPushSlug,
+            title: `Lesson Updated: ${currentManagingCourse.code}`,
+            body: `${lessonTitle.trim()} notes and study materials are now live!`,
+            link: '/dashboard?tab=courses'
+          },
+          auth.currentUser
+        ).catch(e => console.warn('Lesson push error:', e));
+      }
+
+      showSaved('Saved');
+      setShowLessonModal(false);
+      setEditingLessonTopic(null);
+    } catch (err: any) {
+      console.error('Error saving lesson:', err);
+      showError(err.message || 'Failed to save lesson content.');
+    } finally {
+      setSavingLesson(false);
+    }
+  };
+
+  // Fetch all courses, topics, resources, and quizzes
   const loadData = async () => {
     setLoading(true);
     try {
@@ -150,6 +293,18 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
         rList.push({ id: d.id, ...(d.data() as any) });
       });
       setResources(rList);
+
+      // 4. Quizzes
+      try {
+        const qSnap = await getDocs(collection(db, 'quizzes'));
+        const qList: QuizItem[] = [];
+        qSnap.forEach(d => {
+          qList.push({ id: d.id, ...(d.data() as any) });
+        });
+        setAvailableQuizzes(qList);
+      } catch (qErr) {
+        console.warn('Could not load quizzes for lesson linker:', qErr);
+      }
     } catch (err: any) {
       console.error('Error loading courses/topics/resources:', err);
       showError(err.message || 'Failed to load course data from Firestore.');
@@ -1013,20 +1168,62 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                       key={topic.id}
                       className="p-3.5 rounded-xl bg-[#0A1224] border border-[#1E2E52] space-y-3 hover:border-[#24315A] transition-all"
                     >
-                      {/* Topic Header with Reorder, Edit & Delete */}
+                      {/* Topic Header with Reorder, Edit Lesson, Edit Title & Delete */}
                       <div className="flex items-start sm:items-center justify-between gap-2 flex-wrap">
-                        <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
                           {/* Order index pill */}
                           <span className="w-6 h-6 rounded-md bg-[#121C36] border border-[#24315A] text-[#FFC700] font-bold text-xs flex items-center justify-center shrink-0">
                             {index + 1}
                           </span>
-                          <h4 className="font-heading font-bold text-sm text-[#E6ECFA] break-words">
+                          <h4
+                            onClick={() => handleOpenLessonEditor(topic)}
+                            className="font-heading font-bold text-sm text-[#E6ECFA] hover:text-[#FFC700] cursor-pointer break-words transition-colors"
+                            title="Click to edit lesson content"
+                          >
                             {topic.title}
                           </h4>
+
+                          {/* Chips: Estimated read time, video indicator, notes indicator, quiz linked */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A] text-[10px] font-semibold text-[#9AA8C7] flex items-center gap-1">
+                              <Clock className="w-2.5 h-2.5 text-[#FFC700]" />
+                              <span>{topic.estimatedMinutes || 15}m</span>
+                            </span>
+
+                            {topic.videoUrl && (
+                              <span className="px-1.5 py-0.5 rounded bg-rose-950/40 border border-rose-800/50 text-rose-300 text-[10px] font-bold flex items-center gap-1">
+                                <Video className="w-2.5 h-2.5" />
+                                <span>Video</span>
+                              </span>
+                            )}
+
+                            {topic.notes && (
+                              <span className="px-1.5 py-0.5 rounded bg-[#2F52FF]/20 border border-[#2F52FF]/40 text-[#60A5FA] text-[10px] font-bold flex items-center gap-1">
+                                <FileText className="w-2.5 h-2.5" />
+                                <span>Notes</span>
+                              </span>
+                            )}
+
+                            {topic.linkedQuizId && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-950/40 border border-emerald-800/50 text-emerald-300 text-[10px] font-bold flex items-center gap-1">
+                                <FileQuestion className="w-2.5 h-2.5" />
+                                <span>Quiz</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Controls: Reorder buttons, Edit, Delete */}
-                        <div className="flex items-center gap-1 shrink-0 ml-auto">
+                        {/* Controls: Edit Lesson button, Reorder buttons, Edit Title, Delete */}
+                        <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+                          <button
+                            onClick={() => handleOpenLessonEditor(topic)}
+                            className="px-2.5 py-1 rounded-lg bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-[0_0_10px_rgba(47,82,255,0.3)]"
+                            title="Open full lesson editor"
+                          >
+                            <BookOpen className="w-3.5 h-3.5" />
+                            <span>Edit Lesson</span>
+                          </button>
+
                           <button
                             disabled={isFirst}
                             onClick={() => handleMoveTopic(topic, 'up')}
@@ -1045,8 +1242,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                           </button>
                           <button
                             onClick={() => handleOpenEditTopic(topic)}
-                            className="p-1 rounded text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#1E2E52] cursor-pointer ml-1"
-                            title="Edit topic title"
+                            className="p-1 rounded text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#1E2E52] cursor-pointer"
+                            title="Edit topic title only"
                           >
                             <Edit2 className="w-3.5 h-3.5" />
                           </button>
@@ -1540,20 +1737,407 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
                 </div>
               )}
 
-              <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
+              <div className="flex justify-end gap-2 pt-2 border-t border-[#1E2E52]">
                 <button
                   type="button"
                   onClick={() => setResourceModalConfig(prev => ({ ...prev, isOpen: false }))}
-                  className="px-3.5 py-1.5 rounded-lg border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                  className="px-3 py-1.5 rounded-lg border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-[#E6ECFA]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={savingResource}
+                  className="px-4 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold transition-all shadow-[0_0_12px_rgba(47,82,255,0.4)] disabled:opacity-50"
+                >
+                  {savingResource ? 'Saving...' : 'Save Resource'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* --------------------------------------------------------- */}
+      {/* MODAL 6: ADMIN LESSON EDITOR (TOPIC LEARNING EXPERIENCE)   */}
+      {/* --------------------------------------------------------- */}
+      {showLessonModal && editingLessonTopic && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/85 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-3xl max-h-[92vh] rounded-2xl bg-[#0F1E36] border border-[#1E2E52] flex flex-col shadow-2xl overflow-hidden my-auto">
+            {/* Header */}
+            <div className="p-4 border-b border-[#1E2E52] flex items-center justify-between bg-[#070D1A]/90">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-[#121C36] border border-[#FFC700]/50 flex items-center justify-center text-[#FFC700]">
+                  <BookOpen className="w-4 h-4" />
+                </div>
+                <div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                    Lesson Editor: {currentManagingCourse?.code}
+                  </h3>
+                  <p className="text-[10px] text-[#9AA8C7]">
+                    Edit syllabus notes, video embed, summary, reading links, and linked quiz
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowLessonModal(false);
+                  setEditingLessonTopic(null);
+                }}
+                className="p-1.5 rounded-lg bg-[#121C36] text-[#9AA8C7] hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Scrollable Form Body */}
+            <form onSubmit={handleSaveLesson} className="flex-1 overflow-y-auto p-4 space-y-4 text-xs">
+              {/* Feedback banners */}
+              {errorMessage && (
+                <div className="p-3 rounded-xl bg-rose-950/40 border border-rose-800 text-rose-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+              {savedMessage && (
+                <div className="p-3 rounded-xl bg-emerald-950/40 border border-emerald-800 text-emerald-300 flex items-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span>{savedMessage}</span>
+                </div>
+              )}
+
+              {/* Title & Timing Row */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Topic Title *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={lessonTitle}
+                      onChange={e => setLessonTitle(e.target.value)}
+                      placeholder="e.g. Overview of Operating Systems"
+                      className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Est. Minutes
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min={1}
+                        max={180}
+                        value={lessonEstimatedMinutes}
+                        onChange={e => setLessonEstimatedMinutes(e.target.value)}
+                        placeholder="15"
+                        className="w-full px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-center font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF]"
+                      />
+                      <span className="text-xs text-[#9AA8C7]">mins</span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Syllabus Order
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      value={lessonOrder}
+                      onChange={e => setLessonOrder(Number(e.target.value) || 1)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-center font-bold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+                </div>
+
+                {/* Video URL with Live Preview */}
+                <div>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <Video className="w-3.5 h-3.5 text-rose-400" />
+                      <span>Video Tutorial Link (YouTube link or video URL)</span>
+                    </span>
+                    {lessonVideoUrl && getYouTubeEmbedUrl(lessonVideoUrl) && (
+                      <span className="text-[10px] text-emerald-400 font-bold">YouTube Embed Detected</span>
+                    )}
+                  </label>
+                  <input
+                    type="url"
+                    value={lessonVideoUrl}
+                    onChange={e => setLessonVideoUrl(e.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  />
+
+                  {lessonVideoUrl && getYouTubeEmbedUrl(lessonVideoUrl) && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-[#24315A] aspect-video max-h-52 bg-black">
+                      <iframe
+                        src={getYouTubeEmbedUrl(lessonVideoUrl)!}
+                        title="Video Preview"
+                        className="w-full h-full"
+                        allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                        allowFullScreen
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Lesson Notes with Formatting Toolbar and Live Preview */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-2.5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <span className="text-[10px] uppercase font-bold text-[#FFC700] tracking-wider block">
+                    Lesson Notes (Text with Section Headings &amp; Bullets)
+                  </span>
+
+                  {/* Formatting Toolbar */}
+                  <div className="flex items-center gap-1 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('# Section Heading')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
+                      title="Add Level 1 Heading"
+                    >
+                      # H1
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('## Subheading')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
+                      title="Add Level 2 Heading"
+                    >
+                      ## H2
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('**bold text**')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
+                      title="Bold text"
+                    >
+                      **B**
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('• Key concept')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
+                      title="Bullet point"
+                    >
+                      • List
+                    </button>
+
+                    <div className="h-4 w-[1px] bg-[#24315A] mx-1" />
+
+                    {/* Preview Toggle */}
+                    <div className="flex items-center p-0.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52]">
+                      <button
+                        type="button"
+                        onClick={() => setLessonLivePreview(false)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors ${
+                          !lessonLivePreview
+                            ? 'bg-[#2F52FF] text-white shadow-sm'
+                            : 'text-[#9AA8C7] hover:text-white'
+                        }`}
+                      >
+                        Editor
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setLessonLivePreview(true)}
+                        className={`px-2 py-0.5 rounded text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1 ${
+                          lessonLivePreview
+                            ? 'bg-[#2F52FF] text-white shadow-sm'
+                            : 'text-[#9AA8C7] hover:text-white'
+                        }`}
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Preview</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {!lessonLivePreview ? (
+                  <textarea
+                    rows={10}
+                    value={lessonNotes}
+                    onChange={e => setLessonNotes(e.target.value)}
+                    placeholder={`# 1. Introduction to the Topic\nWrite the overview of the topic here...\n\n## Core Principles\n• Point one explaining the mechanism\n• Point two covering real-world applications\n\n# 2. Key Architecture & Diagrams\nDetails about system design and workflow...`}
+                    className="w-full p-3 rounded-xl bg-[#0F1E36] border border-[#1E2E52] font-mono text-xs text-[#E6ECFA] leading-relaxed placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
+                  />
+                ) : (
+                  <div className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] min-h-[200px] max-h-72 overflow-y-auto space-y-3">
+                    {!lessonNotes.trim() ? (
+                      <p className="text-xs text-[#9AA8C7] italic">No notes entered yet. Type notes above or use the formatting buttons.</p>
+                    ) : (
+                      lessonNotes.split('\n').map((line, idx) => {
+                        const trimmed = line.trim();
+                        if (trimmed.startsWith('# ')) {
+                          return (
+                            <h3 key={idx} className="font-heading font-extrabold text-sm text-[#FFC700] pt-2 pb-1 border-b border-[#24315A]/60">
+                              {trimmed.replace(/^#\s+/, '')}
+                            </h3>
+                          );
+                        }
+                        if (trimmed.startsWith('## ')) {
+                          return (
+                            <h4 key={idx} className="font-heading font-bold text-xs text-[#60A5FA] pt-1.5">
+                              {trimmed.replace(/^##\s+/, '')}
+                            </h4>
+                          );
+                        }
+                        if (trimmed.startsWith('• ') || trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
+                          return (
+                            <div key={idx} className="flex items-start gap-2 pl-2 text-xs text-[#E6ECFA]">
+                              <span className="text-[#FFC700] font-bold">•</span>
+                              <span>{trimmed.replace(/^[•\-\*]\s+/, '')}</span>
+                            </div>
+                          );
+                        }
+                        if (!trimmed) {
+                          return <div key={idx} className="h-1.5" />;
+                        }
+                        return (
+                          <p key={idx} className="text-xs text-[#E6ECFA] leading-relaxed">
+                            {trimmed}
+                          </p>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Highlighted Summary Box */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-1.5">
+                <label className="block text-[11px] font-semibold text-[#FFC700] uppercase tracking-wider">
+                  Highlighted Summary (Revision Takeaway Box)
+                </label>
+                <textarea
+                  rows={3}
+                  value={lessonSummary}
+                  onChange={e => setLessonSummary(e.target.value)}
+                  placeholder="Key summary points students should remember before taking exams or quizzes..."
+                  className="w-full px-3 py-2 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
+              {/* Further Reading Links */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] uppercase font-bold text-[#60A5FA] tracking-wider block">
+                    Further Reading (References &amp; Recommended Links)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleAddFurtherReadingLink}
+                    className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#60A5FA] hover:text-white font-bold cursor-pointer"
+                  >
+                    + Add Link
+                  </button>
+                </div>
+
+                {lessonFurtherReading.length === 0 ? (
+                  <p className="text-[11px] text-[#9AA8C7] italic">No reference links added yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {lessonFurtherReading.map((item, idx) => (
+                      <div key={idx} className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={item.title}
+                          onChange={e => handleUpdateFurtherReadingLink(idx, 'title', e.target.value)}
+                          placeholder="Link Title (e.g. GeeksforGeeks OS Architecture)"
+                          className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                        />
+                        <input
+                          type="url"
+                          value={item.url}
+                          onChange={e => handleUpdateFurtherReadingLink(idx, 'url', e.target.value)}
+                          placeholder="https://..."
+                          className="flex-1 px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveFurtherReadingLink(idx)}
+                          className="p-1.5 rounded-lg bg-[#0F1E36] text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 cursor-pointer"
+                          title="Remove link"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Linked Quiz Selector */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-1.5">
+                <label className="block text-[11px] font-semibold text-[#E6ECFA] flex items-center gap-1.5">
+                  <FileQuestion className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <span>Linked Quiz (Taken after finishing this topic)</span>
+                </label>
+                <select
+                  value={lessonLinkedQuizId}
+                  onChange={e => setLessonLinkedQuizId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF]"
+                >
+                  <option value="">No linked quiz</option>
+                  {availableQuizzes
+                    .filter(
+                      q =>
+                        !currentManagingCourse ||
+                        !q.courseCode ||
+                        q.courseCode === currentManagingCourse.code ||
+                        q.department === currentManagingCourse.department
+                    )
+                    .map(quiz => (
+                      <option key={quiz.id} value={quiz.id}>
+                        {quiz.courseCode}: {quiz.title} ({quiz.questionCount || quiz.questions?.length || 0} questions)
+                      </option>
+                    ))}
+                </select>
+                <p className="text-[10px] text-[#9AA8C7]">
+                  Students will see a "Take Quiz" button at the bottom of the lesson card. Passing this quiz automatically marks the topic complete.
+                </p>
+              </div>
+
+              {/* Notification toggle */}
+              <div className="flex items-center gap-2 pt-1 pb-1">
+                <input
+                  type="checkbox"
+                  id="notifyLessonStudentsCheck"
+                  checked={lessonNotify}
+                  onChange={e => setLessonNotify(e.target.checked)}
+                  className="w-4 h-4 rounded bg-[#070D1A] border border-[#1E2E52] text-[#2F52FF] focus:ring-0 cursor-pointer"
+                />
+                <label htmlFor="notifyLessonStudentsCheck" className="text-xs font-semibold text-[#E6ECFA] cursor-pointer select-none">
+                  Notify students (Phone push notification to {currentManagingCourse?.department} {currentManagingCourse?.level})
+                </label>
+              </div>
+
+              {/* Footer Buttons */}
+              <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLessonModal(false);
+                    setEditingLessonTopic(null);
+                  }}
+                  className="px-3.5 py-1.5 rounded-lg border border-[#1E2E52] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingLesson}
                   className="px-4 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold transition-all cursor-pointer shadow-[0_0_12px_rgba(47,82,255,0.4)] disabled:opacity-50"
                 >
-                  {savingResource ? 'Saving...' : 'Add Item'}
+                  {savingLesson ? 'Saving...' : 'Save Lesson'}
                 </button>
               </div>
             </form>
@@ -1563,3 +2147,4 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = () => {
     </div>
   );
 };
+

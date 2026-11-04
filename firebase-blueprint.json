@@ -47,6 +47,12 @@
           "type": "string",
           "format": "date-time"
         },
+        "completedTopics": {
+          "type": "array"
+        },
+        "lastTopic": {
+          "type": "object"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -75,7 +81,7 @@
     },
     "TopicItem": {
       "title": "TopicItem",
-      "description": "Syllabus topic belonging to a course, ordered sequentially",
+      "description": "Syllabus topic belonging to a course, ordered sequentially with lesson content",
       "type": "object",
       "properties": {
         "courseId": { "type": "string", "maxLength": 128 },
@@ -84,6 +90,12 @@
         "semester": { "type": "string" },
         "title": { "type": "string", "maxLength": 300 },
         "order": { "type": "number" },
+        "estimatedMinutes": { "type": "number" },
+        "videoUrl": { "type": "string" },
+        "notes": { "type": "string" },
+        "summary": { "type": "string" },
+        "furtherReading": { "type": "array" },
+        "linkedQuizId": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["courseId", "department", "level", "semester", "title", "order"]
@@ -200,9 +212,13 @@
         "level": { "type": "string", "maxLength": 32 },
         "semester": { "type": "string", "maxLength": 32 },
         "courseCode": { "type": "string", "maxLength": 32 },
+        "topicId": { "type": "string", "maxLength": 128 },
         "title": { "type": "string", "maxLength": 200 },
         "instructions": { "type": "string", "maxLength": 2000 },
         "timeLimit": { "type": "number" },
+        "passingScore": { "type": "number" },
+        "attemptsAllowed": { "type": "number" },
+        "pointsPerQuestion": { "type": "number" },
         "shuffle": { "type": "boolean" },
         "published": { "type": "boolean" },
         "questionCount": { "type": "number" },
@@ -237,6 +253,7 @@
         "total": { "type": "number" },
         "attempts": { "type": "number" },
         "bestScore": { "type": "number" },
+        "aiExplanations": { "type": "object", "description": "Cached AI generated explanations keyed by questionId" },
         "submittedAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
