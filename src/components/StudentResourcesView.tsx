@@ -34,6 +34,7 @@ import {
 import { ShareButton } from './ShareButton';
 import { StudentLessonView } from './StudentLessonView';
 import { QuizItem, UserProfile } from '../types';
+import { logStudentActivity } from '../lib/studentActivity';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -1169,12 +1170,24 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                       </button>
 
                       <button
-                        onClick={() => setViewerItem({
-                          title: pq.title,
-                          url: pq.url,
-                          courseCode: pq.courseCode,
-                          type: 'Past Question'
-                        })}
+                        onClick={() => {
+                          if (studentProfile?.uid) {
+                            logStudentActivity({
+                              uid: studentProfile.uid,
+                              name: studentProfile.fullName || 'Student',
+                              department: pq.department || studentProfile.department,
+                              level: pq.level || studentProfile.level,
+                              type: 'past question opened',
+                              title: `${pq.courseCode ? pq.courseCode + ' ' : ''}${pq.title}`
+                            });
+                          }
+                          setViewerItem({
+                            title: pq.title,
+                            url: pq.url,
+                            courseCode: pq.courseCode,
+                            type: 'Past Question'
+                          });
+                        }}
                         className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                       >
                         <Eye className="w-3.5 h-3.5" />
@@ -1185,6 +1198,18 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         href={pq.url}
                         target="_blank"
                         rel="noreferrer"
+                        onClick={() => {
+                          if (studentProfile?.uid) {
+                            logStudentActivity({
+                              uid: studentProfile.uid,
+                              name: studentProfile.fullName || 'Student',
+                              department: pq.department || studentProfile.department,
+                              level: pq.level || studentProfile.level,
+                              type: 'past question opened',
+                              title: `${pq.courseCode ? pq.courseCode + ' ' : ''}${pq.title}`
+                            });
+                          }
+                        }}
                         className="px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] hover:text-white text-xs font-semibold flex items-center gap-1"
                       >
                         <span>Open</span>
@@ -1196,6 +1221,18 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         target="_blank"
                         rel="noreferrer"
                         download
+                        onClick={() => {
+                          if (studentProfile?.uid) {
+                            logStudentActivity({
+                              uid: studentProfile.uid,
+                              name: studentProfile.fullName || 'Student',
+                              department: pq.department || studentProfile.department,
+                              level: pq.level || studentProfile.level,
+                              type: 'past question opened',
+                              title: `${pq.courseCode ? pq.courseCode + ' ' : ''}${pq.title}`
+                            });
+                          }
+                        }}
                         className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#FFC700] hover:bg-[#FFC700]/10"
                         title="Download PDF"
                       >

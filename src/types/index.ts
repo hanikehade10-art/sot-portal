@@ -76,6 +76,10 @@ export interface UserProfile {
   gpaRecords?: Record<string, SemesterGpaRecord>;
   studyPlanner?: StudyPlannerTask[];
   privacyAcceptedAt?: string;
+  lastLoginAt?: string;
+  loginCount?: number;
+  lastActiveAt?: string; // Updated at most once every 10 minutes while app is open
+  lastDevice?: 'Android' | 'iPhone' | 'Desktop';
   completedTopics?: string[]; // IDs of completed syllabus topics
   lastTopic?: {
     topicId: string;
@@ -87,6 +91,26 @@ export interface UserProfile {
   };
   createdAt?: string;
   updatedAt?: string;
+}
+
+export type StudentActivityType =
+  | 'login'
+  | 'logout'
+  | 'lesson opened'
+  | 'topic completed'
+  | 'quiz started'
+  | 'quiz submitted'
+  | 'past question opened';
+
+export interface StudentActivityItem {
+  id?: string;
+  uid: string;
+  name: string;
+  department: string;
+  level: string;
+  type: StudentActivityType;
+  title: string;
+  createdAt: string;
 }
 
 export type SotDepartmentName =

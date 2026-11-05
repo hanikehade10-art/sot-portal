@@ -83,6 +83,7 @@ import { AdminCoursesManager } from './AdminCoursesManager';
 import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 import { AdminQuizzesView } from './AdminQuizzesView';
 import { AdminActivityLogsView } from './AdminActivityLogsView';
+import { AdminStudentActivityView } from './AdminStudentActivityView';
 import { logActivity } from '../lib/activityLogger';
 import {
   dispatchPushNotification,
@@ -97,6 +98,7 @@ interface AdminDashboardProps {
 type AdminTab =
   | 'overview'
   | 'students'
+  | 'student-activity'
   | 'rep-activity'
   | 'courses'
   | 'past-questions'
@@ -175,7 +177,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [formSemester, setFormSemester] = useState<'First Semester' | 'Second Semester'>('First Semester');
   const [formCode, setFormCode] = useState('');
   const [formTitle, setFormTitle] = useState('');
-  const [formUnits, setFormUnits] = useState<number>(3);
+  const [formUnits, setFormUnits] = useState<number | string>(3);
   const [formType, setFormType] = useState<'Core' | 'Elective'>('Core');
   const [formDescription, setFormDescription] = useState('');
   const [formMaterials, setFormMaterials] = useState<CourseMaterial[]>([]);
@@ -673,7 +675,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     setFormSemester(normalizeCourseSemester(course.semester));
     setFormCode(course.code);
     setFormTitle(course.title);
-    setFormUnits(course.units || 3);
+    setFormUnits(typeof course.units === 'number' ? course.units : 3);
     setFormType(course.type || 'Core');
     setFormDescription(course.description || '');
     setFormMaterials(course.materials ? [...course.materials] : []);
@@ -712,6 +714,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       return;
     }
 
+    const parsedUnits = typeof formUnits === 'number' ? formUnits : parseInt(String(formUnits).trim(), 10);
+    if (isNaN(parsedUnits) || parsedUnits < 1 || parsedUnits > 6) {
+      setCourseSaveError('Course units must be a whole number between 1 and 6.');
+      return;
+    }
+    const finalUnits = Math.round(parsedUnits);
+
     setCourseSaving(true);
     const coursePayload = {
       department: formDept,
@@ -719,7 +728,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
       semester: formSemester,
       code: formCode.trim().toUpperCase(),
       title: formTitle.trim(),
-      units: Number(formUnits) || 3,
+      units: finalUnits,
       type: formType,
       description: formDescription.trim(),
       materials: formMaterials,
@@ -1597,6 +1606,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const tabTitles: Record<AdminTab, string> = {
     overview: 'Overview',
     students: 'Students',
+    'student-activity': 'Student Activity',
     'rep-activity': 'Rep Activity',
     courses: 'Courses',
     'past-questions': 'Past Questions',
@@ -1719,6 +1729,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </div>
               <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-[#121C36] text-[#E6ECFA]">
                 {students.length}
+              </span>
+            </button>
+
+            {/* 2.2 Student Activity Tracking */}
+            <button
+              onClick={() => { setActiveTab('student-activity'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'student-activity'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Activity className="w-4 h-4 text-[#FFC700]" />
+                <span>Student Activity</span>
+              </div>
+              <span className="text-[10px] px-1.5 py-0.2 rounded-full bg-emerald-500/20 text-emerald-400 font-bold border border-emerald-500/40">
+                Live
               </span>
             </button>
 
@@ -2359,6 +2387,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               </div>
 
             </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* TAB: STUDENT ACTIVITY & ENGAGEMENT                       */}
+          {/* ======================================================== */}
+          {activeTab === 'student-activity' && (
+            <AdminStudentActivityView />
           )}
 
           {/* ======================================================== */}
@@ -3261,14 +3296,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
                 </div>
 
                 <div>
-                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Units</label>
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">Units (1 to 6) *</label>
                   <input
                     type="number"
                     min={1}
-                    max={10}
+                    max={6}
+                    step={1}
+                    required
                     value={formUnits}
-                    onChange={(e) => setFormUnits(Number(e.target.value) || 1)}
-                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA]  focus:outline-none focus:border-[#2F52FF]"
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === '') {
+                        setFormUnits('');
+                      } else {
+                        const num = parseInt(val, 10);
+                        if (!isNaN(num)) {
+                          setFormUnits(Math.min(6, Math.max(1, num)));
+                        }
+                      }
+                    }}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                   />
                 </div>
               </div>

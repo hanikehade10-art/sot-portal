@@ -79,7 +79,7 @@ export const PrivacyPolicyPage: React.FC<{ onNavigateHome: () => void; onNavigat
             Official Privacy Guarantee
           </div>
           <p className="text-sm text-[#E6ECFA] font-medium leading-relaxed">
-            SOT Portal stores your email, name, department and matric or JAMB number to run the portal. Only admins can see your ID number. We never sell your data.
+            SOT Portal stores your email, name, department and matric or JAMB number to run the portal. We record when you log in and your quiz results so lecturers and admins can support you. Only admins can see your ID number. We never sell your data.
           </p>
         </div>
 

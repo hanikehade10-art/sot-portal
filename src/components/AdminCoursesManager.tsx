@@ -106,7 +106,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   // Course Form
   const [courseCode, setCourseCode] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
-  const [courseUnits, setCourseUnits] = useState(3);
+  const [courseUnits, setCourseUnits] = useState<number | string>(3);
   const [batchCoursesText, setBatchCoursesText] = useState('');
   const [savingCourse, setSavingCourse] = useState(false);
 
@@ -379,7 +379,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setEditingCourse(course);
     setCourseCode(course.code);
     setCourseTitle(course.title);
-    setCourseUnits(course.units || 3);
+    setCourseUnits(typeof course.units === 'number' ? course.units : 3);
     setShowAddCourseModal(true);
   };
 
@@ -390,6 +390,13 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       return;
     }
 
+    const parsedUnits = typeof courseUnits === 'number' ? courseUnits : parseInt(String(courseUnits).trim(), 10);
+    if (isNaN(parsedUnits) || parsedUnits < 1 || parsedUnits > 6) {
+      showError('Credit units must be a whole number between 1 and 6.');
+      return;
+    }
+    const finalUnits = Math.round(parsedUnits);
+
     setSavingCourse(true);
     try {
       const nowIso = new Date().toISOString();
@@ -399,7 +406,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         semester: selectedSemester,
         code: courseCode.trim().toUpperCase(),
         title: courseTitle.trim(),
-        units: Number(courseUnits) || 3,
+        units: finalUnits,
         updatedAt: nowIso
       };
 
@@ -449,7 +456,15 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         const parts = line.split('|').map(p => p.trim());
         const code = parts[0]?.toUpperCase() || '';
         const title = parts[1] || '';
-        const units = parts[2] ? parseInt(parts[2], 10) || 3 : 3;
+        let units = 3;
+        if (parts[2] !== undefined && parts[2] !== '') {
+          const parsed = parseInt(parts[2], 10);
+          if (!isNaN(parsed) && parsed >= 1 && parsed <= 6) {
+            units = parsed;
+          } else if (!isNaN(parsed)) {
+            units = Math.max(1, Math.min(6, parsed));
+          }
+        }
 
         if (code && title) {
           const payload = {
@@ -1415,16 +1430,31 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
 
               <div>
                 <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
-                  Credit Units (e.g. 2, 3, 4)
+                  Credit Units (1 to 6) *
                 </label>
                 <input
                   type="number"
                   min={1}
                   max={6}
+                  step={1}
+                  required
                   value={courseUnits}
-                  onChange={(e) => setCourseUnits(parseInt(e.target.value, 10) || 3)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setCourseUnits('');
+                    } else {
+                      const num = parseInt(val, 10);
+                      if (!isNaN(num)) {
+                        setCourseUnits(Math.min(6, Math.max(1, num)));
+                      }
+                    }
+                  }}
                   className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                 />
+                <p className="text-[10px] text-[#9AA8C7] mt-1">
+                  Enter a whole number from 1 to 6. Saved exactly as entered.
+                </p>
               </div>
 
               <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">

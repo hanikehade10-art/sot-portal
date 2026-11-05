@@ -40,6 +40,7 @@ import {
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 import { BookmarkItem } from '../types';
+import { logStudentActivity } from '../lib/studentActivity';
 
 interface StudentQuizzesViewProps {
   studentDepartment: string;
@@ -215,6 +216,15 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
     setShowSubmitModal(false);
     setCurrentScreen('taking');
+
+    logStudentActivity({
+      uid,
+      name: studentName,
+      department: studentDepartment,
+      level: activeQuiz.level,
+      type: 'quiz started',
+      title: `${activeQuiz.courseCode}: ${activeQuiz.title}`
+    });
   };
 
   // Timer countdown hook
@@ -370,6 +380,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         ...prev,
         [activeQuiz.id]: attemptPayload
       }));
+
+      // Log quiz submitted activity event
+      logStudentActivity({
+        uid,
+        name: studentName,
+        department: studentDepartment,
+        level: activeQuiz.level,
+        type: 'quiz submitted',
+        title: `Scored ${score}/${total} (${percentage}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}`
+      });
 
       // Set review screen data with Missed tab shown first
       setReviewAttempt(attemptPayload);

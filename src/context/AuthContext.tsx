@@ -24,6 +24,11 @@ import {
 import { auth, db, handleFirestoreError, OperationType, testConnection } from '../lib/firebase';
 import { UserProfile, SotDepartmentName, UserRole } from '../types';
 import { SITE_CONFIG } from '../config/site';
+import {
+  detectDeviceCategory,
+  recordUserActivePing,
+  logStudentActivity
+} from '../lib/studentActivity';
 
 interface AuthContextType {
   user: User | null;
@@ -133,6 +138,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       clearInterval(inactivityInterval);
     };
   }, [user]);
+
+  // Periodic active ping: updates lastActiveAt at most once every 10 minutes while app is open
+  useEffect(() => {
+    if (!user?.uid) return;
+    recordUserActivePing(user.uid);
+
+    const pingTimer = setInterval(() => {
+      recordUserActivePing(user.uid);
+    }, 60 * 1000); // Check every minute, throttled to 10 mins internally
+
+    return () => clearInterval(pingTimer);
+  }, [user?.uid]);
 
   // Fetch or build user profile
   const fetchUserProfile = async (firebaseUser: User): Promise<UserProfile | null> => {
@@ -713,6 +730,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       setUser(cred.user);
       const userProfile = await fetchUserProfile(cred.user);
+
+      // Track login metrics on student user document
+      const device = detectDeviceCategory();
+      const nowIso = new Date().toISOString();
+      const updatedLoginCount = (userProfile?.loginCount || 0) + 1;
+
+      try {
+        await updateDoc(doc(db, 'users', cred.user.uid), {
+          lastLoginAt: nowIso,
+          loginCount: updatedLoginCount,
+          lastDevice: device,
+          lastActiveAt: nowIso
+        });
+      } catch (trackErr) {
+        console.warn('Could not update user login metrics:', trackErr);
+      }
+
+      // Log strictly allowed 'login' event
+      logStudentActivity({
+        uid: cred.user.uid,
+        name: userProfile?.fullName || cred.user.displayName || 'Student',
+        department: userProfile?.department || 'General',
+        level: userProfile?.level || 'ND1',
+        type: 'login',
+        title: `Signed in from ${device}`
+      });
+
       return userProfile;
     } catch (err: any) {
       const localUserRaw = localStorage.getItem('sot_local_user');
@@ -746,6 +790,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // Logout
   const logout = async (): Promise<void> => {
+    if (user?.uid) {
+      logStudentActivity({
+        uid: user.uid,
+        name: profile?.fullName || user.displayName || 'Student',
+        department: profile?.department || 'General',
+        level: profile?.level || 'ND1',
+        type: 'logout',
+        title: 'Signed out'
+      });
+    }
+
     try {
       await fbSignOut(auth);
     } catch (e) {

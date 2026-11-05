@@ -20,6 +20,7 @@ import {
 } from '../data/coursesAndTimetables';
 import { ShareButton } from './ShareButton';
 import { logActivity } from '../lib/activityLogger';
+import { logStudentActivity } from '../lib/studentActivity';
 import {
   FileText,
   Search,
@@ -446,14 +447,24 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                     {/* Open Preview Button */}
                     <button
                       type="button"
-                      onClick={() =>
+                      onClick={() => {
+                        if (user?.uid) {
+                          logStudentActivity({
+                            uid: user.uid,
+                            name: profile?.fullName || user.displayName || 'Student',
+                            department: item.department || profile?.department,
+                            level: item.level || profile?.level,
+                            type: 'past question opened',
+                            title: `${item.courseCode ? item.courseCode + ' ' : ''}${item.title}`
+                          });
+                        }
                         setViewerItem({
                           title: item.title,
                           url: previewUrl,
                           courseCode: item.courseCode,
                           session: item.session || item.year
-                        })
-                      }
+                        });
+                      }}
                       className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                     >
                       <Eye className="w-3.5 h-3.5" />
@@ -465,6 +476,18 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                       href={downloadUrl}
                       target="_blank"
                       rel="noopener noreferrer"
+                      onClick={() => {
+                        if (user?.uid) {
+                          logStudentActivity({
+                            uid: user.uid,
+                            name: profile?.fullName || user.displayName || 'Student',
+                            department: item.department || profile?.department,
+                            level: item.level || profile?.level,
+                            type: 'past question opened',
+                            title: `${item.courseCode ? item.courseCode + ' ' : ''}${item.title}`
+                          });
+                        }
+                      }}
                       className="px-3 py-1.5 rounded-lg bg-[#0A1224] hover:bg-[#1A2E63] text-[#E6ECFA] border border-[#24315A] hover:border-[#2F52FF] text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer"
                     >
                       <Download className="w-3.5 h-3.5 text-[#FFC700]" />

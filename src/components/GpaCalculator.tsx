@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
-import { GpaCourseEntry, SemesterGpaRecord } from '../types';
+import { doc, updateDoc, collection, onSnapshot } from 'firebase/firestore';
+import { GpaCourseEntry, SemesterGpaRecord, CourseItem } from '../types';
 import { useGradingScale } from '../hooks/useGradingScale';
 import { getClassOfDegree, SEMESTER_OPTIONS } from '../config/gradingScale';
 import { INITIAL_COURSES, normalizeCourseLevel, normalizeCourseSemester } from '../data/coursesAndTimetables';
@@ -26,6 +26,7 @@ export const GpaCalculator: React.FC = () => {
 
   const [selectedSemesterId, setSelectedSemesterId] = useState<string>(SEMESTER_OPTIONS[0].id);
   const [courses, setCourses] = useState<GpaCourseEntry[]>([]);
+  const [firestoreCourses, setFirestoreCourses] = useState<CourseItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -37,33 +38,70 @@ export const GpaCalculator: React.FC = () => {
 
   const selectedSemester = SEMESTER_OPTIONS.find(s => s.id === selectedSemesterId) || SEMESTER_OPTIONS[0];
 
-  // Load existing records for the selected semester from profile.gpaRecords
+  // Subscribe to live courses in Firestore to read exact saved units
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'courses'), (snap) => {
+      const list: CourseItem[] = [];
+      snap.forEach(d => {
+        list.push({ id: d.id, ...d.data() } as CourseItem);
+      });
+      setFirestoreCourses(list);
+    }, (err) => {
+      console.warn('Could not load firestore courses for GPA calculator:', err);
+    });
+    return () => unsub();
+  }, []);
+
+  // Helper to get matching curriculum courses with saved units
+  const getCurriculumCoursesForSemester = () => {
+    const dept = profile?.department;
+    if (!dept) return [];
+
+    // Check live firestore courses first
+    const fromFirestore = firestoreCourses.filter(c =>
+      c.department === dept &&
+      normalizeCourseLevel(c.level) === selectedSemester.level &&
+      normalizeCourseSemester(c.semester) === selectedSemester.semester
+    );
+
+    if (fromFirestore.length > 0) {
+      return fromFirestore.map(c => ({
+        id: `fs-${c.id}`,
+        code: c.code,
+        title: c.title,
+        units: typeof c.units === 'number' && c.units >= 1 && c.units <= 6 ? c.units : 3,
+        grade: 'A',
+        points: getPointsForGrade('A')
+      }));
+    }
+
+    // Fallback to static INITIAL_COURSES
+    const defaults = INITIAL_COURSES.filter(c =>
+      c.department === dept &&
+      normalizeCourseLevel(c.level) === selectedSemester.level &&
+      normalizeCourseSemester(c.semester) === selectedSemester.semester
+    );
+
+    return defaults.map(c => ({
+      id: `init-${c.id}`,
+      code: c.code,
+      title: c.title,
+      units: typeof c.units === 'number' && c.units >= 1 && c.units <= 6 ? c.units : 3,
+      grade: 'A',
+      points: getPointsForGrade('A')
+    }));
+  };
+
+  // Load existing records for the selected semester from profile.gpaRecords or pre-fill with saved units
   useEffect(() => {
     const existingSem = profile?.gpaRecords?.[selectedSemesterId];
     if (existingSem && existingSem.courses && existingSem.courses.length > 0) {
       setCourses(existingSem.courses);
     } else {
-      // If none saved, try pre-filling from department curriculum if available
-      const dept = profile?.department;
-      if (dept) {
-        const defaults = INITIAL_COURSES.filter(c =>
-          c.department === dept &&
-          normalizeCourseLevel(c.level) === selectedSemester.level &&
-          normalizeCourseSemester(c.semester) === selectedSemester.semester
-        );
-
-        if (defaults.length > 0) {
-          const defaultEntries: GpaCourseEntry[] = defaults.map(c => ({
-            id: `init-${c.id}`,
-            code: c.code,
-            title: c.title,
-            units: c.units || 3,
-            grade: 'A',
-            points: getPointsForGrade('A')
-          }));
-          setCourses(defaultEntries);
-          return;
-        }
+      const defaultEntries = getCurriculumCoursesForSemester();
+      if (defaultEntries.length > 0) {
+        setCourses(defaultEntries);
+        return;
       }
 
       // Fallback empty sample
@@ -72,7 +110,7 @@ export const GpaCalculator: React.FC = () => {
         { id: '2', code: 'MTH 111', title: 'Logic & Algebra', units: 3, grade: 'AB', points: 3.5 }
       ]);
     }
-  }, [selectedSemesterId, profile?.gpaRecords]);
+  }, [selectedSemesterId, profile?.gpaRecords, firestoreCourses.length]);
 
   function getPointsForGrade(grade: string): number {
     const found = scale.find(s => s.grade === grade);
@@ -124,27 +162,13 @@ export const GpaCalculator: React.FC = () => {
     const dept = profile?.department;
     if (!dept) return;
 
-    const deptCourses = INITIAL_COURSES.filter(c =>
-      c.department === dept &&
-      normalizeCourseLevel(c.level) === selectedSemester.level &&
-      normalizeCourseSemester(c.semester) === selectedSemester.semester
-    );
-
-    if (deptCourses.length === 0) {
+    const entries = getCurriculumCoursesForSemester();
+    if (entries.length === 0) {
       alert(`No curriculum courses found for ${dept} in ${selectedSemester.name}. You can add custom courses manually.`);
       return;
     }
 
-    const newEntries: GpaCourseEntry[] = deptCourses.map(c => ({
-      id: `dept-${c.id}-${Date.now()}`,
-      code: c.code,
-      title: c.title,
-      units: c.units || 3,
-      grade: 'A',
-      points: getPointsForGrade('A')
-    }));
-
-    setCourses(newEntries);
+    setCourses(entries);
   };
 
   // Calculations for current semester

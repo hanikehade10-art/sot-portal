@@ -291,5 +291,12 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow update, delete: if false;
     }
+
+    // Student Activity Logs (Strictly limited event tracking)
+    match /studentActivity/{id} {
+      allow create: if isSignedIn() && incoming().uid == request.auth.uid;
+      allow read, delete: if isAdmin();
+      allow update: if false;
+    }
   }
 }

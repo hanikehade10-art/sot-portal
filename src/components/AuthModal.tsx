@@ -508,7 +508,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             {/* Privacy Notice Card */}
             <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
               <p className="text-[11px] text-[#9AA8C7] leading-relaxed">
-                SOT Portal stores your email, name, department and matric or JAMB number to run the portal. Only admins can see your ID number. We never sell your data.
+                SOT Portal stores your email, name, department and matric or JAMB number to run the portal. We record when you log in and your quiz results so lecturers and admins can support you. Only admins can see your ID number. We never sell your data.
               </p>
               <label className="flex items-center gap-2 cursor-pointer select-none pt-0.5">
                 <input

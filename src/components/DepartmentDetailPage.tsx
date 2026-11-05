@@ -234,9 +234,14 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
                               <span className=" text-xs font-extrabold px-2.5 py-1 rounded-md bg-[#121C36] text-[#FFC700] border border-[#24315A] group-hover:border-[#FFC700]/50 transition-colors">
                                 {course.code}
                               </span>
-                              <span className="text-[11px] font-semibold text-[#9AA8C7] px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A]">
-                                {course.semester}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-[#FFC700] px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A]">
+                                  {course.units ?? 3} {course.units === 1 ? 'Unit' : 'Units'}
+                                </span>
+                                <span className="text-[11px] font-semibold text-[#9AA8C7] px-2 py-0.5 rounded bg-[#121C36] border border-[#24315A]">
+                                  {course.semester}
+                                </span>
+                              </div>
                             </div>
 
                             <div>

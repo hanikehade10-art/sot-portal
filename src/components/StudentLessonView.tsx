@@ -3,9 +3,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { CourseItem, TopicItem, QuizItem, BookmarkItem } from '../types';
 import { getYouTubeEmbedUrl } from '../data/coursesAndTimetables';
+import { useAuth } from '../context/AuthContext';
+import { logStudentActivity } from '../lib/studentActivity';
 import {
   ArrowLeft,
   ChevronRight,
@@ -141,7 +143,39 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   isBookmarked,
   toggleBookmark,
   linkedQuiz
-}) => {
+}: StudentLessonViewProps) => {
+  const { user, profile } = useAuth();
+  const loggedTopicRef = useRef<string | null>(null);
+
+  // Log "lesson opened" event strictly once per topic visit
+  useEffect(() => {
+    if (user?.uid && topic?.id && loggedTopicRef.current !== topic.id) {
+      loggedTopicRef.current = topic.id;
+      logStudentActivity({
+        uid: user.uid,
+        name: profile?.fullName || user.displayName || 'Student',
+        department: course.department || profile?.department,
+        level: course.level || profile?.level,
+        type: 'lesson opened',
+        title: `${course.code}: ${topic.title}`
+      });
+    }
+  }, [topic?.id, user?.uid, course, profile]);
+
+  const handleToggleCompleteWrapper = () => {
+    if (!isCompleted && user?.uid) {
+      logStudentActivity({
+        uid: user.uid,
+        name: profile?.fullName || user.displayName || 'Student',
+        department: course.department || profile?.department,
+        level: course.level || profile?.level,
+        type: 'topic completed',
+        title: `${course.code}: ${topic.title}`
+      });
+    }
+    onToggleComplete(topic.id);
+  };
+
   // Sort course topics sequentially
   const sortedTopics = useMemo(() => {
     return [...allCourseTopics].sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -257,6 +291,9 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
             <span className="px-2 py-0.5 rounded bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-[10px] font-bold">
               {course.code}
             </span>
+            <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
+              {course.units ?? 3} {course.units === 1 ? 'Unit' : 'Units'}
+            </span>
             <span className="flex items-center gap-1 text-[11px] text-[#9AA8C7]">
               <Clock className="w-3.5 h-3.5 text-[#FFC700]" />
               <span>{topic.estimatedMinutes || 15} mins read</span>
@@ -286,7 +323,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
           </button>
 
           <button
-            onClick={() => onToggleComplete(topic.id)}
+            onClick={handleToggleCompleteWrapper}
             className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
               isCompleted
                 ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
@@ -434,7 +471,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
           </div>
 
           <button
-            onClick={() => onToggleComplete(topic.id)}
+            onClick={handleToggleCompleteWrapper}
             className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
               isCompleted
                 ? 'bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.4)]'
