@@ -316,18 +316,26 @@ export interface ChatMessage {
   mode?: AiChatMode;
 }
 
-export type QuizQuestionType = 'multiple-choice' | 'true-false';
+export type QuizQuestionType =
+  | 'multiple-choice'
+  | 'true-false'
+  | 'theory-best'
+  | 'theory-select-all'
+  | 'theory-self-check';
 
 export interface QuizQuestion {
   id: string;
   text: string;
-  type?: QuizQuestionType; // 'multiple-choice' | 'true-false'
-  options: string[]; // 2 to 6 options for MC, or ['True', 'False'] for true-false
+  type?: QuizQuestionType;
+  options: string[]; // Options for MC, True/False, Theory (best answer), Theory (select all)
+  modelAnswer?: string; // Model answer for Theory (self-check)
 }
 
 export interface QuizKeyItem {
   questionId: string;
-  correctOptionIndex: number; // 0 for A (or True), 1 for B (or False), etc.
+  correctOptionIndex?: number; // 0 for A (or True), 1 for B (or False), etc.
+  correctOptionIndices?: number[]; // For select-all questions: [0, 2]
+  modelAnswer?: string; // Model answer for Theory (self-check)
   explanation: string;
   whyNotNotes?: Record<string, string>; // e.g. { 'A': '...', 'B': '...' }
 }
@@ -345,6 +353,7 @@ export interface QuizItem {
   passingScore?: number; // Percentage needed to pass (e.g. 70, default 70)
   attemptsAllowed?: number; // Allowed attempts (0 or undefined for unlimited)
   pointsPerQuestion?: number; // Points per question (default 1)
+  allowPartialCredit?: boolean; // Setting: allow partial credit for select-all questions
   shuffle?: boolean;
   published: boolean;
   questionCount: number;
@@ -370,7 +379,8 @@ export interface QuizAttempt {
   department: string;
   studentName?: string;
   matricNumber?: string;
-  answers: Record<string, number>; // questionId -> selectedOptionIndex (-1 if unanswered)
+  answers: Record<string, any>; // questionId -> selectedOptionIndex (number) | selectedIndices (number[]) | selfCheckRating ('knew' | 'partly' | 'not-yet')
+  questionScores?: Record<string, number>; // questionId -> points scored
   score: number;
   total: number;
   attempts: number;

@@ -94,6 +94,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [formTopicId, setFormTopicId] = useState<string>('');
   const [formHasTimer, setFormHasTimer] = useState<boolean>(true);
   const [formShuffle, setFormShuffle] = useState<boolean>(true);
+  const [formAllowPartialCredit, setFormAllowPartialCredit] = useState<boolean>(false);
   const [formPublished, setFormPublished] = useState<boolean>(true);
   const [notifyStudents, setNotifyStudents] = useState<boolean>(true);
 
@@ -105,10 +106,14 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [questionInputMode, setQuestionInputMode] = useState<'single' | 'bulk'>('bulk');
 
   // Single question input state
-  const [singleType, setSingleType] = useState<'multiple-choice' | 'true-false'>('multiple-choice');
+  const [singleType, setSingleType] = useState<
+    'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check'
+  >('multiple-choice');
   const [singleText, setSingleText] = useState('');
   const [singleOptions, setSingleOptions] = useState<string[]>(['', '', '', '']);
   const [singleCorrectIndex, setSingleCorrectIndex] = useState<number>(0);
+  const [singleCorrectIndices, setSingleCorrectIndices] = useState<number[]>([0]);
+  const [singleModelAnswer, setSingleModelAnswer] = useState<string>('');
   const [singleExplanation, setSingleExplanation] = useState('');
   const [singleWhyNotNotes, setSingleWhyNotNotes] = useState<Record<string, string>>({});
   const [singleError, setSingleError] = useState<string | null>(null);
@@ -194,6 +199,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormTopicId('');
     setFormHasTimer(true);
     setFormShuffle(true);
+    setFormAllowPartialCredit(false);
     setFormPublished(true);
     setNotifyStudents(true);
     setDraftQuestions([]);
@@ -206,7 +212,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setSingleText('');
     setSingleOptions(['', '', '', '']);
     setSingleCorrectIndex(0);
+    setSingleCorrectIndices([0]);
+    setSingleModelAnswer('');
     setSingleExplanation('');
+    setSingleWhyNotNotes({});
     setShowStudentPreview(false);
     setSaveError(null);
     setShowEditor(true);
@@ -230,6 +239,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormTopicId(quiz.topicId || '');
     setFormHasTimer(hasLimit);
     setFormShuffle(Boolean(quiz.shuffle));
+    setFormAllowPartialCredit(Boolean(quiz.allowPartialCredit));
     setFormPublished(quiz.published);
     setDraftQuestions(quiz.questions || []);
 
@@ -261,6 +271,8 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
 
     setQuestionInputMode('single');
     setSingleType('multiple-choice');
+    setSingleCorrectIndices([0]);
+    setSingleModelAnswer('');
     setBulkText('');
     setBulkErrors([]);
     setBulkSuccessMsg(null);
@@ -321,6 +333,12 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
 
     const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6);
 
+    const cleanWhyNot: Record<string, string> = {};
+    Object.entries(singleWhyNotNotes).forEach(([k, v]) => {
+      if (v && v.trim()) cleanWhyNot[k] = v.trim();
+    });
+
+    // 1. True / False
     if (singleType === 'true-false') {
       const isTrue = singleCorrectIndex === 0;
       const newQ: QuizQuestion = {
@@ -329,10 +347,6 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         text: singleText.trim(),
         options: ['True', 'False']
       };
-      const cleanWhyNot: Record<string, string> = {};
-      Object.entries(singleWhyNotNotes).forEach(([k, v]) => {
-        if (v && v.trim()) cleanWhyNot[k] = v.trim();
-      });
 
       const newK: QuizKeyItem = {
         questionId: qId,
@@ -350,20 +364,111 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       return;
     }
 
-    const cleanOpts = singleOptions.map(o => o.trim()).filter(Boolean);
-    if (cleanOpts.length < 2) {
-      setSingleError('Please provide at least 2 non-empty options.');
+    // 2. Theory (Self-check)
+    if (singleType === 'theory-self-check') {
+      if (!singleModelAnswer.trim()) {
+        setSingleError('Please enter the model answer for self-check comparison.');
+        return;
+      }
+
+      const newQ: QuizQuestion = {
+        id: qId,
+        type: 'theory-self-check',
+        text: singleText.trim(),
+        options: [],
+        modelAnswer: singleModelAnswer.trim()
+      };
+
+      const newK: QuizKeyItem = {
+        questionId: qId,
+        modelAnswer: singleModelAnswer.trim(),
+        explanation: singleExplanation.trim() || singleModelAnswer.trim(),
+        whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
+      };
+
+      setDraftQuestions(prev => [...prev, newQ]);
+      setDraftKeys(prev => [...prev, newK]);
+      setSingleText('');
+      setSingleModelAnswer('');
+      setSingleExplanation('');
+      setSingleWhyNotNotes({});
       return;
     }
+
+    const cleanOpts = singleOptions.map(o => o.trim()).filter(Boolean);
+    if (cleanOpts.length < 2) {
+      setSingleError('Please provide at least 2 non-empty options/statements.');
+      return;
+    }
+
+    // 3. Theory (Select all that apply)
+    if (singleType === 'theory-select-all') {
+      const validIndices = singleCorrectIndices.filter(i => i >= 0 && i < cleanOpts.length);
+      if (validIndices.length === 0) {
+        setSingleError('Please check at least one correct statement.');
+        return;
+      }
+
+      const newQ: QuizQuestion = {
+        id: qId,
+        type: 'theory-select-all',
+        text: singleText.trim(),
+        options: cleanOpts
+      };
+
+      const newK: QuizKeyItem = {
+        questionId: qId,
+        correctOptionIndices: validIndices,
+        explanation: singleExplanation.trim() || 'All selected statements are required.',
+        whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
+      };
+
+      setDraftQuestions(prev => [...prev, newQ]);
+      setDraftKeys(prev => [...prev, newK]);
+      setSingleText('');
+      setSingleOptions(['', '', '', '']);
+      setSingleCorrectIndices([0]);
+      setSingleExplanation('');
+      setSingleWhyNotNotes({});
+      return;
+    }
+
+    // 4. Theory (Pick the best answer)
+    if (singleType === 'theory-best') {
+      if (singleCorrectIndex >= cleanOpts.length) {
+        setSingleError('Please select a valid best option.');
+        return;
+      }
+
+      const newQ: QuizQuestion = {
+        id: qId,
+        type: 'theory-best',
+        text: singleText.trim(),
+        options: cleanOpts
+      };
+
+      const newK: QuizKeyItem = {
+        questionId: qId,
+        correctOptionIndex: singleCorrectIndex,
+        explanation: singleExplanation.trim() || 'The marked statement is the best answer.',
+        whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
+      };
+
+      setDraftQuestions(prev => [...prev, newQ]);
+      setDraftKeys(prev => [...prev, newK]);
+      setSingleText('');
+      setSingleOptions(['', '', '', '']);
+      setSingleCorrectIndex(0);
+      setSingleExplanation('');
+      setSingleWhyNotNotes({});
+      return;
+    }
+
+    // 5. Standard Multiple Choice
     if (singleCorrectIndex >= cleanOpts.length) {
       setSingleError('Please select a valid correct option.');
       return;
     }
-
-    const cleanWhyNot: Record<string, string> = {};
-    Object.entries(singleWhyNotNotes).forEach(([k, v]) => {
-      if (v && v.trim()) cleanWhyNot[k] = v.trim();
-    });
 
     const newQ: QuizQuestion = {
       id: qId,
@@ -488,6 +593,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         instructions: formInstructions.trim(),
         timeLimit: finalTimeLimit,
         shuffle: formShuffle,
+        allowPartialCredit: formAllowPartialCredit,
         published: formPublished,
         questionCount: draftQuestions.length,
         questions: draftQuestions, // Questions with options only, NO correct answers!
@@ -1169,6 +1275,19 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                   <div className="flex items-center gap-2">
                     <input
                       type="checkbox"
+                      id="partialCreditCheck"
+                      checked={formAllowPartialCredit}
+                      onChange={e => setFormAllowPartialCredit(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#2F52FF] bg-[#121C36] border-[#24315A] cursor-pointer"
+                    />
+                    <label htmlFor="partialCreditCheck" className="text-xs text-[#E6ECFA] font-medium cursor-pointer" title="Correct picked minus wrong picked, divided by total correct, never below zero">
+                      Allow partial credit
+                    </label>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
                       id="publishCheck"
                       checked={formPublished}
                       onChange={e => setFormPublished(e.target.checked)}
@@ -1234,31 +1353,36 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                 {questionInputMode === 'bulk' && (
                   <div className="space-y-2.5 pt-1">
                     <div className="p-2.5 rounded-lg bg-[#121C36]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1">
-                      <span className="font-bold text-[#FFC700] block">Format Guidelines (Multi-line explanations &amp; 'Why not B' notes supported):</span>
+                      <span className="font-bold text-[#FFC700] block">Format Guidelines (Mixed quizzes &amp; Theory questions supported):</span>
                       <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap leading-relaxed">
-{`Q: Which device operates at the Network Layer of the OSI Model?
-A) Switch  B) Router  C) Hub  D) Repeater
-Answer: B
-Explanation: Routers forward data packets across logical networks using IP addressing.
-They determine optimal routing paths between distinct subnets.
-• Layer 3 header processing
-• **IP Routing** table lookups
-Why not A: Switches operate at the Data Link Layer (Layer 2).
-Why not C: Hubs are physical layer repeaters (Layer 1).
+{`Q: Explain why a stack is used to evaluate postfix expressions.
+Type: Theory
+* Each number is pushed, and an operator pops the top two numbers and pushes the result back.
+- The numbers are stored in a queue so the first number is processed first.
+- A tree is built and the expression is read from the root.
+Explanation: Each number is pushed onto the stack. When an operator is reached, the operands are popped, evaluated, and the result pushed back.
 
-Q: A stack follows the LIFO principle.
-Type: True/False
-Answer: True
-Explanation: Last In, First Out. Elements placed last are retrieved first.
-Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
+Q: Which of the following data structures are linear?
+Type: Select all
+* Stack
+* Queue
+* Singly linked list
+- Binary search tree
+- Graph
+Explanation: Stacks, queues, and linked lists organize elements sequentially.
+
+Q: Describe synchronous vs asynchronous data transmission.
+Type: Self-check
+Model answer: Synchronous transmission sends continuous data blocks timed by a shared clock pulse, while asynchronous transmission sends bytes individually framed by start and stop bits.
+Explanation: Shared clock pulse vs start and stop framing bits.`}
                       </pre>
                       <p className="text-[10px] text-[#9AA8C7]/80">
-                        * The Explanation continues on following lines until the next Q:. Optional wrong-option notes start with "Why not A:", "Why not B:", etc. Mixed Multiple Choice and True/False questions are fully supported.
+                        * Bullet options start with * for correct and - for wrong. Explanation continues on following lines until next Q:. Self-check uses 'Model answer:'.
                       </p>
                     </div>
 
                     <textarea
-                      rows={7}
+                      rows={8}
                       value={bulkText}
                       onChange={e => setBulkText(e.target.value)}
                       placeholder={`Paste questions here following the format above...`}
@@ -1306,39 +1430,39 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                     )}
 
                     {/* Question Type Switcher */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-[11px] text-[#9AA8C7] font-semibold">Question Type:</span>
-                      <div className="flex items-center p-0.5 rounded-lg bg-[#121C36] border border-[#24315A]">
-                        <button
-                          type="button"
-                          onClick={() => setSingleType('multiple-choice')}
-                          className={`px-3 py-1 rounded text-xs font-bold cursor-pointer transition-colors ${
-                            singleType === 'multiple-choice'
-                              ? 'bg-[#2F52FF] text-white shadow-sm'
-                              : 'text-[#9AA8C7] hover:text-white'
-                          }`}
-                        >
-                          Multiple Choice
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setSingleType('true-false');
-                            setSingleCorrectIndex(0);
-                          }}
-                          className={`px-3 py-1 rounded text-xs font-bold cursor-pointer transition-colors ${
-                            singleType === 'true-false'
-                              ? 'bg-[#2F52FF] text-white shadow-sm'
-                              : 'text-[#9AA8C7] hover:text-white'
-                          }`}
-                        >
-                          True / False
-                        </button>
+                    <div className="space-y-1.5">
+                      <span className="text-[11px] text-[#9AA8C7] font-semibold block">Question Type:</span>
+                      <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-[#121C36] border border-[#24315A]">
+                        {[
+                          { id: 'multiple-choice', label: 'Multiple Choice' },
+                          { id: 'true-false', label: 'True / False' },
+                          { id: 'theory-best', label: 'Theory (Pick Best)' },
+                          { id: 'theory-select-all', label: 'Theory (Select All)' },
+                          { id: 'theory-self-check', label: 'Theory (Self-Check)' }
+                        ].map(t => (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => {
+                              setSingleType(t.id as any);
+                              if (t.id === 'true-false') {
+                                setSingleCorrectIndex(0);
+                              }
+                            }}
+                            className={`px-2.5 py-1 rounded-lg text-xs font-bold cursor-pointer transition-colors ${
+                              singleType === t.id
+                                ? 'bg-[#2F52FF] text-white shadow-sm'
+                                : 'text-[#9AA8C7] hover:text-white'
+                            }`}
+                          >
+                            {t.label}
+                          </button>
+                        ))}
                       </div>
                     </div>
 
                     <div>
-                      <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Question Text</label>
+                      <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Question Prompt</label>
                       <input
                         type="text"
                         value={singleText}
@@ -1346,14 +1470,20 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                         placeholder={
                           singleType === 'true-false'
                             ? 'e.g. A stack follows the Last In, First Out (LIFO) principle.'
+                            : singleType === 'theory-self-check'
+                            ? 'e.g. Explain why a stack is used to evaluate postfix expressions.'
+                            : singleType === 'theory-select-all'
+                            ? 'e.g. Which of the following data structures are linear?'
+                            : singleType === 'theory-best'
+                            ? 'e.g. What is the primary role of a router in OSI layer 3?'
                             : 'e.g. Which of the following is an input device?'
                         }
                         className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                       />
                     </div>
 
-                    {/* True / False Selection Buttons */}
-                    {singleType === 'true-false' ? (
+                    {/* 1. True / False Selection Buttons */}
+                    {singleType === 'true-false' && (
                       <div className="space-y-1.5">
                         <label className="text-[11px] text-[#9AA8C7] font-semibold">Correct Answer (Click to select)</label>
                         <div className="grid grid-cols-2 gap-3">
@@ -1384,8 +1514,186 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                           </button>
                         </div>
                       </div>
-                    ) : (
-                      /* Multiple Choice Options (2 to 6) */
+                    )}
+
+                    {/* 2. Self-Check Model Answer Textarea */}
+                    {singleType === 'theory-self-check' && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-[#FFC700] font-semibold">Model Answer</label>
+                          <span className="text-[10px] text-[#9AA8C7]">Student compares their mental thought against this</span>
+                        </div>
+                        <textarea
+                          rows={3}
+                          value={singleModelAnswer}
+                          onChange={e => setSingleModelAnswer(e.target.value)}
+                          placeholder="e.g. A stack is used because operands are pushed as they arrive, and operators pop the required operands and push the result back immediately."
+                          className="w-full px-3 py-2 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] leading-relaxed"
+                        />
+                      </div>
+                    )}
+
+                    {/* 3. Theory (Select All that Apply) */}
+                    {singleType === 'theory-select-all' && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-[#9AA8C7] font-semibold">
+                            Statements &amp; Correct Checkmarks (Check all that apply)
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            {singleOptions.length < 8 && (
+                              <button
+                                type="button"
+                                onClick={() => setSingleOptions(prev => [...prev, ''])}
+                                className="text-[10px] font-bold text-[#60A5FA] hover:text-white"
+                              >
+                                + Add Statement
+                              </button>
+                            )}
+                            {singleOptions.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSingleOptions(prev => prev.slice(0, prev.length - 1));
+                                  setSingleCorrectIndices(prev => prev.filter(i => i < singleOptions.length - 1));
+                                }}
+                                className="text-[10px] font-bold text-rose-400 hover:text-white ml-2"
+                              >
+                                - Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {singleOptions.map((opt, optIdx) => {
+                            const isChecked = singleCorrectIndices.includes(optIdx);
+                            return (
+                              <div
+                                key={optIdx}
+                                className={`p-2.5 rounded-lg border flex items-center gap-2.5 transition-colors ${
+                                  isChecked
+                                    ? 'bg-emerald-950/25 border-emerald-500/60'
+                                    : 'bg-[#121C36] border-[#24315A]'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isChecked}
+                                  onChange={e => {
+                                    if (e.target.checked) {
+                                      setSingleCorrectIndices(prev => [...prev, optIdx]);
+                                    } else {
+                                      setSingleCorrectIndices(prev => prev.filter(i => i !== optIdx));
+                                    }
+                                  }}
+                                  className="w-4 h-4 rounded text-[#2F52FF] bg-[#0A1224] border-[#24315A] cursor-pointer"
+                                />
+                                <input
+                                  type="text"
+                                  value={opt}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setSingleOptions(prev => {
+                                      const next = [...prev];
+                                      next[optIdx] = val;
+                                      return next;
+                                    });
+                                  }}
+                                  placeholder={`Statement ${optIdx + 1}`}
+                                  className="flex-1 bg-transparent text-xs text-[#E6ECFA] focus:outline-none"
+                                />
+                                {isChecked && (
+                                  <span className="text-[10px] font-bold text-emerald-400 shrink-0">Correct</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 4. Theory (Pick the best answer) - Large cards with radio circle, NO letters A-D */}
+                    {singleType === 'theory-best' && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[11px] text-[#9AA8C7] font-semibold">
+                            Full-sentence Options (Select best answer)
+                          </label>
+                          <div className="flex items-center gap-1.5">
+                            {singleOptions.length < 8 && (
+                              <button
+                                type="button"
+                                onClick={() => setSingleOptions(prev => [...prev, ''])}
+                                className="text-[10px] font-bold text-[#60A5FA] hover:text-white"
+                              >
+                                + Add Option
+                              </button>
+                            )}
+                            {singleOptions.length > 2 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSingleOptions(prev => prev.slice(0, prev.length - 1));
+                                  if (singleCorrectIndex >= singleOptions.length - 1) {
+                                    setSingleCorrectIndex(0);
+                                  }
+                                }}
+                                className="text-[10px] font-bold text-rose-400 hover:text-white ml-2"
+                              >
+                                - Remove
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          {singleOptions.map((opt, optIdx) => {
+                            const isCorrect = singleCorrectIndex === optIdx;
+                            return (
+                              <div
+                                key={optIdx}
+                                className={`p-2.5 rounded-lg border flex items-center gap-2.5 transition-colors ${
+                                  isCorrect
+                                    ? 'bg-emerald-950/25 border-emerald-500/60'
+                                    : 'bg-[#121C36] border-[#24315A]'
+                                }`}
+                              >
+                                <button
+                                  type="button"
+                                  onClick={() => setSingleCorrectIndex(optIdx)}
+                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 cursor-pointer ${
+                                    isCorrect ? 'border-emerald-400 bg-emerald-500' : 'border-[#24315A] bg-[#0A1224]'
+                                  }`}
+                                >
+                                  {isCorrect && <span className="w-2 h-2 rounded-full bg-white" />}
+                                </button>
+                                <input
+                                  type="text"
+                                  value={opt}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    setSingleOptions(prev => {
+                                      const next = [...prev];
+                                      next[optIdx] = val;
+                                      return next;
+                                    });
+                                  }}
+                                  placeholder={`Option statement ${optIdx + 1} (sentences/paragraphs)`}
+                                  className="flex-1 bg-transparent text-xs text-[#E6ECFA] focus:outline-none"
+                                />
+                                {isCorrect && (
+                                  <span className="text-[10px] font-bold text-emerald-400 shrink-0">Best answer</span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 5. Multiple Choice Options (2 to 6) */}
+                    {singleType === 'multiple-choice' && (
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
                           <label className="text-[11px] text-[#9AA8C7] font-semibold">Options &amp; Correct Answer</label>
@@ -1623,26 +1931,84 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                         </div>
                       </div>
 
-                      {draftQuestions[previewQuestionIndex] && (
-                        <div className="space-y-3">
-                          <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">
-                            {previewQuestionIndex + 1}. {draftQuestions[previewQuestionIndex].text}
-                          </h4>
-                          <div className="space-y-2">
-                            {draftQuestions[previewQuestionIndex].options.map((opt, oIdx) => (
-                              <div
-                                key={oIdx}
-                                className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center gap-2.5 text-xs text-[#E6ECFA]"
-                              >
-                                <span className="w-6 h-6 rounded-full bg-[#121C36] border border-[#24315A] flex items-center justify-center font-bold text-xs text-[#9AA8C7]">
-                                  {String.fromCharCode(65 + oIdx)}
+                      {draftQuestions[previewQuestionIndex] && (() => {
+                        const prevQ = draftQuestions[previewQuestionIndex];
+                        return (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2">
+                              <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
+                                {prevQ.type === 'theory-best'
+                                  ? 'Theory (Pick Best Answer)'
+                                  : prevQ.type === 'theory-select-all'
+                                  ? 'Theory (Select All That Apply)'
+                                  : prevQ.type === 'theory-self-check'
+                                  ? 'Theory (Self-Check)'
+                                  : prevQ.type === 'true-false'
+                                  ? 'True / False'
+                                  : 'Multiple Choice'}
+                              </span>
+                            </div>
+                            <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">
+                              {previewQuestionIndex + 1}. {prevQ.text}
+                            </h4>
+
+                            {prevQ.type === 'theory-self-check' ? (
+                              <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-2">
+                                <span className="text-[10px] font-bold text-[#FFC700] uppercase block">
+                                  Model Answer (Shown on tap):
                                 </span>
-                                <span>{opt}</span>
+                                <p className="text-xs text-[#E6ECFA] italic leading-relaxed">
+                                  {prevQ.modelAnswer || 'Model answer will be shown here.'}
+                                </p>
+                                <div className="flex items-center gap-2 pt-1 text-[10px] text-[#9AA8C7]">
+                                  <span>Student taps:</span>
+                                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">I knew it</span>
+                                  <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">Partly</span>
+                                  <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-bold">Not yet</span>
+                                </div>
                               </div>
-                            ))}
+                            ) : prevQ.type === 'theory-best' ? (
+                              <div className="space-y-2">
+                                {prevQ.options.map((opt, oIdx) => (
+                                  <div
+                                    key={oIdx}
+                                    className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center gap-3 text-xs text-[#E6ECFA]"
+                                  >
+                                    <span className="w-4 h-4 rounded-full border-2 border-[#24315A] bg-[#121C36] shrink-0" />
+                                    <span className="leading-relaxed">{opt}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : prevQ.type === 'theory-select-all' ? (
+                              <div className="space-y-2">
+                                {prevQ.options.map((opt, oIdx) => (
+                                  <div
+                                    key={oIdx}
+                                    className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center gap-2.5 text-xs text-[#E6ECFA]"
+                                  >
+                                    <span className="w-4 h-4 rounded border border-[#24315A] bg-[#121C36] shrink-0" />
+                                    <span>{opt}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {prevQ.options.map((opt, oIdx) => (
+                                  <div
+                                    key={oIdx}
+                                    className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center gap-2.5 text-xs text-[#E6ECFA]"
+                                  >
+                                    <span className="w-6 h-6 rounded-full bg-[#121C36] border border-[#24315A] flex items-center justify-center font-bold text-xs text-[#9AA8C7]">
+                                      {String.fromCharCode(65 + oIdx)}
+                                    </span>
+                                    <span>{opt}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   ) : (
                     /* LIST OF DRAFT QUESTIONS */
@@ -1650,6 +2016,7 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                       {draftQuestions.map((q, idx) => {
                         const keyItem = draftKeys.find(k => k.questionId === q.id) || draftKeys[idx];
                         const correctIdx = keyItem ? keyItem.correctOptionIndex : 0;
+                        const correctIndices = keyItem?.correctOptionIndices || [];
                         const hasExplanation = Boolean(keyItem?.explanation && keyItem.explanation.trim().length > 0);
                         const hasWhyNotNotes = Boolean(keyItem?.whyNotNotes && Object.keys(keyItem.whyNotNotes).length > 0);
 
@@ -1661,30 +2028,91 @@ Why not False: Queues follow FIFO, whereas stacks are strictly LIFO.`}
                             }`}
                           >
                             <div className="space-y-1.5 flex-1">
-                              <h5 className="font-bold text-[#E6ECFA] flex items-baseline gap-1.5">
-                                <span className="text-[#FFC700] font-mono">{idx + 1}.</span>
-                                <span>{q.text}</span>
-                              </h5>
-
-                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
-                                {q.options.map((opt, oIdx) => {
-                                  const isCorrect = correctIdx === oIdx;
-                                  return (
-                                    <div
-                                      key={oIdx}
-                                      className={`px-2 py-0.5 rounded flex items-center gap-1.5 ${
-                                        isCorrect
-                                          ? 'bg-emerald-950/40 text-emerald-300 font-bold border border-emerald-500/30'
-                                          : 'text-[#9AA8C7]'
-                                      }`}
-                                    >
-                                      <span className="font-mono">{String.fromCharCode(65 + oIdx)})</span>
-                                      <span className="truncate">{opt}</span>
-                                      {isCorrect && <Check className="w-3 h-3 text-emerald-400 ml-auto" />}
-                                    </div>
-                                  );
-                                })}
+                              <div className="flex flex-wrap items-center gap-2">
+                                <h5 className="font-bold text-[#E6ECFA] flex items-baseline gap-1.5">
+                                  <span className="text-[#FFC700] font-mono">{idx + 1}.</span>
+                                  <span>{q.text}</span>
+                                </h5>
+                                <span className="px-1.5 py-0.2 rounded bg-[#0A1224] border border-[#24315A] text-[9px] font-bold text-[#60A5FA]">
+                                  {q.type === 'theory-best'
+                                    ? 'Theory (Pick Best)'
+                                    : q.type === 'theory-select-all'
+                                    ? 'Select All'
+                                    : q.type === 'theory-self-check'
+                                    ? 'Self-Check'
+                                    : q.type === 'true-false'
+                                    ? 'True/False'
+                                    : 'Multiple Choice'}
+                                </span>
                               </div>
+
+                              {/* Options / Statements Rendering */}
+                              {q.type === 'theory-self-check' ? (
+                                <div className="p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[11px] text-[#E6ECFA] space-y-0.5">
+                                  <span className="text-[10px] font-bold text-[#FFC700] block">Model Answer:</span>
+                                  <p className="italic text-[#9AA8C7]">{q.modelAnswer || keyItem?.modelAnswer}</p>
+                                </div>
+                              ) : q.type === 'theory-best' ? (
+                                <div className="space-y-1 text-[11px]">
+                                  {q.options.map((opt, oIdx) => {
+                                    const isCorrect = correctIdx === oIdx;
+                                    return (
+                                      <div
+                                        key={oIdx}
+                                        className={`px-2.5 py-1 rounded-lg flex items-center gap-2 ${
+                                          isCorrect
+                                            ? 'bg-emerald-950/40 text-emerald-300 font-bold border border-emerald-500/30'
+                                            : 'text-[#9AA8C7] bg-[#0A1224]/60'
+                                        }`}
+                                      >
+                                        <span className={`w-3.5 h-3.5 rounded-full border shrink-0 ${isCorrect ? 'border-emerald-400 bg-emerald-500' : 'border-[#24315A]'}`} />
+                                        <span className="line-clamp-2">{opt}</span>
+                                        {isCorrect && <Check className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : q.type === 'theory-select-all' ? (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
+                                  {q.options.map((opt, oIdx) => {
+                                    const isCorrect = correctIndices.includes(oIdx);
+                                    return (
+                                      <div
+                                        key={oIdx}
+                                        className={`px-2 py-0.5 rounded flex items-center gap-1.5 ${
+                                          isCorrect
+                                            ? 'bg-emerald-950/40 text-emerald-300 font-bold border border-emerald-500/30'
+                                            : 'text-[#9AA8C7]'
+                                        }`}
+                                      >
+                                        <span className="text-[10px] font-mono text-[#60A5FA]">[{isCorrect ? '✓' : ' '}]</span>
+                                        <span className="truncate">{opt}</span>
+                                        {isCorrect && <Check className="w-3 h-3 text-emerald-400 ml-auto" />}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              ) : (
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
+                                  {q.options.map((opt, oIdx) => {
+                                    const isCorrect = correctIdx === oIdx;
+                                    return (
+                                      <div
+                                        key={oIdx}
+                                        className={`px-2 py-0.5 rounded flex items-center gap-1.5 ${
+                                          isCorrect
+                                            ? 'bg-emerald-950/40 text-emerald-300 font-bold border border-emerald-500/30'
+                                            : 'text-[#9AA8C7]'
+                                        }`}
+                                      >
+                                        <span className="font-mono">{String.fromCharCode(65 + oIdx)})</span>
+                                        <span className="truncate">{opt}</span>
+                                        {isCorrect && <Check className="w-3 h-3 text-emerald-400 ml-auto" />}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
 
                               {hasExplanation ? (
                                 <div className="text-[10px] text-[#9AA8C7] bg-[#0A1224] p-2 rounded-lg border border-[#24315A]/70 space-y-1">

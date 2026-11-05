@@ -93,7 +93,8 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const [activeQuiz, setActiveQuiz] = useState<QuizItem | null>(null);
   const [activeQuestions, setActiveQuestions] = useState<QuizQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, number>>({});
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, any>>({});
+  const [revealedModelAnswers, setRevealedModelAnswers] = useState<Record<string, boolean>>({});
   const [flaggedQuestions, setFlaggedQuestions] = useState<Record<string, boolean>>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -177,6 +178,18 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setCurrentScreen('intro');
   };
 
+  // Helper to determine if a question has been answered
+  const isQuestionAnswered = (q: QuizQuestion, ans: any): boolean => {
+    if (ans === undefined || ans === null) return false;
+    if (q.type === 'theory-select-all') {
+      return Array.isArray(ans) && ans.length > 0;
+    }
+    if (q.type === 'theory-self-check') {
+      return ans === 'knew' || ans === 'partly' || ans === 'not-yet';
+    }
+    return typeof ans === 'number' && ans >= 0;
+  };
+
   // Start Taking Quiz after reviewing Intro Card
   const handleStartTakingQuiz = () => {
     if (!activeQuiz) return;
@@ -191,14 +204,21 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setActiveQuestions(qList);
     setCurrentQuestionIndex(0);
 
-    // Initialize answers with -1 (unanswered)
-    const initAnswers: Record<string, number> = {};
+    // Initialize answers per question type
+    const initAnswers: Record<string, any> = {};
     const initFlags: Record<string, boolean> = {};
     qList.forEach(q => {
-      initAnswers[q.id] = -1;
+      if (q.type === 'theory-select-all') {
+        initAnswers[q.id] = [];
+      } else if (q.type === 'theory-self-check') {
+        initAnswers[q.id] = null;
+      } else {
+        initAnswers[q.id] = -1;
+      }
       initFlags[q.id] = false;
     });
     setSelectedAnswers(initAnswers);
+    setRevealedModelAnswers({});
     setFlaggedQuestions(initFlags);
 
     // Setup timer
@@ -274,13 +294,44 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  // Select option for current question
+  // Select option for current single-choice question
   const handleSelectOption = (optionIndex: number) => {
     if (!activeQuestions[currentQuestionIndex]) return;
     const qId = activeQuestions[currentQuestionIndex].id;
     setSelectedAnswers(prev => ({
       ...prev,
       [qId]: optionIndex
+    }));
+  };
+
+  // Toggle selection for select-all theory questions
+  const handleToggleSelectAllOption = (optionIndex: number) => {
+    if (!activeQuestions[currentQuestionIndex]) return;
+    const qId = activeQuestions[currentQuestionIndex].id;
+    const currentList: number[] = Array.isArray(selectedAnswers[qId]) ? selectedAnswers[qId] : [];
+    const nextList = currentList.includes(optionIndex)
+      ? currentList.filter(i => i !== optionIndex)
+      : [...currentList, optionIndex];
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [qId]: nextList
+    }));
+  };
+
+  // Rate self-check theory question (cannot be changed once tapped)
+  const handleRateSelfCheck = (rating: 'knew' | 'partly' | 'not-yet') => {
+    if (!activeQuestions[currentQuestionIndex]) return;
+    const qId = activeQuestions[currentQuestionIndex].id;
+    if (
+      selectedAnswers[qId] === 'knew' ||
+      selectedAnswers[qId] === 'partly' ||
+      selectedAnswers[qId] === 'not-yet'
+    ) {
+      return; // Locked after tapping
+    }
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [qId]: rating
     }));
   };
 
@@ -313,10 +364,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
       const existingAttempt = attemptsMap[activeQuiz.id];
       const attemptNumber = (existingAttempt?.attempts || 0) + 1;
+      const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
 
       // Read Quiz Keys doc to score the student's submission
-      let score = 0;
+      let totalEarnedScore = 0;
+      const questionScores: Record<string, number> = {};
       let keysDocData: QuizKeyDoc | null = null;
+
       try {
         const keySnap = await getDoc(doc(db, 'quizKeys', activeQuiz.id));
         if (keySnap.exists()) {
@@ -326,18 +380,55 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           activeQuestions.forEach(q => {
             const chosen = selectedAnswers[q.id];
             const matchingKey = keyItems.find(k => k.questionId === q.id);
-            if (matchingKey && chosen !== undefined && chosen === matchingKey.correctOptionIndex) {
-              score += 1;
+            let earned = 0;
+
+            if (matchingKey) {
+              if (q.type === 'theory-self-check') {
+                if (chosen === 'knew') {
+                  earned = ptsPerQ;
+                } else if (chosen === 'partly') {
+                  earned = 0.5 * ptsPerQ;
+                } else {
+                  earned = 0;
+                }
+              } else if (q.type === 'theory-select-all') {
+                const chosenArr: number[] = Array.isArray(chosen) ? chosen : [];
+                const correctArr: number[] = matchingKey.correctOptionIndices || [];
+                if (activeQuiz.allowPartialCredit) {
+                  // Formula: correct picked minus wrong picked, divided by total correct, never below zero
+                  const correctPicked = chosenArr.filter(i => correctArr.includes(i)).length;
+                  const wrongPicked = chosenArr.filter(i => !correctArr.includes(i)).length;
+                  const frac = correctArr.length > 0 ? Math.max(0, (correctPicked - wrongPicked) / correctArr.length) : 0;
+                  earned = Math.round(frac * ptsPerQ * 100) / 100;
+                } else {
+                  // Full marks only when all correct statements are selected and no wrong ones
+                  const isExact =
+                    chosenArr.length === correctArr.length &&
+                    chosenArr.every(i => correctArr.includes(i));
+                  earned = isExact ? ptsPerQ : 0;
+                }
+              } else {
+                // multiple-choice, true-false, theory-best
+                if (typeof chosen === 'number' && chosen >= 0 && chosen === matchingKey.correctOptionIndex) {
+                  earned = ptsPerQ;
+                } else {
+                  earned = 0;
+                }
+              }
             }
+
+            questionScores[q.id] = earned;
+            totalEarnedScore += earned;
           });
         }
       } catch (keyErr) {
         console.warn('Could not read answer keys during submit:', keyErr);
       }
 
-      const total = activeQuestions.length;
+      const score = Number.isInteger(totalEarnedScore) ? totalEarnedScore : Math.round(totalEarnedScore * 10) / 10;
+      const totalPossible = activeQuestions.length * ptsPerQ;
       const bestScore = Math.max(existingAttempt?.bestScore || 0, score);
-      const percentage = total > 0 ? Math.round((score / total) * 100) : 0;
+      const percentage = totalPossible > 0 ? Math.round((totalEarnedScore / totalPossible) * 100) : 0;
       const passRequirement = activeQuiz.passingScore || 70;
       const passed = percentage >= passRequirement;
 
@@ -349,8 +440,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         studentName: studentName || 'Student',
         matricNumber: matricNumber || '',
         answers: selectedAnswers,
+        questionScores,
         score,
-        total,
+        total: totalPossible,
         attempts: attemptNumber,
         bestScore,
         passed,
@@ -388,7 +480,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         department: studentDepartment,
         level: activeQuiz.level,
         type: 'quiz submitted',
-        title: `Scored ${score}/${total} (${percentage}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}`
+        title: `Scored ${score}/${totalPossible} (${percentage}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}`
       });
 
       // Set review screen data with Missed tab shown first
@@ -502,8 +594,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         : q.type === 'true-false'
         ? ['True', 'False']
         : [];
-    const correctIdx = matchingKey?.correctOptionIndex ?? 0;
-    const correctText = optionsList[correctIdx] || `Option ${String.fromCharCode(65 + correctIdx)}`;
+    let correctText = '';
+    if (q.type === 'theory-self-check') {
+      correctText = q.modelAnswer || matchingKey?.modelAnswer || 'Model answer';
+    } else if (q.type === 'theory-select-all') {
+      const correctIndices = matchingKey?.correctOptionIndices || [];
+      correctText = correctIndices.map((i: number) => optionsList[i] || `Option ${i + 1}`).join('; ');
+    } else {
+      const correctIdx = matchingKey?.correctOptionIndex ?? 0;
+      correctText = optionsList[correctIdx] || `Option ${String.fromCharCode(65 + correctIdx)}`;
+    }
 
     const willBookmark = !isQuestionBookmarked(q.id);
     setLocalBookmarks(prev => ({ ...prev, [bookmarkId]: willBookmark }));
@@ -587,14 +687,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Answered questions count
   const answeredCount = useMemo(() => {
-    return Object.values(selectedAnswers).filter(ans => ans !== -1).length;
-  }, [selectedAnswers]);
+    return activeQuestions.filter(q => isQuestionAnswered(q, selectedAnswers[q.id])).length;
+  }, [activeQuestions, selectedAnswers]);
 
   const unansweredCount = activeQuestions.length - answeredCount;
 
   // Current active question
   const currentQ = activeQuestions[currentQuestionIndex];
-  const currentQAnswer = currentQ ? selectedAnswers[currentQ.id] : -1;
+  const currentQAnswer = currentQ ? selectedAnswers[currentQ.id] : undefined;
   const currentQIsFlagged = currentQ ? !!flaggedQuestions[currentQ.id] : false;
   const isCurrentTrueFalse = currentQ?.type === 'true-false';
 
@@ -811,7 +911,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
           <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
             {activeQuestions.map((q, idx) => {
-              const isAnswered = selectedAnswers[q.id] !== undefined && selectedAnswers[q.id] !== -1;
+              const isAnswered = isQuestionAnswered(q, selectedAnswers[q.id]);
               const isFlagged = !!flaggedQuestions[q.id];
               const isCurrent = idx === currentQuestionIndex;
 
@@ -852,6 +952,21 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
                 [{ptsPerQ} {ptsPerQ === 1 ? 'Point' : 'Points'}]
               </span>
+              {currentQ.type === 'theory-best' && (
+                <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
+                  Pick Best Answer
+                </span>
+              )}
+              {currentQ.type === 'theory-select-all' && (
+                <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
+                  Select All That Apply
+                </span>
+              )}
+              {currentQ.type === 'theory-self-check' && (
+                <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
+                  Self-Check
+                </span>
+              )}
             </div>
 
             {/* Mark for Review Button */}
@@ -873,9 +988,166 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             {currentQ.text}
           </div>
 
-          {/* Question Options */}
-          {isCurrentTrueFalse ? (
-            /* True / False Two Big Buttons */
+          {/* 1. Theory (Self-Check): Read, Tap 'Show model answer', then Rate (locked once tapped) */}
+          {currentQ.type === 'theory-self-check' ? (
+            <div className="space-y-3 pt-1">
+              {!revealedModelAnswers[currentQ.id] ? (
+                <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-center space-y-2.5">
+                  <p className="text-xs text-[#9AA8C7]">
+                    Formulate your answer in your mind first, then tap below to view the model answer.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setRevealedModelAnswers(prev => ({ ...prev, [currentQ.id]: true }))}
+                    className="px-4 py-2.5 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-2 shadow-sm"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    <span>Show model answer</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#FFC700]/50 space-y-1.5">
+                    <span className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider block">
+                      Model Answer:
+                    </span>
+                    <p className="text-xs text-[#E6ECFA] leading-relaxed whitespace-pre-line">
+                      {currentQ.modelAnswer || 'Refer to the syllabus guidelines.'}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <span className="text-xs font-bold text-[#9AA8C7] block">
+                      How did your answer compare? (Cannot be changed once tapped):
+                    </span>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        disabled={Boolean(currentQAnswer)}
+                        onClick={() => handleRateSelfCheck('knew')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          currentQAnswer === 'knew'
+                            ? 'bg-emerald-600 text-white border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)] ring-2 ring-emerald-400'
+                            : currentQAnswer
+                            ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-emerald-500 hover:text-emerald-300 cursor-pointer'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">I knew it</div>
+                        <div className="text-[10px] opacity-80 mt-0.5">Full marks</div>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={Boolean(currentQAnswer)}
+                        onClick={() => handleRateSelfCheck('partly')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          currentQAnswer === 'partly'
+                            ? 'bg-[#FFC700] text-[#0A1224] border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.35)] ring-2 ring-[#FFC700]'
+                            : currentQAnswer
+                            ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-[#FFC700] hover:text-[#FFC700] cursor-pointer'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">Partly</div>
+                        <div className="text-[10px] opacity-80 mt-0.5">Half marks</div>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={Boolean(currentQAnswer)}
+                        onClick={() => handleRateSelfCheck('not-yet')}
+                        className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
+                          currentQAnswer === 'not-yet'
+                            ? 'bg-rose-600 text-white border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.35)] ring-2 ring-rose-400'
+                            : currentQAnswer
+                            ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-rose-500 hover:text-rose-300 cursor-pointer'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">Not yet</div>
+                        <div className="text-[10px] opacity-80 mt-0.5">Zero</div>
+                      </button>
+                    </div>
+
+                    {Boolean(currentQAnswer) && (
+                      <p className="text-[10px] text-center text-emerald-400 font-semibold">
+                        ✓ Response recorded. Selection is locked.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : currentQ.type === 'theory-best' ? (
+            /* 2. Theory (Pick the best answer) - Large cards with radio circle, NO letters A, B, C, D */
+            <div className="space-y-2.5 pt-1">
+              {(currentQ.options || []).map((optText, optIdx) => {
+                const isSelected = currentQAnswer === optIdx;
+                return (
+                  <button
+                    key={optIdx}
+                    type="button"
+                    onClick={() => handleSelectOption(optIdx)}
+                    className={`w-full p-4 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
+                      isSelected
+                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+                    }`}
+                  >
+                    <span
+                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        isSelected
+                          ? 'border-white bg-[#2F52FF]'
+                          : 'border-[#24315A] bg-[#121C36]'
+                      }`}
+                    >
+                      {isSelected && <span className="w-2 h-2 rounded-full bg-white" />}
+                    </span>
+                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
+                      {optText}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : currentQ.type === 'theory-select-all' ? (
+            /* 3. Theory (Select all that apply) - Checkbox cards */
+            <div className="space-y-2 pt-1">
+              <span className="text-[11px] text-[#9AA8C7] block">
+                Select all statements that apply (one or more may be correct):
+              </span>
+              {(currentQ.options || []).map((optText, optIdx) => {
+                const isChecked = Array.isArray(currentQAnswer) && currentQAnswer.includes(optIdx);
+                return (
+                  <button
+                    key={optIdx}
+                    type="button"
+                    onClick={() => handleToggleSelectAllOption(optIdx)}
+                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                      isChecked
+                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+                    }`}
+                  >
+                    <span
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                        isChecked
+                          ? 'border-white bg-white text-[#2F52FF]'
+                          : 'border-[#24315A] bg-[#121C36]'
+                      }`}
+                    >
+                      {isChecked && <Check className="w-3.5 h-3.5 text-[#2F52FF] stroke-[3]" />}
+                    </span>
+                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
+                      {optText}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : isCurrentTrueFalse ? (
+            /* 4. True / False Two Big Buttons */
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
@@ -902,7 +1174,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               </button>
             </div>
           ) : (
-            /* Multiple Choice Options List */
+            /* 5. Standard Multiple Choice Options List */
             <div className="space-y-2.5 pt-1">
               {(currentQ.options || []).map((optText, optIdx) => {
                 const isSelected = currentQAnswer === optIdx;
@@ -1035,12 +1307,32 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     // Filter into Missed, Correct, and All lists
     const missedQuestions: { q: QuizQuestion; originalIndex: number }[] = [];
     const correctQuestions: { q: QuizQuestion; originalIndex: number }[] = [];
+    const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
+
     const allQuestionsWithIndex = activeQuestions.map((q, idx) => {
       const matchingKey = keys.find(k => k.questionId === q.id);
-      const correctIdx = matchingKey?.correctOptionIndex ?? -1;
-      const chosenIdx = reviewAttempt.answers[q.id];
-      const isCorrect = chosenIdx !== undefined && chosenIdx !== -1 && chosenIdx === correctIdx;
-      if (isCorrect) {
+      const earned = reviewAttempt.questionScores?.[q.id];
+      let isFullyCorrect = false;
+
+      if (earned !== undefined) {
+        isFullyCorrect = earned >= ptsPerQ;
+      } else {
+        if (q.type === 'theory-self-check') {
+          isFullyCorrect = reviewAttempt.answers[q.id] === 'knew';
+        } else if (q.type === 'theory-select-all') {
+          const chosenArr: number[] = Array.isArray(reviewAttempt.answers[q.id]) ? reviewAttempt.answers[q.id] : [];
+          const correctArr = matchingKey?.correctOptionIndices || [];
+          isFullyCorrect =
+            chosenArr.length === correctArr.length &&
+            chosenArr.every(i => correctArr.includes(i));
+        } else {
+          const correctIdx = matchingKey?.correctOptionIndex ?? -1;
+          const chosenIdx = reviewAttempt.answers[q.id];
+          isFullyCorrect = chosenIdx !== undefined && chosenIdx !== -1 && chosenIdx === correctIdx;
+        }
+      }
+
+      if (isFullyCorrect) {
         correctQuestions.push({ q, originalIndex: idx });
       } else {
         missedQuestions.push({ q, originalIndex: idx });
@@ -1272,11 +1564,29 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             <div className="space-y-3.5">
               {activeDisplayList.map(({ q, originalIndex }) => {
                 const matchingKey = keys.find(k => k.questionId === q.id);
-                const correctIdx = matchingKey?.correctOptionIndex ?? -1;
-                const chosenIdx = reviewAttempt.answers[q.id];
-                const isCorrect = chosenIdx !== undefined && chosenIdx !== -1 && chosenIdx === correctIdx;
-                const isUnanswered = chosenIdx === undefined || chosenIdx === -1;
+                const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
+                const earned = reviewAttempt.questionScores?.[q.id] ?? 0;
+                const whyNotNotes = matchingKey?.whyNotNotes || {};
+                const bookmarked = isQuestionBookmarked(q.id);
+
                 const isTrueFalse = q.type === 'true-false';
+                const isTheoryBest = q.type === 'theory-best';
+                const isSelectAll = q.type === 'theory-select-all';
+                const isSelfCheck = q.type === 'theory-self-check';
+
+                const chosen = reviewAttempt.answers[q.id];
+                const isFullyCorrect = earned >= ptsPerQ;
+                const isPartial = earned > 0 && earned < ptsPerQ;
+
+                let isUnanswered = false;
+                if (isSelectAll) {
+                  isUnanswered = !Array.isArray(chosen) || chosen.length === 0;
+                } else if (isSelfCheck) {
+                  isUnanswered = !chosen;
+                } else {
+                  isUnanswered = chosen === undefined || chosen === -1;
+                }
+
                 const optionsList =
                   q.options && q.options.length > 0
                     ? q.options
@@ -1284,50 +1594,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     ? ['True', 'False']
                     : [];
 
-                const chosenOptionText =
-                  !isUnanswered && chosenIdx >= 0 && chosenIdx < optionsList.length
-                    ? optionsList[chosenIdx]
-                    : null;
-                const correctOptionText =
-                  correctIdx >= 0 && correctIdx < optionsList.length
-                    ? optionsList[correctIdx]
-                    : 'Option ' + String.fromCharCode(65 + Math.max(0, correctIdx));
-
-                const bookmarked = isQuestionBookmarked(q.id);
-                const whyNotNotes = matchingKey?.whyNotNotes || {};
-
-                // Determine student's chosen option key (e.g. 'A', 'B', 'True', 'False')
-                const chosenKey = !isUnanswered
-                  ? isTrueFalse
-                    ? chosenIdx === 0
-                      ? 'TRUE'
-                      : chosenIdx === 1
-                      ? 'FALSE'
-                      : ''
-                    : chosenIdx >= 0
-                    ? String.fromCharCode(65 + chosenIdx)
-                    : ''
-                  : '';
-
-                // Check if the creator provided a specific 'Why not [Option]' note for student's choice
-                const studentChosenWhyNotKey = chosenKey
-                  ? Object.keys(whyNotNotes).find(k => k.toUpperCase() === chosenKey.toUpperCase())
-                  : null;
-                const studentChosenWhyNotText = studentChosenWhyNotKey
-                  ? whyNotNotes[studentChosenWhyNotKey]
-                  : null;
-
-                // Other wrong options notes
-                const otherWhyNotEntries = Object.entries(whyNotNotes).filter(
-                  ([k]) => !studentChosenWhyNotKey || k.toUpperCase() !== studentChosenWhyNotKey.toUpperCase()
-                );
-
                 return (
                   <div
                     key={q.id}
                     className={`p-4 rounded-2xl border space-y-3 transition-all ${
-                      isCorrect
+                      isFullyCorrect
                         ? 'bg-[#121C36] border-emerald-500/40 shadow-sm'
+                        : isPartial
+                        ? 'bg-[#121C36] border-[#FFC700]/50 shadow-sm'
                         : isUnanswered
                         ? 'bg-[#121C36] border-amber-500/30'
                         : 'bg-[#121C36] border-rose-500/40 shadow-sm'
@@ -1335,21 +1609,38 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                   >
                     {/* Header: Question Number, Result Badge & Bookmark */}
                     <div className="flex items-center justify-between gap-2 border-b border-[#24315A] pb-2 text-xs">
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-heading font-extrabold text-[#FFC700] text-sm">
                           Question {originalIndex + 1}
                         </span>
-                        {isCorrect ? (
+
+                        <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
+                          {isTheoryBest
+                            ? 'Theory (Best Answer)'
+                            : isSelectAll
+                            ? 'Theory (Select All)'
+                            : isSelfCheck
+                            ? 'Theory (Self-Check)'
+                            : isTrueFalse
+                            ? 'True / False'
+                            : 'Multiple Choice'}
+                        </span>
+
+                        {isFullyCorrect ? (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[10px] flex items-center gap-1 border border-emerald-500/30">
-                            <Check className="w-3 h-3" /> Correct
+                            <Check className="w-3 h-3" /> Correct [{earned}/{ptsPerQ} pts]
+                          </span>
+                        ) : isPartial ? (
+                          <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-[10px] flex items-center gap-1 border border-amber-500/40">
+                            Partial Credit [{earned}/{ptsPerQ} pts]
                           </span>
                         ) : isUnanswered ? (
                           <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] flex items-center gap-1 border border-amber-500/30">
-                            Unanswered
+                            Unanswered [0/{ptsPerQ} pts]
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px] flex items-center gap-1 border border-rose-500/30">
-                            <X className="w-3 h-3" /> Incorrect
+                            <X className="w-3 h-3" /> Incorrect [0/{ptsPerQ} pts]
                           </span>
                         )}
                       </div>
@@ -1377,91 +1668,289 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                       {q.text}
                     </p>
 
-                    {/* Answer Comparison: 'Your answer' in red (or grey), 'Correct answer' in green */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
-                      {/* Your Answer */}
-                      <div
-                        className={`p-3 rounded-xl border text-xs space-y-1 ${
-                          isCorrect
-                            ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
-                            : isUnanswered
-                            ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
-                            : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
-                        }`}
-                      >
-                        <span
-                          className={`text-[10px] uppercase font-bold tracking-wider block ${
-                            isCorrect
-                              ? 'text-emerald-400'
-                              : isUnanswered
-                              ? 'text-[#9AA8C7]'
-                              : 'text-rose-400'
-                          }`}
-                        >
-                          Your answer
-                        </span>
-                        {isUnanswered ? (
-                          <span className="font-medium text-[#9AA8C7] italic">Not answered</span>
-                        ) : (
-                          <div className="font-bold flex items-center gap-1.5">
-                            {!isTrueFalse && chosenIdx >= 0 && (
-                              <span className="font-mono text-xs">{String.fromCharCode(65 + chosenIdx)})</span>
-                            )}
-                            <span className={!isCorrect ? 'line-through text-rose-300' : 'text-emerald-200'}>
-                              {chosenOptionText}
-                            </span>
-                            {isCorrect ? (
-                              <Check className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
-                            ) : (
-                              <X className="w-3.5 h-3.5 text-rose-400 ml-auto shrink-0" />
-                            )}
-                          </div>
-                        )}
-                      </div>
+                    {/* 1. THEORY (PICK THE BEST ANSWER) - NO LETTERS A-D */}
+                    {isTheoryBest && (() => {
+                      const correctIdx = matchingKey?.correctOptionIndex ?? 0;
+                      const chosenIdx = typeof chosen === 'number' ? chosen : -1;
 
-                      {/* Correct Answer */}
-                      <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/60 text-xs space-y-1 text-emerald-200">
-                        <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider block">
-                          Correct answer
-                        </span>
-                        <div className="font-bold flex items-center gap-1.5">
-                          {!isTrueFalse && correctIdx >= 0 && (
-                            <span className="font-mono text-xs">{String.fromCharCode(65 + correctIdx)})</span>
-                          )}
-                          <span>{correctOptionText}</span>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Multiple Choice Options Note (when student made an error) */}
-                    {!isTrueFalse && !isCorrect && (
-                      <div className="p-2.5 rounded-xl bg-[#0A1224]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1.5">
-                        <span className="font-semibold text-[#E6ECFA] block">Options Overview:</span>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      return (
+                        <div className="space-y-2 pt-1">
+                          <span className="text-[10px] uppercase font-bold text-[#9AA8C7] tracking-wider block">
+                            Options Review:
+                          </span>
                           {optionsList.map((opt, oIdx) => {
                             const isChosen = chosenIdx === oIdx;
                             const isRight = correctIdx === oIdx;
+
                             return (
                               <div
                                 key={oIdx}
-                                className={`px-2.5 py-1 rounded-lg text-[11px] flex items-center justify-between gap-1.5 border ${
+                                className={`p-3 rounded-xl border text-xs flex items-center gap-3 transition-colors ${
                                   isRight
-                                    ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-200 font-bold'
+                                    ? 'bg-emerald-950/60 border-emerald-500/70 text-emerald-200'
                                     : isChosen
-                                    ? 'bg-rose-950/70 border-rose-500/60 text-rose-200 line-through'
-                                    : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7]'
+                                    ? 'bg-rose-950/60 border-rose-500/70 text-rose-200'
+                                    : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
                                 }`}
                               >
-                                <span>{String.fromCharCode(65 + oIdx)}) {opt}</span>
-                                {isRight && <span className="text-emerald-400 text-[10px] font-bold">✓ Correct</span>}
-                                {isChosen && !isRight && <span className="text-rose-400 text-[10px] font-bold">✗ Your choice</span>}
+                                <span
+                                  className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                    isRight
+                                      ? 'border-emerald-400 bg-emerald-500 text-white'
+                                      : isChosen
+                                      ? 'border-rose-400 bg-rose-500 text-white'
+                                      : 'border-[#24315A] bg-[#121C36]'
+                                  }`}
+                                >
+                                  {isRight ? (
+                                    <Check className="w-3 h-3 text-white stroke-[3]" />
+                                  ) : isChosen ? (
+                                    <X className="w-3 h-3 text-white stroke-[3]" />
+                                  ) : null}
+                                </span>
+
+                                <span className={`flex-1 leading-relaxed ${isChosen && !isRight ? 'line-through text-rose-300' : ''}`}>
+                                  {opt}
+                                </span>
+
+                                {isRight && (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 shrink-0">
+                                    {isChosen ? 'Your choice (Correct) ✓' : 'Correct answer ✓'}
+                                  </span>
+                                )}
+
+                                {isChosen && !isRight && (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold border border-rose-500/30 shrink-0">
+                                    Your answer ✗
+                                  </span>
+                                )}
                               </div>
                             );
                           })}
                         </div>
-                      </div>
-                    )}
+                      );
+                    })()}
+
+                    {/* 2. THEORY (SELECT ALL THAT APPLY) - CHECKBOX CARDS */}
+                    {isSelectAll && (() => {
+                      const correctIndices = matchingKey?.correctOptionIndices || [];
+                      const chosenIndices: number[] = Array.isArray(chosen) ? chosen : [];
+
+                      return (
+                        <div className="space-y-2 pt-1">
+                          <span className="text-[10px] uppercase font-bold text-[#9AA8C7] tracking-wider block">
+                            Statements Review:
+                          </span>
+                          {optionsList.map((opt, oIdx) => {
+                            const isChosen = chosenIndices.includes(oIdx);
+                            const isRight = correctIndices.includes(oIdx);
+
+                            return (
+                              <div
+                                key={oIdx}
+                                className={`p-3 rounded-xl border text-xs flex items-center gap-3 transition-colors ${
+                                  isRight && isChosen
+                                    ? 'bg-emerald-950/60 border-emerald-500/80 text-emerald-200'
+                                    : isRight && !isChosen
+                                    ? 'bg-emerald-950/20 border-dashed border-emerald-500/60 text-emerald-300'
+                                    : !isRight && isChosen
+                                    ? 'bg-rose-950/60 border-rose-500/80 text-rose-200'
+                                    : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
+                                }`}
+                              >
+                                <span
+                                  className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 ${
+                                    isRight && isChosen
+                                      ? 'border-emerald-400 bg-emerald-500 text-white'
+                                      : isRight && !isChosen
+                                      ? 'border-emerald-400 bg-transparent text-emerald-400'
+                                      : !isRight && isChosen
+                                      ? 'border-rose-400 bg-rose-500 text-white'
+                                      : 'border-[#24315A] bg-[#121C36]'
+                                  }`}
+                                >
+                                  {isRight && isChosen ? (
+                                    <Check className="w-3.5 h-3.5 text-white stroke-[3]" />
+                                  ) : isRight && !isChosen ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[2]" />
+                                  ) : !isRight && isChosen ? (
+                                    <X className="w-3.5 h-3.5 text-white stroke-[3]" />
+                                  ) : null}
+                                </span>
+
+                                <span className={`flex-1 leading-relaxed ${!isRight && isChosen ? 'line-through text-rose-300' : ''}`}>
+                                  {opt}
+                                </span>
+
+                                {isRight && isChosen && (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 text-[10px] font-bold border border-emerald-500/30 shrink-0">
+                                    Your choice (Correct) ✓
+                                  </span>
+                                )}
+
+                                {isRight && !isChosen && (
+                                  <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-300 text-[10px] font-semibold border border-emerald-500/30 shrink-0">
+                                    Correct (Not picked)
+                                  </span>
+                                )}
+
+                                {!isRight && isChosen && (
+                                  <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 text-[10px] font-bold border border-rose-500/30 shrink-0">
+                                    Your choice (Incorrect) ✗
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
+
+                    {/* 3. THEORY (SELF-CHECK) - MODEL ANSWER AND RATING BADGE */}
+                    {isSelfCheck && (() => {
+                      const modelText = q.modelAnswer || matchingKey?.modelAnswer || '';
+                      return (
+                        <div className="space-y-2.5 pt-1">
+                          {/* Student Rating Banner */}
+                          <div
+                            className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-2 ${
+                              chosen === 'knew'
+                                ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                                : chosen === 'partly'
+                                ? 'bg-amber-500/15 border-amber-500/40 text-amber-200'
+                                : chosen === 'not-yet'
+                                ? 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                                : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
+                            }`}
+                          >
+                            <span className="text-[11px] uppercase font-bold">Your Self-Evaluation:</span>
+                            <span className="font-extrabold text-xs">
+                              {chosen === 'knew'
+                                ? 'I knew it (Full marks) ✓'
+                                : chosen === 'partly'
+                                ? 'Partly (Half marks) ⚠️'
+                                : chosen === 'not-yet'
+                                ? 'Not yet (0 marks) ✗'
+                                : 'Not evaluated'}
+                            </span>
+                          </div>
+
+                          {/* Model Answer Box */}
+                          <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#FFC700]/50 space-y-1.5">
+                            <span className="text-[10px] font-bold text-[#FFC700] uppercase tracking-wider flex items-center gap-1.5">
+                              <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                              <span>Model Answer:</span>
+                            </span>
+                            <p className="text-xs text-[#E6ECFA] leading-relaxed whitespace-pre-line">
+                              {modelText || 'Refer to the syllabus notes.'}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* 4. MULTIPLE CHOICE & TRUE/FALSE - COMPARISON CARDS */}
+                    {!isTheoryBest && !isSelectAll && !isSelfCheck && (() => {
+                      const correctIdx = matchingKey?.correctOptionIndex ?? -1;
+                      const chosenIdx = typeof chosen === 'number' ? chosen : -1;
+                      const chosenOptionText =
+                        !isUnanswered && chosenIdx >= 0 && chosenIdx < optionsList.length
+                          ? optionsList[chosenIdx]
+                          : null;
+                      const correctOptionText =
+                        correctIdx >= 0 && correctIdx < optionsList.length
+                          ? optionsList[correctIdx]
+                          : 'Option ' + String.fromCharCode(65 + Math.max(0, correctIdx));
+
+                      return (
+                        <>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+                            {/* Your Answer */}
+                            <div
+                              className={`p-3 rounded-xl border text-xs space-y-1 ${
+                                isFullyCorrect
+                                  ? 'bg-emerald-950/40 border-emerald-500/50 text-emerald-200'
+                                  : isUnanswered
+                                  ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7]'
+                                  : 'bg-rose-950/40 border-rose-500/50 text-rose-200'
+                              }`}
+                            >
+                              <span
+                                className={`text-[10px] uppercase font-bold tracking-wider block ${
+                                  isFullyCorrect
+                                    ? 'text-emerald-400'
+                                    : isUnanswered
+                                    ? 'text-[#9AA8C7]'
+                                    : 'text-rose-400'
+                                }`}
+                              >
+                                Your answer
+                              </span>
+                              {isUnanswered ? (
+                                <span className="font-medium text-[#9AA8C7] italic">Not answered</span>
+                              ) : (
+                                <div className="font-bold flex items-center gap-1.5">
+                                  {!isTrueFalse && chosenIdx >= 0 && (
+                                    <span className="font-mono text-xs">{String.fromCharCode(65 + chosenIdx)})</span>
+                                  )}
+                                  <span className={!isFullyCorrect ? 'line-through text-rose-300' : 'text-emerald-200'}>
+                                    {chosenOptionText}
+                                  </span>
+                                  {isFullyCorrect ? (
+                                    <Check className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
+                                  ) : (
+                                    <X className="w-3.5 h-3.5 text-rose-400 ml-auto shrink-0" />
+                                  )}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* Correct Answer */}
+                            <div className="p-3 rounded-xl bg-emerald-950/60 border border-emerald-500/60 text-xs space-y-1 text-emerald-200">
+                              <span className="text-[10px] uppercase font-bold text-emerald-400 tracking-wider block">
+                                Correct answer
+                              </span>
+                              <div className="font-bold flex items-center gap-1.5">
+                                {!isTrueFalse && correctIdx >= 0 && (
+                                  <span className="font-mono text-xs">{String.fromCharCode(65 + correctIdx)})</span>
+                                )}
+                                <span>{correctOptionText}</span>
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 ml-auto shrink-0" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Options Overview on error */}
+                          {!isTrueFalse && !isFullyCorrect && (
+                            <div className="p-2.5 rounded-xl bg-[#0A1224]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1.5">
+                              <span className="font-semibold text-[#E6ECFA] block">Options Overview:</span>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                                {optionsList.map((opt, oIdx) => {
+                                  const isChosen = chosenIdx === oIdx;
+                                  const isRight = correctIdx === oIdx;
+                                  return (
+                                    <div
+                                      key={oIdx}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] flex items-center justify-between gap-1.5 border ${
+                                        isRight
+                                          ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-200 font-bold'
+                                          : isChosen
+                                          ? 'bg-rose-950/70 border-rose-500/60 text-rose-200 line-through'
+                                          : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7]'
+                                      }`}
+                                    >
+                                      <span>{String.fromCharCode(65 + oIdx)}) {opt}</span>
+                                      {isRight && <span className="text-emerald-400 text-[10px] font-bold">✓ Correct</span>}
+                                      {isChosen && !isRight && <span className="text-rose-400 text-[10px] font-bold">✗ Your choice</span>}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
 
                     {/* 'Why this is the answer' Box with Creator's Explanation */}
                     <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#FFC700]/30 space-y-2">
@@ -1479,26 +1968,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     </div>
 
                     {/* WRONG OPTION NOTES: 'Why not B' style notes written by the creator */}
-                    {studentChosenWhyNotText && (
-                      <div className="p-3 rounded-xl bg-rose-950/30 border border-rose-500/40 text-xs space-y-1.5">
-                        <div className="flex items-center gap-1.5 text-xs font-bold text-rose-400">
-                          <AlertCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                          <span>Why not {studentChosenWhyNotKey}:</span>
-                        </div>
-                        <div className="text-rose-100 pl-1">
-                          {renderFormattedExplanation(studentChosenWhyNotText)}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Additional wrong option notes (if author provided them) */}
-                    {otherWhyNotEntries.length > 0 && (
+                    {Object.keys(whyNotNotes).length > 0 && (
                       <div className="space-y-1.5 pt-1">
                         <span className="text-[10px] font-bold text-[#9AA8C7] uppercase tracking-wider block">
-                          Notes on other options:
+                          Notes on options:
                         </span>
                         <div className="space-y-1.5">
-                          {otherWhyNotEntries.map(([optKey, note]) => (
+                          {Object.entries(whyNotNotes).map(([optKey, note]) => (
                             <div
                               key={optKey}
                               className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs space-y-1"

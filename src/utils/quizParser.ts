@@ -51,28 +51,51 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     const lines = block.split('\n');
 
     let questionText = '';
-    let questionType: 'multiple-choice' | 'true-false' = 'multiple-choice';
-    const optionMatches: { letter: string; text: string }[] = [];
+    let questionType: 'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check' = 'multiple-choice';
+    const parsedOptions: { text: string; isCorrect: boolean; letter?: string }[] = [];
     let answerLetter = '';
+    const modelAnswerLines: string[] = [];
     const explanationLines: string[] = [];
     const whyNotNotes: Record<string, string> = {};
 
-    let currentSection: 'question' | 'options' | 'explanation' | 'whyNot' = 'question';
+    let currentSection: 'question' | 'options' | 'modelAnswer' | 'explanation' | 'whyNot' = 'question';
     let currentWhyNotTarget = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
+      if (!trimmed && currentSection !== 'explanation' && currentSection !== 'modelAnswer') {
+        continue;
+      }
 
       // Check if line is Type line
       const typeMatch = trimmed.match(/^(?:Type|Question\s*Type)\s*[:=\-]\s*(.*)$/i);
       if (typeMatch) {
-        currentSection = 'options';
         const typeVal = typeMatch[1].trim().toLowerCase();
-        if (typeVal.includes('true') || typeVal.includes('tf') || typeVal.includes('false')) {
+        if (typeVal.includes('select') || typeVal.includes('all that apply')) {
+          questionType = 'theory-select-all';
+        } else if (typeVal.includes('self') || typeVal.includes('check')) {
+          questionType = 'theory-self-check';
+        } else if (typeVal.includes('theory') || typeVal.includes('best')) {
+          questionType = 'theory-best';
+        } else if (typeVal.includes('true') || typeVal.includes('tf') || typeVal.includes('false')) {
           questionType = 'true-false';
         } else {
           questionType = 'multiple-choice';
+        }
+        currentSection = 'options';
+        continue;
+      }
+
+      // Check if line is Model Answer line (for self-check)
+      const modelMatch = trimmed.match(/^(?:Model\s*answer|ModelAnswer|Ideal\s*answer)\s*[:=\-]\s*(.*)$/i);
+      if (modelMatch) {
+        currentSection = 'modelAnswer';
+        if (questionType === 'multiple-choice') {
+          questionType = 'theory-self-check';
+        }
+        if (modelMatch[1].trim()) {
+          modelAnswerLines.push(modelMatch[1].trim());
         }
         continue;
       }
@@ -80,7 +103,6 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       // Check if line is Answer line
       const ansMatch = trimmed.match(/^(?:Answer|Ans|Correct|Correct\s*Answer)\s*[:=\-]\s*(.+)$/i);
       if (ansMatch) {
-        currentSection = 'options';
         const rawAns = ansMatch[1].trim();
         if (/^(?:true|t)$/i.test(rawAns)) {
           questionType = 'true-false';
@@ -89,14 +111,14 @@ export function parseBulkQuizText(rawText: string): ParseResult {
           questionType = 'true-false';
           answerLetter = 'FALSE';
         } else {
-          const letterMatch = rawAns.match(/^([A-Fa-f0-9])/);
-          answerLetter = letterMatch ? letterMatch[1].toUpperCase() : rawAns.toUpperCase();
+          answerLetter = rawAns.toUpperCase();
         }
+        currentSection = 'options';
         continue;
       }
 
       // Check if line is Why not line: e.g. "Why not A: ...", "Why not B: ..."
-      const whyNotMatch = trimmed.match(/^(?:Why\s+not|Why\s+isn't|Why\s+not\s+option)\s+([A-Fa-f]|True|False)\s*[:=\-]\s*(.*)$/i);
+      const whyNotMatch = trimmed.match(/^(?:Why\s+not|Why\s+isn't|Why\s+not\s+option)\s+([A-Fa-f0-9]|True|False|\S+)\s*[:=\-]\s*(.*)$/i);
       if (whyNotMatch) {
         currentSection = 'whyNot';
         currentWhyNotTarget = whyNotMatch[1].toUpperCase();
@@ -120,6 +142,12 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         continue;
       }
 
+      // If we are reading Model Answer
+      if (currentSection === 'modelAnswer') {
+        modelAnswerLines.push(line);
+        continue;
+      }
+
       // If we are currently reading Why not notes
       if (currentSection === 'whyNot') {
         if (currentWhyNotTarget && trimmed) {
@@ -128,30 +156,51 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         continue;
       }
 
+      // Check for bullet options:
+      // * Option (marked correct)
+      // - Option (marked wrong)
+      const bulletMatch = trimmed.match(/^([\*\-])\s+(.+)$/);
+      if (bulletMatch) {
+        currentSection = 'options';
+        const isCorrect = bulletMatch[1] === '*';
+        parsedOptions.push({
+          text: bulletMatch[2].trim(),
+          isCorrect
+        });
+        continue;
+      }
+
       // Check for standalone option line: e.g. "A) option text" or "A. option text"
       const singleOptionMatch = trimmed.match(/^([A-Fa-f])[\)\.\:]\s*(.*)$/);
       if (singleOptionMatch && !trimmed.includes(') ') && !trimmed.includes('. ')) {
         currentSection = 'options';
-        optionMatches.push({
+        parsedOptions.push({
           letter: singleOptionMatch[1].toUpperCase(),
-          text: singleOptionMatch[2].trim()
+          text: singleOptionMatch[2].trim(),
+          isCorrect: false
         });
         continue;
       }
 
       // Check for inline options e.g. "A) option  B) option  C) option"
-      const inlineMatches: { letter: string; text: string }[] = [];
+      const inlineMatches: { letter: string; text: string; isCorrect: boolean }[] = [];
       let m: RegExpExecArray | null;
       const re = /([A-Fa-f])[\)\.\:]\s*(.*?)(?=\s+[A-Fa-f][\)\.\:]|$)/g;
       while ((m = re.exec(trimmed)) !== null) {
         if (m[2].trim()) {
-          inlineMatches.push({ letter: m[1].toUpperCase(), text: m[2].trim() });
+          inlineMatches.push({ letter: m[1].toUpperCase(), text: m[2].trim(), isCorrect: false });
         }
       }
 
       if (inlineMatches.length > 0) {
         currentSection = 'options';
-        inlineMatches.forEach(opt => optionMatches.push(opt));
+        inlineMatches.forEach(opt => parsedOptions.push(opt));
+        continue;
+      }
+
+      // If in options section and not recognized as a new header, append to last option (for multiline options)
+      if (currentSection === 'options' && parsedOptions.length > 0) {
+        parsedOptions[parsedOptions.length - 1].text += `\n${trimmed}`;
         continue;
       }
 
@@ -165,6 +214,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     }
 
     const fullExplanation = explanationLines.join('\n').trim();
+    const fullModelAnswer = modelAnswerLines.join('\n').trim();
 
     // Validation for question text
     if (!questionText.trim()) {
@@ -174,13 +224,44 @@ export function parseBulkQuizText(rawText: string): ParseResult {
 
     const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + blockNum;
 
-    // Handle True/False questions
+    // 1. Handle Self-Check Theory questions
+    if (questionType === 'theory-self-check') {
+      if (!fullModelAnswer) {
+        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Self-check question requires a 'Model answer: <text>' line.`);
+        return;
+      }
+
+      items.push({
+        question: {
+          id: qId,
+          text: questionText.trim(),
+          type: 'theory-self-check',
+          options: [],
+          modelAnswer: fullModelAnswer
+        },
+        key: {
+          questionId: qId,
+          modelAnswer: fullModelAnswer,
+          explanation: fullExplanation || fullModelAnswer,
+          whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+        }
+      });
+      return;
+    }
+
+    // 2. Handle True/False questions
     if (questionType === 'true-false') {
       let correctIndex = -1;
       if (answerLetter === 'TRUE' || answerLetter === 'A' || answerLetter === '1') {
         correctIndex = 0; // True
       } else if (answerLetter === 'FALSE' || answerLetter === 'B' || answerLetter === '2') {
         correctIndex = 1; // False
+      } else {
+        // Check if bullets were used: * True, - False
+        const tIndex = parsedOptions.findIndex(o => /^(?:true|t)$/i.test(o.text) && o.isCorrect);
+        const fIndex = parsedOptions.findIndex(o => /^(?:false|f)$/i.test(o.text) && o.isCorrect);
+        if (tIndex >= 0) correctIndex = 0;
+        else if (fIndex >= 0) correctIndex = 1;
       }
 
       if (correctIndex === -1) {
@@ -205,38 +286,89 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       return;
     }
 
-    // Validation for Multiple Choice
-    if (optionMatches.length < 2) {
-      errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Requires at least 2 options (found ${optionMatches.length}).`);
+    // 3. Handle Select All that Apply questions
+    if (questionType === 'theory-select-all') {
+      if (parsedOptions.length < 2) {
+        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Select-all requires at least 2 options.`);
+        return;
+      }
+
+      const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7 };
+      const correctIndices: number[] = [];
+
+      // Find all options marked with *
+      parsedOptions.forEach((opt, idx) => {
+        if (opt.isCorrect) {
+          correctIndices.push(idx);
+        }
+      });
+
+      // Fallback: check answerLetter e.g. "A, C" or "A and C"
+      if (correctIndices.length === 0 && answerLetter) {
+        const matches = answerLetter.match(/[A-H]/g);
+        if (matches) {
+          matches.forEach(ch => {
+            const idx = letterMap[ch];
+            if (idx !== undefined && idx < parsedOptions.length && !correctIndices.includes(idx)) {
+              correctIndices.push(idx);
+            }
+          });
+        }
+      }
+
+      if (correctIndices.length === 0) {
+        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Mark at least one correct option with * (e.g. * Correct statement).`);
+        return;
+      }
+
+      items.push({
+        question: {
+          id: qId,
+          text: questionText.trim(),
+          type: 'theory-select-all',
+          options: parsedOptions.map(o => o.text.trim())
+        },
+        key: {
+          questionId: qId,
+          correctOptionIndices: correctIndices,
+          explanation: fullExplanation || 'All marked options must be selected.',
+          whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+        }
+      });
       return;
     }
 
-    if (optionMatches.length > 6) {
-      errors.push(`Question #${blockNum}: Has ${optionMatches.length} options (maximum allowed is 6).`);
+    // 4. Handle Theory (pick the best answer) and standard Multiple Choice
+    if (parsedOptions.length < 2) {
+      errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Requires at least 2 options (found ${parsedOptions.length}).`);
       return;
     }
 
-    // Deduplicate option letters while preserving order
-    const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5 };
+    if (parsedOptions.length > 8) {
+      errors.push(`Question #${blockNum}: Has ${parsedOptions.length} options (maximum allowed is 8).`);
+      return;
+    }
+
+    const letterMap: Record<string, number> = { A: 0, B: 1, C: 2, D: 3, E: 4, F: 5, G: 6, H: 7 };
     let correctIndex = -1;
 
-    if (!answerLetter) {
-      errors.push(`Question #${blockNum}: Missing 'Answer: <Option Letter>' line.`);
-      return;
-    }
-
-    if (letterMap[answerLetter] !== undefined) {
-      correctIndex = letterMap[answerLetter];
-    } else {
-      // numeric fallback: 1 -> 0, 2 -> 1
-      const num = parseInt(answerLetter, 10);
-      if (!isNaN(num) && num >= 1 && num <= optionMatches.length) {
-        correctIndex = num - 1;
+    // Check if one was marked with *
+    const starIdx = parsedOptions.findIndex(o => o.isCorrect);
+    if (starIdx !== -1) {
+      correctIndex = starIdx;
+    } else if (answerLetter) {
+      if (letterMap[answerLetter] !== undefined) {
+        correctIndex = letterMap[answerLetter];
+      } else {
+        const num = parseInt(answerLetter, 10);
+        if (!isNaN(num) && num >= 1 && num <= parsedOptions.length) {
+          correctIndex = num - 1;
+        }
       }
     }
 
-    if (correctIndex < 0 || correctIndex >= optionMatches.length) {
-      errors.push(`Question #${blockNum}: Answer "${answerLetter}" is invalid for the provided options (A through ${String.fromCharCode(64 + optionMatches.length)}).`);
+    if (correctIndex < 0 || correctIndex >= parsedOptions.length) {
+      errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Mark the correct option with * or provide 'Answer: <letter>'.`);
       return;
     }
 
@@ -244,13 +376,13 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       question: {
         id: qId,
         text: questionText.trim(),
-        type: 'multiple-choice',
-        options: optionMatches.map(o => o.text.trim())
+        type: questionType === 'theory-best' ? 'theory-best' : 'multiple-choice',
+        options: parsedOptions.map(o => o.text.trim())
       },
       key: {
         questionId: qId,
         correctOptionIndex: correctIndex,
-        explanation: fullExplanation || `Option ${String.fromCharCode(65 + correctIndex)} is the correct answer.`,
+        explanation: fullExplanation || (questionType === 'theory-best' ? 'The highlighted response is the best answer.' : `Option ${String.fromCharCode(65 + correctIndex)} is the correct answer.`),
         whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
       }
     });
