@@ -26,8 +26,8 @@ import {
   Mail,
   RefreshCw
 } from 'lucide-react';
-import { doc, updateDoc, deleteDoc } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { doc, deleteDoc } from 'firebase/firestore';
+import { db, safeUpdateDoc as updateDoc, cleanFirestoreData } from '../lib/firebase';
 
 interface AdminRepActivityViewProps {
   students: UserProfile[];

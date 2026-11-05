@@ -1,4 +1,4 @@
-import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin';
+import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin.ts';
 
 /**
  * Vercel Serverless Function & Express Route Handler

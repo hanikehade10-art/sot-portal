@@ -1,11 +1,12 @@
 import http from 'http';
-import express, { Request, Response } from 'express';
+import express from 'express';
+import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI } from '@google/genai';
-import subscribeHandler from './api/subscribe.js';
-import sendHandler from './api/send.js';
+import subscribeHandler from './api/subscribe.ts';
+import sendHandler from './api/send.ts';
 
 dotenv.config();
 
@@ -596,7 +597,8 @@ async function startServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR === 'true' ? false : { server },
+        hmr: process.env.DISABLE_HMR === 'true' ? false : undefined,
+        ws: process.env.DISABLE_HMR === 'true' ? false : { server },
       },
       appType: 'spa',
     });

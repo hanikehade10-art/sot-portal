@@ -6,7 +6,17 @@ import {
   persistentMultipleTabManager,
   getFirestore,
   doc,
-  getDocFromServer
+  getDocFromServer,
+  setDoc as rawSetDoc,
+  updateDoc as rawUpdateDoc,
+  addDoc as rawAddDoc
+} from 'firebase/firestore';
+import type {
+  DocumentReference,
+  CollectionReference,
+  SetOptions,
+  UpdateData,
+  WithFieldValue
 } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
@@ -22,16 +32,139 @@ try {
     {
       localCache: persistentLocalCache({
         tabManager: persistentMultipleTabManager()
-      })
+      }),
+      ignoreUndefinedProperties: true
     },
     firestoreDatabaseId
   );
 } catch (e) {
   console.warn('Persistent local cache initialization fallback:', e);
-  firestoreInstance = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+  try {
+    firestoreInstance = initializeFirestore(
+      app,
+      {
+        ignoreUndefinedProperties: true
+      },
+      firestoreDatabaseId
+    );
+  } catch {
+    firestoreInstance = firestoreDatabaseId ? getFirestore(app, firestoreDatabaseId) : getFirestore(app);
+  }
 }
 
 export const db = firestoreInstance;
+
+// Common optional text fields that should be converted from undefined to empty string
+const CONVERT_TO_EMPTY_STRING_KEYS = new Set([
+  'explanation',
+  'topicId',
+  'courseId',
+  'description',
+  'instructions',
+  'notes',
+  'summary',
+  'videoUrl',
+  'content',
+  'url',
+  'link',
+  'author',
+  'adminReply',
+  'studentName',
+  'matricNumber',
+  'jambNumber',
+  'fullName',
+  'category',
+  'session',
+  'year',
+  'modelAnswer'
+]);
+
+/**
+ * Recursively cleans any object or array before passing to Firestore:
+ * - Converts undefined string-like fields (explanation, topicId, courseId, description, etc.) to ""
+ * - Drops any remaining undefined properties so Firestore never encounters undefined
+ * - Handles nested arrays, maps, and objects
+ */
+export function cleanFirestoreData<T = any>(input: any): T {
+  if (input === null || input === undefined) {
+    return input;
+  }
+  if (Array.isArray(input)) {
+    return input
+      .filter(item => item !== undefined)
+      .map(item => cleanFirestoreData(item)) as unknown as T;
+  }
+  if (typeof input === 'object' && !(input instanceof Date)) {
+    const cleaned: Record<string, any> = {};
+    for (const key of Object.keys(input)) {
+      const val = input[key];
+      if (val === undefined) {
+        const lowerKey = key.toLowerCase();
+        if (
+          CONVERT_TO_EMPTY_STRING_KEYS.has(key) ||
+          lowerKey.includes('explanation') ||
+          lowerKey.includes('description') ||
+          lowerKey.includes('topicid') ||
+          lowerKey.includes('courseid') ||
+          lowerKey.includes('whynot')
+        ) {
+          cleaned[key] = '';
+        }
+        // Otherwise omit the key entirely so undefined is never written
+        continue;
+      }
+      cleaned[key] = cleanFirestoreData(val);
+    }
+    return cleaned as T;
+  }
+  return input;
+}
+
+/**
+ * Safe wrapper for Firestore setDoc that automatically cleans and strips undefined values
+ */
+export async function safeSetDoc(
+  reference: DocumentReference,
+  data: any,
+  options?: SetOptions
+) {
+  const sanitized = cleanFirestoreData(data);
+  try {
+    return options ? await rawSetDoc(reference, sanitized, options) : await rawSetDoc(reference, sanitized);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, reference.path);
+  }
+}
+
+/**
+ * Safe wrapper for Firestore updateDoc that automatically cleans and strips undefined values
+ */
+export async function safeUpdateDoc(
+  reference: DocumentReference,
+  data: any
+) {
+  const sanitized = cleanFirestoreData(data);
+  try {
+    return await rawUpdateDoc(reference, sanitized);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, reference.path);
+  }
+}
+
+/**
+ * Safe wrapper for Firestore addDoc that automatically cleans and strips undefined values
+ */
+export async function safeAddDoc(
+  reference: CollectionReference,
+  data: any
+) {
+  const sanitized = cleanFirestoreData(data);
+  try {
+    return await rawAddDoc(reference, sanitized);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, reference.path);
+  }
+}
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);

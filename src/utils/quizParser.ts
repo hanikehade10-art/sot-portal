@@ -279,7 +279,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         key: {
           questionId: qId,
           correctOptionIndex: correctIndex,
-          explanation: fullExplanation || `The statement is ${correctIndex === 0 ? 'True' : 'False'}.`,
+          explanation: fullExplanation.trim() || '',
           whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
         }
       });
@@ -331,7 +331,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         key: {
           questionId: qId,
           correctOptionIndices: correctIndices,
-          explanation: fullExplanation || 'All marked options must be selected.',
+          explanation: fullExplanation.trim() || '',
           whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
         }
       });
@@ -382,7 +382,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       key: {
         questionId: qId,
         correctOptionIndex: correctIndex,
-        explanation: fullExplanation || (questionType === 'theory-best' ? 'The highlighted response is the best answer.' : `Option ${String.fromCharCode(65 + correctIndex)} is the correct answer.`),
+        explanation: fullExplanation.trim() || '',
         whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
       }
     });

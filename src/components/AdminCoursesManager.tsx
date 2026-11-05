@@ -3,14 +3,12 @@ import {
   collection,
   getDocs,
   doc,
-  addDoc,
-  updateDoc,
   deleteDoc,
   query,
   where,
   writeBatch
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, safeAddDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
 import { CourseItem, TopicItem, ResourceItem, ResourceType, QuizItem } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import {
@@ -213,16 +211,16 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       const updatePayload: Partial<TopicItem> = {
         title: lessonTitle.trim(),
         estimatedMinutes: estMinutes,
-        videoUrl: lessonVideoUrl.trim() || undefined,
-        notes: lessonNotes,
-        summary: lessonSummary.trim() || undefined,
-        furtherReading: cleanReading.length > 0 ? cleanReading : undefined,
+        videoUrl: lessonVideoUrl.trim() || '',
+        notes: lessonNotes || '',
+        summary: lessonSummary.trim() || '',
+        furtherReading: cleanReading.length > 0 ? cleanReading : [],
         order: Number(lessonOrder) || 1,
-        linkedQuizId: lessonLinkedQuizId.trim() || undefined,
+        linkedQuizId: lessonLinkedQuizId.trim() || '',
         updatedAt: nowIso
       };
 
-      await updateDoc(doc(db, 'topics', editingLessonTopic.id), updatePayload as any);
+      await safeUpdateDoc(doc(db, 'topics', editingLessonTopic.id), cleanFirestoreData(updatePayload));
 
       setTopics(prev =>
         prev.map(t => (t.id === editingLessonTopic.id ? { ...t, ...updatePayload } : t))
@@ -411,16 +409,16 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       };
 
       if (editingCourse) {
-        await updateDoc(doc(db, 'courses', editingCourse.id), payload);
+        await safeUpdateDoc(doc(db, 'courses', editingCourse.id), cleanFirestoreData(payload));
         setCourses(prev => prev.map(c => c.id === editingCourse.id ? { ...c, ...payload } : c));
         showSaved('Saved');
       } else {
-        const ref = await addDoc(collection(db, 'courses'), {
+        const ref = await safeAddDoc(collection(db, 'courses'), cleanFirestoreData({
           ...payload,
           createdAt: nowIso
-        });
+        }));
         const newCourse: CourseItem = {
-          id: ref.id,
+          id: ref?.id || ('course_' + Date.now()),
           ...payload,
           createdAt: nowIso,
           type: 'Core'
@@ -478,8 +476,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
             createdAt: nowIso,
             updatedAt: nowIso
           };
-          const ref = await addDoc(collection(db, 'courses'), payload);
-          addedCourses.push({ id: ref.id, ...payload });
+          const ref = await safeAddDoc(collection(db, 'courses'), cleanFirestoreData(payload));
+          addedCourses.push({ id: ref?.id || ('course_' + Date.now()), ...payload });
         }
       }
 
@@ -559,10 +557,10 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       const nowIso = new Date().toISOString();
 
       if (editingTopic) {
-        await updateDoc(doc(db, 'topics', editingTopic.id), {
+        await safeUpdateDoc(doc(db, 'topics', editingTopic.id), cleanFirestoreData({
           title: topicTitle.trim(),
           updatedAt: nowIso
-        });
+        }));
         setTopics(prev => prev.map(t => t.id === editingTopic.id ? { ...t, title: topicTitle.trim() } : t));
         showSaved('Saved');
       } else {
@@ -576,8 +574,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
           order: nextOrder,
           createdAt: nowIso
         };
-        const ref = await addDoc(collection(db, 'topics'), payload);
-        const newTopic: TopicItem = { id: ref.id, ...payload };
+        const ref = await safeAddDoc(collection(db, 'topics'), cleanFirestoreData(payload));
+        const newTopic: TopicItem = { id: ref?.id || ('topic_' + Date.now()), ...payload };
         setTopics(prev => [...prev, newTopic]);
         showSaved('Saved');
 
@@ -631,8 +629,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
           order: startOrder,
           createdAt: nowIso
         };
-        const ref = await addDoc(collection(db, 'topics'), payload);
-        newTopicsList.push({ id: ref.id, ...payload });
+        const ref = await safeAddDoc(collection(db, 'topics'), cleanFirestoreData(payload));
+        newTopicsList.push({ id: ref?.id || ('topic_' + Date.now()), ...payload });
       }
 
       setTopics(prev => [...prev, ...newTopicsList]);
@@ -698,8 +696,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     const targetOrder = targetTopic.order || (swapIndex + 1);
 
     try {
-      await updateDoc(doc(db, 'topics', topic.id), { order: targetOrder });
-      await updateDoc(doc(db, 'topics', targetTopic.id), { order: currentOrder });
+      await safeUpdateDoc(doc(db, 'topics', topic.id), { order: targetOrder });
+      await safeUpdateDoc(doc(db, 'topics', targetTopic.id), { order: currentOrder });
 
       setTopics(prev => prev.map(t => {
         if (t.id === topic.id) return { ...t, order: targetOrder };
@@ -746,7 +744,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       const payload: Omit<ResourceItem, 'id'> = {
         courseId: currentManagingCourse.id,
         courseCode: currentManagingCourse.code,
-        topicId: resourceModalConfig.topicId || undefined,
+        topicId: resourceModalConfig.topicId || '',
         type: resourceModalConfig.type,
         title: resourceModalConfig.title.trim(),
         url: formattedUrl,
@@ -754,23 +752,23 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         level: currentManagingCourse.level,
         semester: currentManagingCourse.semester,
         uploadedBy: auth.currentUser?.uid || 'admin',
-        uploadedByEmail: auth.currentUser?.email || undefined,
+        uploadedByEmail: auth.currentUser?.email || '',
         uploadedByRole: 'admin',
         createdAt: nowIso
       };
 
       if (resourceModalConfig.editingId) {
-        await updateDoc(doc(db, 'resources', resourceModalConfig.editingId), {
+        await safeUpdateDoc(doc(db, 'resources', resourceModalConfig.editingId), cleanFirestoreData({
           title: payload.title,
           url: payload.url,
           type: payload.type,
           updatedAt: nowIso
-        });
+        }));
         setResources(prev => prev.map(r => r.id === resourceModalConfig.editingId ? { ...r, ...payload, id: r.id } : r));
       } else {
-        const ref = await addDoc(collection(db, 'resources'), payload);
+        const ref = await safeAddDoc(collection(db, 'resources'), cleanFirestoreData(payload));
         const newResource: ResourceItem = {
-          id: ref.id,
+          id: ref?.id || ('res_' + Date.now()),
           ...payload
         };
         setResources(prev => [newResource, ...prev]);

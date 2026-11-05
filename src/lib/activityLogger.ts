@@ -1,5 +1,5 @@
-import { collection, addDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { collection } from 'firebase/firestore';
+import { db, safeAddDoc as addDoc, cleanFirestoreData } from './firebase';
 import { ActivityLog } from '../types';
 
 export interface LogActivityParams {

@@ -1,4 +1,4 @@
-import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin';
+import { getFirebaseAdmin, verifyCaller, getDepartmentTopicSlug, isFirebaseAdminConfigured } from './lib/admin.ts';
 
 // In-memory sliding window rate limiter: 20 sends per 1 hour per sender UID
 const sendRateLimits = new Map<string, number[]>();

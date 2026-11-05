@@ -1,13 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { DEPARTMENTS, INITIAL_ANNOUNCEMENTS } from '../data/departments';
-import { auth, db } from '../lib/firebase';
+import {
+  auth,
+  db,
+  safeUpdateDoc as updateDoc,
+  safeAddDoc as addDoc,
+  cleanFirestoreData
+} from '../lib/firebase';
 import {
   collection,
   getDocs,
   doc,
-  updateDoc,
-  addDoc,
   query,
   where,
   onSnapshot

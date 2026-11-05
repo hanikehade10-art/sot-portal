@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { SITE_CONFIG } from '../config/site';
-import { db } from '../lib/firebase';
-import { collection, addDoc } from 'firebase/firestore';
+import { db, safeAddDoc as addDoc, cleanFirestoreData } from '../lib/firebase';
+import { collection } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { MessageType, ContactMessage } from '../types';
 import { useSiteSettings } from '../hooks/useSiteSettings';
@@ -41,7 +41,7 @@ export const ContactPage: React.FC = () => {
     }
 
     setLoading(true);
-    const studentUid = user?.uid || profile?.uid || undefined;
+    const studentUid = user?.uid || profile?.uid || '';
     const newMsg: Omit<ContactMessage, 'id'> = {
       name: name.trim(),
       email: email.trim(),
@@ -56,7 +56,7 @@ export const ContactPage: React.FC = () => {
     try {
       // Save to Firestore
       try {
-        await addDoc(collection(db, 'messages'), newMsg);
+        await addDoc(collection(db, 'messages'), cleanFirestoreData(newMsg));
       } catch (err) {
         console.warn('Firestore message save note:', err);
       }

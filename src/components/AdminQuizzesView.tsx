@@ -4,14 +4,12 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { db, auth } from '../lib/firebase';
+import { db, auth, safeSetDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
 import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
 import {
   collection,
   getDocs,
   doc,
-  setDoc,
-  updateDoc,
   deleteDoc,
   query,
   where
@@ -285,7 +283,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const handleTogglePublish = async (quiz: QuizItem) => {
     const updatedStatus = !quiz.published;
     try {
-      await updateDoc(doc(db, 'quizzes', quiz.id), {
+      await safeUpdateDoc(doc(db, 'quizzes', quiz.id), {
         published: updatedStatus,
         updatedAt: new Date().toISOString()
       });
@@ -351,7 +349,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const newK: QuizKeyItem = {
         questionId: qId,
         correctOptionIndex: singleCorrectIndex,
-        explanation: singleExplanation.trim() || (isTrue ? 'True is the correct answer.' : 'False is the correct answer.'),
+        explanation: singleExplanation.trim(),
         whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
       };
 
@@ -382,7 +380,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const newK: QuizKeyItem = {
         questionId: qId,
         modelAnswer: singleModelAnswer.trim(),
-        explanation: singleExplanation.trim() || singleModelAnswer.trim(),
+        explanation: singleExplanation.trim(),
         whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
       };
 
@@ -419,7 +417,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const newK: QuizKeyItem = {
         questionId: qId,
         correctOptionIndices: validIndices,
-        explanation: singleExplanation.trim() || 'All selected statements are required.',
+        explanation: singleExplanation.trim(),
         whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
       };
 
@@ -450,7 +448,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const newK: QuizKeyItem = {
         questionId: qId,
         correctOptionIndex: singleCorrectIndex,
-        explanation: singleExplanation.trim() || 'The marked statement is the best answer.',
+        explanation: singleExplanation.trim(),
         whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
       };
 
@@ -479,7 +477,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     const newK: QuizKeyItem = {
       questionId: qId,
       correctOptionIndex: singleCorrectIndex,
-      explanation: singleExplanation.trim() || `Option ${String.fromCharCode(65 + singleCorrectIndex)} is correct.`,
+      explanation: singleExplanation.trim(),
       whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
     };
 
@@ -549,17 +547,6 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       return;
     }
 
-    // Block publishing only with a confirmation if some are missing explanations
-    const missingExplanationCount = draftQuestions.length - explainedCount;
-    if (formPublished && missingExplanationCount > 0) {
-      const confirmed = window.confirm(
-        `${missingExplanationCount} of ${draftQuestions.length} question(s) have no explanation. Students will not see revision notes for them. Publish anyway?`
-      );
-      if (!confirmed) {
-        return;
-      }
-    }
-
     setSavingQuiz(true);
     const quizId = editingQuizId || ('quiz_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7));
 
@@ -582,6 +569,50 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const parsedPoints = Number(formPointsPerQuestion);
       const pointsPerQuestion = !isNaN(parsedPoints) && parsedPoints >= 1 ? Math.round(parsedPoints) : 1;
 
+      // Sanitize questions - ensure no undefined and text fields are empty string
+      const sanitizedQuestions: QuizQuestion[] = draftQuestions.map((q, idx) => ({
+        id: q.id || `q_${Date.now()}_${idx}`,
+        type: q.type || 'multiple-choice',
+        text: (q.text || '').trim(),
+        options: Array.isArray(q.options) ? q.options.map(opt => (opt || '').trim()) : [],
+        modelAnswer: (q.modelAnswer || '').trim()
+      }));
+
+      // Sanitize keys - convert undefined explanation, whyNot, topicId, etc. to empty string or safe values
+      const sanitizedKeys: QuizKeyItem[] = draftKeys.map((k, idx) => {
+        const correspondingQ = sanitizedQuestions[idx] || sanitizedQuestions.find(q => q.id === k.questionId);
+        const explanationStr = typeof k.explanation === 'string' ? k.explanation.trim() : '';
+
+        const item: QuizKeyItem = {
+          questionId: k.questionId || correspondingQ?.id || `q_${Date.now()}_${idx}`,
+          explanation: explanationStr // Never undefined
+        };
+
+        if (typeof k.correctOptionIndex === 'number' && !isNaN(k.correctOptionIndex)) {
+          item.correctOptionIndex = k.correctOptionIndex;
+        }
+        if (Array.isArray(k.correctOptionIndices)) {
+          item.correctOptionIndices = k.correctOptionIndices;
+        }
+        if (typeof k.modelAnswer === 'string') {
+          item.modelAnswer = k.modelAnswer.trim();
+        } else if (correspondingQ?.modelAnswer) {
+          item.modelAnswer = correspondingQ.modelAnswer;
+        }
+        if (k.whyNotNotes && typeof k.whyNotNotes === 'object') {
+          const cleanWhyNot: Record<string, string> = {};
+          Object.entries(k.whyNotNotes).forEach(([optKey, val]) => {
+            if (typeof val === 'string' && val.trim()) {
+              cleanWhyNot[optKey] = val.trim();
+            }
+          });
+          if (Object.keys(cleanWhyNot).length > 0) {
+            item.whyNotNotes = cleanWhyNot;
+          }
+        }
+        return item;
+      });
+
       const now = new Date().toISOString();
       const quizPayload: QuizItem = {
         id: quizId,
@@ -595,32 +626,32 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         shuffle: formShuffle,
         allowPartialCredit: formAllowPartialCredit,
         published: formPublished,
-        questionCount: draftQuestions.length,
-        questions: draftQuestions, // Questions with options only, NO correct answers!
-        topicId: formTopicId.trim() || undefined,
+        questionCount: sanitizedQuestions.length,
+        questions: sanitizedQuestions, // Questions with options only, NO correct answers!
+        topicId: formTopicId.trim(),
         passingScore,
         attemptsAllowed,
         pointsPerQuestion,
-        createdBy: adminUid,
-        createdByName: adminName,
+        createdBy: adminUid || '',
+        createdByName: adminName || '',
         createdAt: editingQuizId
           ? (quizzes.find(q => q.id === editingQuizId)?.createdAt || now)
           : now,
         updatedAt: now
       };
 
-      // 1. Save Quiz doc
-      await setDoc(doc(db, 'quizzes', quizId), quizPayload);
+      // 1. Save Quiz doc using safeSetDoc and cleanFirestoreData
+      await safeSetDoc(doc(db, 'quizzes', quizId), cleanFirestoreData(quizPayload));
 
-      // 2. Save Quiz Keys doc (separate document to prevent cheating)
+      // 2. Save Quiz Keys doc with safeSetDoc and cleanFirestoreData (guaranteed no undefined)
       const keysPayload: QuizKeyDoc = {
         id: quizId,
         quizId,
         department: formDept,
-        keys: draftKeys,
+        keys: sanitizedKeys,
         updatedAt: now
       };
-      await setDoc(doc(db, 'quizKeys', quizId), keysPayload);
+      await safeSetDoc(doc(db, 'quizKeys', quizId), cleanFirestoreData(keysPayload));
 
       // Update local state
       if (editingQuizId) {
@@ -2044,6 +2075,11 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                                     ? 'True/False'
                                     : 'Multiple Choice'}
                                 </span>
+                                {!hasExplanation && (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-[9px] font-bold text-amber-300 flex items-center gap-1">
+                                    ⚠️ No explanation
+                                  </span>
+                                )}
                               </div>
 
                               {/* Options / Statements Rendering */}

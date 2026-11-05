@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../lib/firebase';
-import { doc, updateDoc } from 'firebase/firestore';
+import { db, safeUpdateDoc as updateDoc, cleanFirestoreData } from '../lib/firebase';
+import { doc } from 'firebase/firestore';
 import { StudyPlannerTask } from '../types';
 import {
   CheckSquare,

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { db } from '../lib/firebase';
-import { doc, updateDoc, collection, onSnapshot } from 'firebase/firestore';
+import { db, safeUpdateDoc as updateDoc, cleanFirestoreData } from '../lib/firebase';
+import { doc, collection, onSnapshot } from 'firebase/firestore';
 import { GpaCourseEntry, SemesterGpaRecord, CourseItem } from '../types';
 import { useGradingScale } from '../hooks/useGradingScale';
 import { getClassOfDegree, SEMESTER_OPTIONS } from '../config/gradingScale';

@@ -1,15 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth, sanitizeMatricId, sanitizeJambId } from '../context/AuthContext';
-import { db } from '../lib/firebase';
+import {
+  db,
+  safeSetDoc as setDoc,
+  safeUpdateDoc as updateDoc,
+  safeAddDoc as addDoc,
+  cleanFirestoreData
+} from '../lib/firebase';
 import {
   collection,
   getDocs,
   getDoc,
-  setDoc,
   doc,
-  updateDoc,
-  deleteDoc,
-  addDoc
+  deleteDoc
 } from 'firebase/firestore';
 import {
   UserProfile,

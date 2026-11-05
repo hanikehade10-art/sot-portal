@@ -4,14 +4,12 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { db } from '../lib/firebase';
+import { db, safeSetDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
 import {
   collection,
   getDocs,
   getDoc,
   doc,
-  setDoc,
-  updateDoc,
   arrayUnion,
   query,
   where
@@ -94,6 +92,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const [activeQuestions, setActiveQuestions] = useState<QuizQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, any>>({});
+  const [shuffledOptionIndicesMap, setShuffledOptionIndicesMap] = useState<Record<string, number[]>>({});
   const [revealedModelAnswers, setRevealedModelAnswers] = useState<Record<string, boolean>>({});
   const [flaggedQuestions, setFlaggedQuestions] = useState<Record<string, boolean>>({});
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
@@ -207,6 +206,8 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     // Initialize answers per question type
     const initAnswers: Record<string, any> = {};
     const initFlags: Record<string, boolean> = {};
+    const optMap: Record<string, number[]> = {};
+
     qList.forEach(q => {
       if (q.type === 'theory-select-all') {
         initAnswers[q.id] = [];
@@ -216,8 +217,18 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         initAnswers[q.id] = -1;
       }
       initFlags[q.id] = false;
+
+      // Randomize option order if shuffle is enabled (except True/False)
+      if (q.options && q.options.length > 1 && q.type !== 'true-false') {
+        if (activeQuiz.shuffle) {
+          optMap[q.id] = q.options.map((_, i) => i).sort(() => Math.random() - 0.5);
+        } else {
+          optMap[q.id] = q.options.map((_, i) => i);
+        }
+      }
     });
     setSelectedAnswers(initAnswers);
+    setShuffledOptionIndicesMap(optMap);
     setRevealedModelAnswers({});
     setFlaggedQuestions(initFlags);
 
@@ -452,12 +463,12 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       };
 
       // Save attempt to Firestore
-      await setDoc(doc(db, 'quizAttempts', attemptDocId), attemptPayload);
+      await safeSetDoc(doc(db, 'quizAttempts', attemptDocId), cleanFirestoreData(attemptPayload));
 
       // If passed and linked to a topic, mark the topic as completed on the student profile!
       if (passed && activeQuiz.topicId) {
         try {
-          await updateDoc(doc(db, 'users', uid), {
+          await safeUpdateDoc(doc(db, 'users', uid), {
             completedTopics: arrayUnion(activeQuiz.topicId)
           });
           onTopicCompleted?.(activeQuiz.topicId);
@@ -483,10 +494,10 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         title: `Scored ${score}/${totalPossible} (${percentage}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}`
       });
 
-      // Set review screen data with Missed tab shown first
+      // Set review screen data with all questions shown
       setReviewAttempt(attemptPayload);
       setReviewKeys(keysDocData);
-      setReviewTab('missed');
+      setReviewTab('all');
       setShowSubmitModal(false);
       setCurrentScreen('review');
     } catch (err: any) {
@@ -511,7 +522,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
       setReviewAttempt(attempt);
       setReviewKeys(kData);
-      setReviewTab('missed');
+      setReviewTab('all');
       setCurrentScreen('review');
     } catch (err) {
       console.warn('Failed to load review keys:', err);
@@ -644,13 +655,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 options: optionsList,
                 correctAnswerText: correctText,
                 explanation: matchingKey?.explanation || '',
-                whyNotNotes: matchingKey?.whyNotNotes,
+                whyNotNotes: matchingKey?.whyNotNotes || {},
                 createdAt: new Date().toISOString()
               },
               ...currentBookmarks
             ];
           }
-          await updateDoc(userDocRef, { bookmarks: nextBookmarks });
+          await safeUpdateDoc(userDocRef, cleanFirestoreData({ bookmarks: nextBookmarks }));
         }
       } catch (bErr) {
         console.warn('Bookmark error:', bErr);
@@ -744,13 +755,23 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         {/* Intro Card */}
         <div className="p-5 sm:p-6 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-5 shadow-lg">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="px-2.5 py-1 rounded bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-xs font-bold">
                 {activeQuiz.courseCode}
               </span>
               <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#9AA8C7] border border-[#24315A] text-[10px]">
                 {activeQuiz.department} • {activeQuiz.level}
               </span>
+              {activeQuiz.allowPartialCredit && (
+                <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold">
+                  Partial Credit
+                </span>
+              )}
+              {activeQuiz.shuffle && (
+                <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-semibold">
+                  Shuffled Options
+                </span>
+              )}
             </div>
 
             <h1 className="font-heading font-extrabold text-lg sm:text-xl text-[#E6ECFA]">
@@ -1080,36 +1101,44 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               )}
             </div>
           ) : currentQ.type === 'theory-best' ? (
-            /* 2. Theory (Pick the best answer) - Large cards with radio circle, NO letters A, B, C, D */
+            /* 2. Theory (Pick the best answer) - Large cards with radio circle, NO letters A, B, C, D (options can be shuffled) */
             <div className="space-y-2.5 pt-1">
-              {(currentQ.options || []).map((optText, optIdx) => {
-                const isSelected = currentQAnswer === optIdx;
-                return (
-                  <button
-                    key={optIdx}
-                    type="button"
-                    onClick={() => handleSelectOption(optIdx)}
-                    className={`w-full p-4 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
-                      isSelected
-                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
-                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
-                    }`}
-                  >
-                    <span
-                      className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+              {(() => {
+                const displayIndices =
+                  shuffledOptionIndicesMap[currentQ.id] ||
+                  (currentQ.options || []).map((_, i) => i);
+
+                return displayIndices.map(origIdx => {
+                  const optText = currentQ.options[origIdx];
+                  const isSelected = currentQAnswer === origIdx;
+
+                  return (
+                    <button
+                      key={origIdx}
+                      type="button"
+                      onClick={() => handleSelectOption(origIdx)}
+                      className={`w-full p-4 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
                         isSelected
-                          ? 'border-white bg-[#2F52FF]'
-                          : 'border-[#24315A] bg-[#121C36]'
+                          ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                          : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
-                      {isSelected && <span className="w-2 h-2 rounded-full bg-white" />}
-                    </span>
-                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
-                      {optText}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span
+                        className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          isSelected
+                            ? 'border-white bg-[#2F52FF]'
+                            : 'border-[#24315A] bg-[#121C36]'
+                        }`}
+                      >
+                        {isSelected && <span className="w-2 h-2 rounded-full bg-white" />}
+                      </span>
+                      <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
+                        {optText}
+                      </span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
           ) : currentQ.type === 'theory-select-all' ? (
             /* 3. Theory (Select all that apply) - Checkbox cards */
@@ -1117,34 +1146,42 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               <span className="text-[11px] text-[#9AA8C7] block">
                 Select all statements that apply (one or more may be correct):
               </span>
-              {(currentQ.options || []).map((optText, optIdx) => {
-                const isChecked = Array.isArray(currentQAnswer) && currentQAnswer.includes(optIdx);
-                return (
-                  <button
-                    key={optIdx}
-                    type="button"
-                    onClick={() => handleToggleSelectAllOption(optIdx)}
-                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
-                      isChecked
-                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
-                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
-                    }`}
-                  >
-                    <span
-                      className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+              {(() => {
+                const displayIndices =
+                  shuffledOptionIndicesMap[currentQ.id] ||
+                  (currentQ.options || []).map((_, i) => i);
+
+                return displayIndices.map(origIdx => {
+                  const optText = currentQ.options[origIdx];
+                  const isChecked = Array.isArray(currentQAnswer) && currentQAnswer.includes(origIdx);
+
+                  return (
+                    <button
+                      key={origIdx}
+                      type="button"
+                      onClick={() => handleToggleSelectAllOption(origIdx)}
+                      className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                         isChecked
-                          ? 'border-white bg-white text-[#2F52FF]'
-                          : 'border-[#24315A] bg-[#121C36]'
+                          ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                          : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
-                      {isChecked && <Check className="w-3.5 h-3.5 text-[#2F52FF] stroke-[3]" />}
-                    </span>
-                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
-                      {optText}
-                    </span>
-                  </button>
-                );
-              })}
+                      <span
+                        className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
+                          isChecked
+                            ? 'border-white bg-white text-[#2F52FF]'
+                            : 'border-[#24315A] bg-[#121C36]'
+                        }`}
+                      >
+                        {isChecked && <Check className="w-3.5 h-3.5 text-[#2F52FF] stroke-[3]" />}
+                      </span>
+                      <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
+                        {optText}
+                      </span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
           ) : isCurrentTrueFalse ? (
             /* 4. True / False Two Big Buttons */
@@ -1176,34 +1213,41 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           ) : (
             /* 5. Standard Multiple Choice Options List */
             <div className="space-y-2.5 pt-1">
-              {(currentQ.options || []).map((optText, optIdx) => {
-                const isSelected = currentQAnswer === optIdx;
-                const letter = String.fromCharCode(65 + optIdx);
+              {(() => {
+                const displayIndices =
+                  shuffledOptionIndicesMap[currentQ.id] ||
+                  (currentQ.options || []).map((_, i) => i);
 
-                return (
-                  <button
-                    key={optIdx}
-                    type="button"
-                    onClick={() => handleSelectOption(optIdx)}
-                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
-                      isSelected
-                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
-                        : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
-                    }`}
-                  >
-                    <span
-                      className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 border ${
+                return displayIndices.map((origIdx, pos) => {
+                  const optText = currentQ.options[origIdx];
+                  const isSelected = currentQAnswer === origIdx;
+                  const letter = String.fromCharCode(65 + pos);
+
+                  return (
+                    <button
+                      key={origIdx}
+                      type="button"
+                      onClick={() => handleSelectOption(origIdx)}
+                      className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                         isSelected
-                          ? 'bg-white text-[#2F52FF] border-white'
-                          : 'bg-[#121C36] text-[#FFC700] border-[#24315A]'
+                          ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                          : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
-                      {letter}
-                    </span>
-                    <span className="text-xs sm:text-sm font-semibold">{optText}</span>
-                  </button>
-                );
-              })}
+                      <span
+                        className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 border ${
+                          isSelected
+                            ? 'bg-white text-[#2F52FF] border-white'
+                            : 'bg-[#121C36] text-[#FFC700] border-[#24315A]'
+                        }`}
+                      >
+                        {letter}
+                      </span>
+                      <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">{optText}</span>
+                    </button>
+                  );
+                });
+              })()}
             </div>
           )}
         </div>

@@ -12,8 +12,6 @@ import {
 import {
   doc,
   getDoc,
-  setDoc,
-  updateDoc,
   deleteDoc,
   deleteField,
   collection,
@@ -21,7 +19,16 @@ import {
   where,
   getDocs
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType, testConnection } from '../lib/firebase';
+import {
+  auth,
+  db,
+  safeSetDoc as setDoc,
+  safeUpdateDoc as updateDoc,
+  cleanFirestoreData,
+  handleFirestoreError,
+  OperationType,
+  testConnection
+} from '../lib/firebase';
 import { UserProfile, SotDepartmentName, UserRole } from '../types';
 import { SITE_CONFIG } from '../config/site';
 import {

@@ -4,13 +4,11 @@ import {
   query,
   where,
   getDocs,
-  addDoc,
   doc,
-  updateDoc,
   deleteDoc,
   onSnapshot
 } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, safeAddDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { ResourceItem } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
@@ -207,14 +205,14 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
         level: formLevel,
         semester: formSemester,
         title: cleanTitle,
-        courseCode: formCourseCode.trim().toUpperCase() || undefined,
-        session: formSession.trim() || undefined,
+        courseCode: formCourseCode.trim().toUpperCase() || '',
+        session: formSession.trim() || '',
         url: formattedUrl,
         updatedAt: new Date().toISOString()
       };
 
       if (editingId) {
-        await updateDoc(doc(db, 'resources', editingId), payload);
+        await safeUpdateDoc(doc(db, 'resources', editingId), cleanFirestoreData(payload));
         if (user) {
           await logActivity({
             uid: user.uid,
@@ -230,7 +228,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
         payload.uploadedBy = user?.uid || 'admin';
         payload.uploadedByEmail = user?.email || '';
         payload.createdAt = new Date().toISOString();
-        await addDoc(collection(db, 'resources'), payload);
+        await safeAddDoc(collection(db, 'resources'), cleanFirestoreData(payload));
         if (user) {
           await logActivity({
             uid: user.uid,
@@ -346,7 +344,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
       };
 
       if (editingSolutionId) {
-        await updateDoc(doc(db, 'resources', editingSolutionId), payload);
+        await safeUpdateDoc(doc(db, 'resources', editingSolutionId), cleanFirestoreData(payload));
         if (user) {
           await logActivity({
             uid: user.uid,
@@ -362,7 +360,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
         payload.uploadedByEmail = user?.email || '';
         payload.uploadedByRole = isAdmin ? 'Admin' : 'Rep';
         payload.createdAt = nowIso;
-        await addDoc(collection(db, 'resources'), payload);
+        await safeAddDoc(collection(db, 'resources'), cleanFirestoreData(payload));
         if (user) {
           await logActivity({
             uid: user.uid,

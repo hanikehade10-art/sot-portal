@@ -3,8 +3,14 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { collection, addDoc, doc, updateDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
+import { collection, doc } from 'firebase/firestore';
+import {
+  auth,
+  db,
+  safeAddDoc as addDoc,
+  safeUpdateDoc as updateDoc,
+  cleanFirestoreData
+} from './firebase';
 import { StudentActivityItem, StudentActivityType } from '../types';
 
 /**

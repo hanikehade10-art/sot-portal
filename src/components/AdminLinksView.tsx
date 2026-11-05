@@ -2,14 +2,12 @@ import React, { useState, useEffect } from 'react';
 import {
   collection,
   getDocs,
-  addDoc,
-  updateDoc,
   deleteDoc,
   doc,
   query,
   orderBy
 } from 'firebase/firestore';
-import { db, auth } from '../lib/firebase';
+import { db, auth, safeAddDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
 import { LinkItem, LinkCategory } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
 import { dispatchPushNotification, getDepartmentTopicSlug } from '../lib/pushNotifications';
@@ -145,7 +143,7 @@ export const AdminLinksView: React.FC = () => {
 
     try {
       if (editingId) {
-        await updateDoc(doc(db, 'links', editingId), payload);
+        await safeUpdateDoc(doc(db, 'links', editingId), cleanFirestoreData(payload));
         setLinks((prev) =>
           prev.map((l) => (l.id === editingId ? { ...l, ...payload } : l))
         );
@@ -154,8 +152,8 @@ export const AdminLinksView: React.FC = () => {
           ...payload,
           createdAt: new Date().toISOString()
         };
-        const ref = await addDoc(collection(db, 'links'), fullPayload);
-        setLinks((prev) => [...prev, { id: ref.id, ...fullPayload }]);
+        const ref = await safeAddDoc(collection(db, 'links'), cleanFirestoreData(fullPayload));
+        setLinks((prev) => [...prev, { id: ref?.id || ('link_' + Date.now()), ...fullPayload }]);
 
         if (formActive && notifyStudents) {
           const topic = formAudience === 'All' ? 'all' : `dept-${getDepartmentTopicSlug(formAudience)}`;
@@ -191,7 +189,7 @@ export const AdminLinksView: React.FC = () => {
 
   const handleToggleActive = async (id: string, current: boolean) => {
     try {
-      await updateDoc(doc(db, 'links', id), { active: !current });
+      await safeUpdateDoc(doc(db, 'links', id), { active: !current });
       setLinks((prev) =>
         prev.map((l) => (l.id === id ? { ...l, active: !current } : l))
       );
@@ -216,8 +214,8 @@ export const AdminLinksView: React.FC = () => {
 
     try {
       await Promise.all([
-        updateDoc(doc(db, 'links', currentItem.id), { order: swapOrder }),
-        updateDoc(doc(db, 'links', swapItem.id), { order: currentOrder })
+        safeUpdateDoc(doc(db, 'links', currentItem.id), { order: swapOrder }),
+        safeUpdateDoc(doc(db, 'links', swapItem.id), { order: currentOrder })
       ]);
       setLinks((prev) =>
         prev
@@ -285,8 +283,8 @@ export const AdminLinksView: React.FC = () => {
 
     for (const d of defaults) {
       try {
-        const ref = await addDoc(collection(db, 'links'), d);
-        setLinks((prev) => [...prev, { id: ref.id, ...d }]);
+        const ref = await safeAddDoc(collection(db, 'links'), cleanFirestoreData(d));
+        setLinks((prev) => [...prev, { id: ref?.id || ('link_' + Math.random()), ...d }]);
       } catch (e) {
         console.warn('Seed link error:', e);
       }

@@ -219,6 +219,7 @@
         "passingScore": { "type": "number" },
         "attemptsAllowed": { "type": "number" },
         "pointsPerQuestion": { "type": "number" },
+        "allowPartialCredit": { "type": "boolean" },
         "shuffle": { "type": "boolean" },
         "published": { "type": "boolean" },
         "questionCount": { "type": "number" },
