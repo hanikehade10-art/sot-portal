@@ -84,6 +84,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
+  const [quizPreset, setQuizPreset] = useState<{ topicId: string; topicTitle: string; courseId: string; courseCode: string } | null>(null);
 
   const handleConfirmLogout = async () => {
     try {
@@ -1118,6 +1119,15 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               userDepartment={repDepartment}
               isRepMode={true}
               onNotify={fetchRepData}
+              onAddQuizForTopic={(topic, course) => {
+                setQuizPreset({
+                  topicId: topic.id,
+                  topicTitle: topic.title,
+                  courseId: course.id,
+                  courseCode: course.code
+                });
+                setActiveTab('quizzes');
+              }}
             />
           )}
 
@@ -1141,6 +1151,13 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
               isRepMode={true}
               adminUid={user?.uid || ''}
               adminName={`${profile?.fullName || 'Rep'} (${repDepartment} Course Rep)`}
+              initialLinkScope={quizPreset ? 'topic' : undefined}
+              initialCourseId={quizPreset?.courseId}
+              initialCourseCode={quizPreset?.courseCode}
+              initialTopicId={quizPreset?.topicId}
+              initialTopicTitle={quizPreset?.topicTitle}
+              autoOpenCreate={Boolean(quizPreset)}
+              onCloseQuizEditor={() => setQuizPreset(null)}
             />
           )}
 

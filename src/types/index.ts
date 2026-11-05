@@ -181,6 +181,7 @@ export interface TopicItem {
   summary?: string; // Highlighted summary box / key takeaways
   furtherReading?: FurtherReadingItem[]; // List of reference links
   linkedQuizId?: string; // Document ID of linked quiz
+  requireQuizToComplete?: boolean; // Admin setting: Require passing the quiz to complete this topic (off by default)
   createdAt: string;
   updatedAt?: string;
 }
@@ -346,7 +347,10 @@ export interface QuizItem {
   level: 'ND1' | 'ND2' | 'HND1' | 'HND2' | string;
   semester: 'First Semester' | 'Second Semester' | string;
   courseCode: string;
-  topicId?: string; // Optional link to a specific syllabus topic
+  scope?: 'general' | 'course' | 'topic'; // 'general' (no link), 'course', or 'topic'
+  courseId?: string; // empty string when not used
+  topicId?: string; // empty string when not used
+  unlockAfterTopicsComplete?: boolean; // For course quizzes: unlock only after all topics are completed (default true)
   title: string;
   instructions?: string;
   timeLimit?: number; // In minutes (0 or undefined for no limit)

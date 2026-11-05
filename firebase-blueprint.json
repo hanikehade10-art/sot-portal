@@ -259,6 +259,36 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "quizId", "department", "score", "total", "attempts", "bestScore", "submittedAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Admin or Rep activity log for tracking modifications to course content, quizzes, and resources",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 128 },
+        "role": { "type": "string", "maxLength": 64 },
+        "action": { "type": "string", "enum": ["Created", "Updated", "Deleted"] },
+        "itemType": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "role", "action", "itemType", "title", "createdAt"]
+    },
+    "StudentActivity": {
+      "title": "StudentActivity",
+      "description": "Student telemetry events such as login, logout, topic completed, or quiz submitted",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "level": { "type": "string", "maxLength": 32 },
+        "type": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "type", "title", "createdAt"]
     }
   },
   "firestore": {
@@ -317,6 +347,14 @@
     "/quizAttempts/{attemptId}": {
       "schema": "QuizAttemptDoc",
       "description": "Student quiz attempts and scores. Read by owner, admin, or rep; Created/updated by student"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Administrative and representative modification logs. Read by admins; Created by admins/reps"
+    },
+    "/studentActivity/{id}": {
+      "schema": "StudentActivity",
+      "description": "Student engagement and event telemetry logs. Read by admins; Created by signed-in students"
     }
   }
 }

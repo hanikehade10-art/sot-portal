@@ -55,12 +55,14 @@ interface AdminCoursesManagerProps {
   onNotify?: (msg?: string) => void;
   userDepartment?: string;
   isRepMode?: boolean;
+  onAddQuizForTopic?: (topic: TopicItem, course: CourseItem) => void;
 }
 
 export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   onNotify,
   userDepartment,
-  isRepMode
+  isRepMode,
+  onAddQuizForTopic
 }) => {
   // Filters (locked to user's department for Reps)
   const [selectedDept, setSelectedDept] = useState<string>(
@@ -146,6 +148,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   const [lessonFurtherReading, setLessonFurtherReading] = useState<Array<{ title: string; url: string }>>([]);
   const [lessonOrder, setLessonOrder] = useState<number>(1);
   const [lessonLinkedQuizId, setLessonLinkedQuizId] = useState<string>('');
+  const [lessonRequireQuizToComplete, setLessonRequireQuizToComplete] = useState<boolean>(false);
   const [lessonNotify, setLessonNotify] = useState<boolean>(true);
   const [lessonLivePreview, setLessonLivePreview] = useState<boolean>(false);
   const [savingLesson, setSavingLesson] = useState(false);
@@ -162,6 +165,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setLessonFurtherReading(topic.furtherReading && topic.furtherReading.length > 0 ? [...topic.furtherReading] : []);
     setLessonOrder(topic.order || 1);
     setLessonLinkedQuizId(topic.linkedQuizId || '');
+    setLessonRequireQuizToComplete(Boolean(topic.requireQuizToComplete));
     setLessonNotify(true);
     setLessonLivePreview(false);
     setShowLessonModal(true);
@@ -217,6 +221,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         furtherReading: cleanReading.length > 0 ? cleanReading : [],
         order: Number(lessonOrder) || 1,
         linkedQuizId: lessonLinkedQuizId.trim() || '',
+        requireQuizToComplete: Boolean(lessonRequireQuizToComplete),
         updatedAt: nowIso
       };
 
@@ -1226,7 +1231,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                           </div>
                         </div>
 
-                        {/* Controls: Edit Lesson button, Reorder buttons, Edit Title, Delete */}
+                        {/* Controls: Edit Lesson button, Add Quiz button, Reorder buttons, Edit Title, Delete */}
                         <div className="flex items-center gap-1.5 shrink-0 ml-auto">
                           <button
                             onClick={() => handleOpenLessonEditor(topic)}
@@ -1236,6 +1241,17 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                             <BookOpen className="w-3.5 h-3.5" />
                             <span>Edit Lesson</span>
                           </button>
+
+                          {onAddQuizForTopic && currentManagingCourse && (
+                            <button
+                              onClick={() => onAddQuizForTopic(topic, currentManagingCourse)}
+                              className="px-2 py-1 rounded-lg bg-[#FFC700]/15 hover:bg-[#FFC700] text-[#FFC700] hover:text-[#0A1224] border border-[#FFC700]/30 text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                              title="Add quiz for this topic"
+                            >
+                              <Plus className="w-3 h-3" />
+                              <span>Add Quiz</span>
+                            </button>
+                          )}
 
                           <button
                             disabled={isFirst}
@@ -2103,12 +2119,30 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                 )}
               </div>
 
-              {/* Linked Quiz Selector */}
-              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-1.5">
-                <label className="block text-[11px] font-semibold text-[#E6ECFA] flex items-center gap-1.5">
-                  <FileQuestion className="w-3.5 h-3.5 text-[#FFC700]" />
-                  <span>Linked Quiz (Taken after finishing this topic)</span>
-                </label>
+              {/* Linked Quiz Selector & Requirement */}
+              <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <label className="block text-[11px] font-semibold text-[#E6ECFA] flex items-center gap-1.5">
+                    <FileQuestion className="w-3.5 h-3.5 text-[#FFC700]" />
+                    <span>Linked Quiz (Taken directly inside this topic)</span>
+                  </label>
+
+                  {/* Add quiz for this topic button */}
+                  {onAddQuizForTopic && currentManagingCourse && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowLessonModal(false);
+                        onAddQuizForTopic(editingLessonTopic, currentManagingCourse);
+                      }}
+                      className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-[#FFC700] hover:bg-[#ffd233] text-[#0A1224] text-xs font-bold transition-all cursor-pointer shadow-sm self-start sm:self-auto"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add quiz for this topic</span>
+                    </button>
+                  )}
+                </div>
+
                 <select
                   value={lessonLinkedQuizId}
                   onChange={e => setLessonLinkedQuizId(e.target.value)}
@@ -2129,9 +2163,20 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                       </option>
                     ))}
                 </select>
-                <p className="text-[10px] text-[#9AA8C7]">
-                  Students will see a "Take Quiz" button at the bottom of the lesson card. Passing this quiz automatically marks the topic complete.
-                </p>
+
+                {/* Require passing the quiz to complete this topic setting */}
+                <div className="flex items-center gap-2 p-2.5 rounded-xl bg-[#0F1E36] border border-[#1E2E52]">
+                  <input
+                    type="checkbox"
+                    id="requireQuizToCompleteCheck"
+                    checked={lessonRequireQuizToComplete}
+                    onChange={e => setLessonRequireQuizToComplete(e.target.checked)}
+                    className="w-4 h-4 rounded text-[#2F52FF] bg-[#070D1A] border-[#1E2E52] cursor-pointer"
+                  />
+                  <label htmlFor="requireQuizToCompleteCheck" className="text-xs text-[#E6ECFA] font-medium cursor-pointer">
+                    Require passing the quiz to complete this topic <span className="text-[#9AA8C7] text-[11px] block sm:inline">(Off by default. When on, students must pass to complete this topic)</span>
+                  </label>
+                </div>
               </div>
 
               {/* Notification toggle */}

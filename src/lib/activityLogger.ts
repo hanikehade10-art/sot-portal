@@ -1,5 +1,5 @@
-import { collection } from 'firebase/firestore';
-import { db, safeAddDoc as addDoc, cleanFirestoreData } from './firebase';
+import { collection, addDoc as rawAddDoc } from 'firebase/firestore';
+import { db, cleanFirestoreData } from './firebase';
 import { ActivityLog } from '../types';
 
 export interface LogActivityParams {
@@ -58,10 +58,10 @@ export async function logActivity(
       title: resolvedTitle.trim().slice(0, 150),
       createdAt: new Date().toISOString()
     };
-    await addDoc(collection(db, 'activityLogs'), logEntry);
+    await rawAddDoc(collection(db, 'activityLogs'), cleanFirestoreData(logEntry));
   } catch (err) {
     // Fail-open: Activity logging should never disrupt user actions
-    console.warn('Failed to record activity log entry:', err);
+    console.warn('Failed to record activity log entry:', (err as any)?.message || err);
   }
 }
 

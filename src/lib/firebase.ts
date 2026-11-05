@@ -76,7 +76,8 @@ const CONVERT_TO_EMPTY_STRING_KEYS = new Set([
   'category',
   'session',
   'year',
-  'modelAnswer'
+  'modelAnswer',
+  'scope'
 ]);
 
 /**

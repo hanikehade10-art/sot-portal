@@ -3,12 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, addDoc as rawAddDoc, updateDoc as rawUpdateDoc } from 'firebase/firestore';
 import {
   auth,
   db,
-  safeAddDoc as addDoc,
-  safeUpdateDoc as updateDoc,
   cleanFirestoreData
 } from './firebase';
 import { StudentActivityItem, StudentActivityType } from '../types';
@@ -52,13 +50,13 @@ export async function recordUserActivePing(uid: string): Promise<void> {
   try {
     if (auth.currentUser && auth.currentUser.uid === uid) {
       const nowIso = new Date().toISOString();
-      await updateDoc(doc(db, 'users', uid), {
+      await rawUpdateDoc(doc(db, 'users', uid), cleanFirestoreData({
         lastActiveAt: nowIso
-      });
+      }));
     }
   } catch (err) {
     // Non-blocking ping failure (e.g. offline)
-    console.warn('Active ping error:', err);
+    console.warn('Active ping error:', (err as any)?.message || err);
   }
 }
 
@@ -95,14 +93,27 @@ export async function logStudentActivity(params: {
     createdAt: nowIso
   };
 
+  // 1. Attempt Firestore write to studentActivity collection
   try {
-    // Only attempt Firestore write if authenticated user matches uid (per firestore.rules)
     if (auth.currentUser && auth.currentUser.uid === uid) {
-      await addDoc(collection(db, 'studentActivity'), payload);
+      await rawAddDoc(collection(db, 'studentActivity'), cleanFirestoreData(payload));
     }
   } catch (err) {
-    // Non-blocking logging failure
-    console.warn('Failed to record student activity log:', err);
+    // Non-blocking telemetry: log warning without triggering fatal handleFirestoreError
+    console.warn('Student activity log skipped or not permitted:', (err as any)?.message || err);
+  }
+
+  // 2. Update student profile doc with recent activity (users/{uid} is always write-accessible by owner)
+  try {
+    if (auth.currentUser && auth.currentUser.uid === uid) {
+      await rawUpdateDoc(doc(db, 'users', uid), cleanFirestoreData({
+        lastActiveAt: nowIso,
+        lastActivityTitle: title?.trim() || type,
+        lastActivityType: type
+      }));
+    }
+  } catch {
+    // Non-blocking fallback
   }
 }
 

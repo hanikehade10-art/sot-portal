@@ -117,11 +117,11 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         continue;
       }
 
-      // Check if line is Why not line: e.g. "Why not A: ...", "Why not B: ..."
-      const whyNotMatch = trimmed.match(/^(?:Why\s+not|Why\s+isn't|Why\s+not\s+option)\s+([A-Fa-f0-9]|True|False|\S+)\s*[:=\-]\s*(.*)$/i);
+      // Check if line is Why not line: e.g. "Why not A: ...", "Why not B: ...", "Why not:"
+      const whyNotMatch = trimmed.match(/^(?:Why\s+not|Why\s+isn't|Why\s+not\s+option)(?:\s+([A-Za-z0-9_]+|True|False))?\s*[:=\-]\s*(.*)$/i);
       if (whyNotMatch) {
         currentSection = 'whyNot';
-        currentWhyNotTarget = whyNotMatch[1].toUpperCase();
+        currentWhyNotTarget = (whyNotMatch[1] || 'General').toUpperCase();
         whyNotNotes[currentWhyNotTarget] = whyNotMatch[2].trim();
         continue;
       }
@@ -226,23 +226,18 @@ export function parseBulkQuizText(rawText: string): ParseResult {
 
     // 1. Handle Self-Check Theory questions
     if (questionType === 'theory-self-check') {
-      if (!fullModelAnswer) {
-        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Self-check question requires a 'Model answer: <text>' line.`);
-        return;
-      }
-
       items.push({
         question: {
           id: qId,
           text: questionText.trim(),
           type: 'theory-self-check',
           options: [],
-          modelAnswer: fullModelAnswer
+          modelAnswer: fullModelAnswer || ''
         },
         key: {
           questionId: qId,
-          modelAnswer: fullModelAnswer,
-          explanation: fullExplanation || fullModelAnswer,
+          modelAnswer: fullModelAnswer || '',
+          explanation: fullExplanation || fullModelAnswer || '',
           whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
         }
       });

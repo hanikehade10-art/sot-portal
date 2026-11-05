@@ -970,9 +970,6 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               <span className="font-extrabold text-sm text-[#FFC700]">
                 Question {currentQuestionIndex + 1} of {activeQuestions.length}
               </span>
-              <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
-                [{ptsPerQ} {ptsPerQ === 1 ? 'Point' : 'Points'}]
-              </span>
               {currentQ.type === 'theory-best' && (
                 <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
                   Pick Best Answer
@@ -1039,7 +1036,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
                   <div className="space-y-2">
                     <span className="text-xs font-bold text-[#9AA8C7] block">
-                      How did your answer compare? (Cannot be changed once tapped):
+                      How did your answer compare? (Cannot be changed after tapping):
                     </span>
                     <div className="grid grid-cols-3 gap-2">
                       <button
@@ -1048,14 +1045,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                         onClick={() => handleRateSelfCheck('knew')}
                         className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
                           currentQAnswer === 'knew'
-                            ? 'bg-emerald-600 text-white border-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.35)] ring-2 ring-emerald-400'
+                            ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.4)] ring-2 ring-white'
                             : currentQAnswer
                             ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
-                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-emerald-500 hover:text-emerald-300 cursor-pointer'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-[#2F52FF] cursor-pointer'
                         }`}
                       >
                         <div className="text-xs font-extrabold">I knew it</div>
-                        <div className="text-[10px] opacity-80 mt-0.5">Full marks</div>
                       </button>
 
                       <button
@@ -1064,14 +1060,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                         onClick={() => handleRateSelfCheck('partly')}
                         className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
                           currentQAnswer === 'partly'
-                            ? 'bg-[#FFC700] text-[#0A1224] border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.35)] ring-2 ring-[#FFC700]'
+                            ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.4)] ring-2 ring-white'
                             : currentQAnswer
                             ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
-                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-[#FFC700] hover:text-[#FFC700] cursor-pointer'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-[#2F52FF] cursor-pointer'
                         }`}
                       >
                         <div className="text-xs font-extrabold">Partly</div>
-                        <div className="text-[10px] opacity-80 mt-0.5">Half marks</div>
                       </button>
 
                       <button
@@ -1080,20 +1075,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                         onClick={() => handleRateSelfCheck('not-yet')}
                         className={`p-3 rounded-xl border text-center font-bold text-xs transition-all ${
                           currentQAnswer === 'not-yet'
-                            ? 'bg-rose-600 text-white border-rose-400 shadow-[0_0_15px_rgba(244,63,94,0.35)] ring-2 ring-rose-400'
+                            ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.4)] ring-2 ring-white'
                             : currentQAnswer
                             ? 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] opacity-40 cursor-not-allowed'
-                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-rose-500 hover:text-rose-300 cursor-pointer'
+                            : 'bg-[#0A1224] border-[#24315A] text-[#E6ECFA] hover:border-[#2F52FF] cursor-pointer'
                         }`}
                       >
                         <div className="text-xs font-extrabold">Not yet</div>
-                        <div className="text-[10px] opacity-80 mt-0.5">Zero</div>
                       </button>
                     </div>
 
                     {Boolean(currentQAnswer) && (
-                      <p className="text-[10px] text-center text-emerald-400 font-semibold">
-                        ✓ Response recorded. Selection is locked.
+                      <p className="text-[10px] text-center text-[#60A5FA] font-semibold">
+                        ✓ Response recorded. It cannot be changed.
                       </p>
                     )}
                   </div>
@@ -2018,17 +2012,33 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                           Notes on options:
                         </span>
                         <div className="space-y-1.5">
-                          {Object.entries(whyNotNotes).map(([optKey, note]) => (
-                            <div
-                              key={optKey}
-                              className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs space-y-1"
-                            >
-                              <span className="font-bold text-[#60A5FA] block">Why not {optKey}:</span>
-                              <div className="text-[#9AA8C7]">
-                                {renderFormattedExplanation(note)}
+                          {Object.entries(whyNotNotes).map(([optKey, note]) => {
+                            const upperKey = optKey.toUpperCase().trim();
+                            const letterCode = upperKey.charCodeAt(0) - 65;
+                            let labelTitle = `Why not ${optKey}`;
+                            if (upperKey.length === 1 && letterCode >= 0 && letterCode < optionsList.length) {
+                              const snippet = optionsList[letterCode].length > 55 ? optionsList[letterCode].slice(0, 52) + '...' : optionsList[letterCode];
+                              labelTitle = `Why not ${upperKey} ("${snippet}")`;
+                            } else {
+                              const num = parseInt(upperKey, 10);
+                              if (!isNaN(num) && num >= 1 && num <= optionsList.length) {
+                                const snippet = optionsList[num - 1].length > 55 ? optionsList[num - 1].slice(0, 52) + '...' : optionsList[num - 1];
+                                labelTitle = `Why not Option ${num} ("${snippet}")`;
+                              }
+                            }
+
+                            return (
+                              <div
+                                key={optKey}
+                                className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs space-y-1"
+                              >
+                                <span className="font-bold text-[#60A5FA] block">{labelTitle}:</span>
+                                <div className="text-[#9AA8C7]">
+                                  {renderFormattedExplanation(note)}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}

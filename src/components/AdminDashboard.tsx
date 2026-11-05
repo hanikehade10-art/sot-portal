@@ -141,6 +141,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
   const [faqs, setFaqs] = useState<FaqItem[]>([]);
   const [resources, setResources] = useState<ResourceItem[]>([]);
+  const [quizPreset, setQuizPreset] = useState<{ topicId: string; topicTitle: string; courseId: string; courseCode: string } | null>(null);
 
   // -------------------------------------------------------------
   // MATERIALS & REP UPLOADS STATE
@@ -2180,7 +2181,18 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           {/* TAB 2: COURSES, TOPICS & MATERIALS (AdminCoursesManager) */}
           {/* ======================================================== */}
           {activeTab === 'courses' && (
-            <AdminCoursesManager onNotify={fetchData} />
+            <AdminCoursesManager
+              onNotify={fetchData}
+              onAddQuizForTopic={(topic, course) => {
+                setQuizPreset({
+                  topicId: topic.id,
+                  topicTitle: topic.title,
+                  courseId: course.id,
+                  courseCode: course.code
+                });
+                setActiveTab('quizzes');
+              }}
+            />
           )}
 
           {/* ======================================================== */}
@@ -2198,6 +2210,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               adminUid={user?.uid || ''}
               adminName={profile?.fullName || 'Administrator'}
               isRepMode={false}
+              initialLinkScope={quizPreset ? 'topic' : undefined}
+              initialCourseId={quizPreset?.courseId}
+              initialCourseCode={quizPreset?.courseCode}
+              initialTopicId={quizPreset?.topicId}
+              initialTopicTitle={quizPreset?.topicTitle}
+              autoOpenCreate={Boolean(quizPreset)}
+              onCloseQuizEditor={() => setQuizPreset(null)}
             />
           )}
 

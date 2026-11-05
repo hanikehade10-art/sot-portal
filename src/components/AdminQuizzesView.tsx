@@ -49,6 +49,13 @@ interface AdminQuizzesViewProps {
   isRepMode?: boolean;
   adminUid: string;
   adminName: string;
+  initialLinkScope?: 'general' | 'course' | 'topic';
+  initialCourseId?: string;
+  initialCourseCode?: string;
+  initialTopicId?: string;
+  initialTopicTitle?: string;
+  autoOpenCreate?: boolean;
+  onCloseQuizEditor?: () => void;
 }
 
 const ACADEMIC_LEVELS = ['ND1', 'ND2', 'HND1', 'HND2'] as const;
@@ -58,7 +65,14 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   userDepartment,
   isRepMode = false,
   adminUid,
-  adminName
+  adminName,
+  initialLinkScope,
+  initialCourseId,
+  initialCourseCode,
+  initialTopicId,
+  initialTopicTitle,
+  autoOpenCreate,
+  onCloseQuizEditor
 }) => {
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,6 +84,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   );
   const [levelFilter, setLevelFilter] = useState<string>('All');
   const [semesterFilter, setSemesterFilter] = useState<string>('All');
+  const [linkFilter, setLinkFilter] = useState<'All' | 'general' | 'course' | 'topic'>('All');
   const [searchQuery, setSearchQuery] = useState('');
 
   // Editor Modal State
@@ -89,7 +104,13 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [formPassingScore, setFormPassingScore] = useState<string>('70');
   const [formAttemptsAllowed, setFormAttemptsAllowed] = useState<string>('0');
   const [formPointsPerQuestion, setFormPointsPerQuestion] = useState<string>('1');
+
+  // Linking fields: scope ('general' | 'course' | 'topic'), courseId, topicId, unlockAfterTopicsComplete
+  const [formScope, setFormScope] = useState<'general' | 'course' | 'topic'>('general');
+  const [formCourseId, setFormCourseId] = useState<string>('');
   const [formTopicId, setFormTopicId] = useState<string>('');
+  const [formUnlockAfterTopicsComplete, setFormUnlockAfterTopicsComplete] = useState<boolean>(true);
+
   const [formHasTimer, setFormHasTimer] = useState<boolean>(true);
   const [formShuffle, setFormShuffle] = useState<boolean>(true);
   const [formAllowPartialCredit, setFormAllowPartialCredit] = useState<boolean>(false);
@@ -135,9 +156,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [resultsAttempts, setResultsAttempts] = useState<QuizAttempt[]>([]);
   const [loadingResults, setLoadingResults] = useState(false);
   const [resultsSearch, setResultsSearch] = useState('');
-  const [availableTopics, setAvailableTopics] = useState<Array<{ id: string; title: string; courseCode?: string; department?: string }>>([]);
+  const [availableTopics, setAvailableTopics] = useState<Array<{ id: string; title: string; courseId?: string; courseCode?: string; department?: string; order?: number }>>([]);
+  const [availableCourses, setAvailableCourses] = useState<Array<{ id: string; code: string; title: string; department: string; level?: string; semester?: string }>>([]);
 
-  // Fetch quizzes and topics
+  // Fetch quizzes, courses and topics
   const fetchQuizzes = async () => {
     setLoading(true);
     setError(null);
@@ -157,13 +179,40 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       loaded.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       setQuizzes(loaded);
 
+      // Fetch courses for linking
+      try {
+        const crsSnap = await getDocs(collection(db, 'courses'));
+        const crsList: Array<{ id: string; code: string; title: string; department: string; level?: string; semester?: string }> = [];
+        crsSnap.forEach(cDoc => {
+          const cData = cDoc.data() as any;
+          crsList.push({
+            id: cDoc.id,
+            code: cData.code || '',
+            title: cData.title || '',
+            department: cData.department || '',
+            level: cData.level || '',
+            semester: cData.semester || ''
+          });
+        });
+        setAvailableCourses(crsList);
+      } catch (cErr) {
+        console.warn('Could not load courses for linking:', cErr);
+      }
+
       // Fetch topics for linking
       try {
         const topSnap = await getDocs(collection(db, 'topics'));
-        const tops: Array<{ id: string; title: string; courseCode?: string; department?: string }> = [];
+        const tops: Array<{ id: string; title: string; courseId?: string; courseCode?: string; department?: string; order?: number }> = [];
         topSnap.forEach(tDoc => {
           const tData = tDoc.data() as any;
-          tops.push({ id: tDoc.id, title: tData.title, courseCode: tData.courseCode, department: tData.department });
+          tops.push({
+            id: tDoc.id,
+            title: tData.title || '',
+            courseId: tData.courseId || '',
+            courseCode: tData.courseCode || '',
+            department: tData.department || '',
+            order: tData.order
+          });
         });
         setAvailableTopics(tops);
       } catch (tErr) {
@@ -194,7 +243,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormPassingScore('70');
     setFormAttemptsAllowed('0');
     setFormPointsPerQuestion('1');
+    setFormScope('general');
+    setFormCourseId('');
     setFormTopicId('');
+    setFormUnlockAfterTopicsComplete(true);
     setFormHasTimer(true);
     setFormShuffle(true);
     setFormAllowPartialCredit(false);
@@ -203,9 +255,6 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setDraftQuestions([]);
     setDraftKeys([]);
     setQuestionInputMode('bulk');
-    setBulkText('');
-    setBulkErrors([]);
-    setBulkSuccessMsg(null);
     setSingleType('multiple-choice');
     setSingleText('');
     setSingleOptions(['', '', '', '']);
@@ -214,10 +263,35 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setSingleModelAnswer('');
     setSingleExplanation('');
     setSingleWhyNotNotes({});
+    setSingleError(null);
+    setBulkText('');
+    setBulkErrors([]);
+    setBulkSuccessMsg(null);
     setShowStudentPreview(false);
     setSaveError(null);
     setShowEditor(true);
   };
+
+  // Pre-fill quiz creation if triggered from topic or course
+  useEffect(() => {
+    if (autoOpenCreate || initialTopicId || initialCourseId) {
+      handleOpenCreate();
+      if (initialLinkScope) {
+        setFormScope(initialLinkScope);
+      } else if (initialTopicId) {
+        setFormScope('topic');
+      } else if (initialCourseId) {
+        setFormScope('course');
+      }
+
+      if (initialCourseId) setFormCourseId(initialCourseId);
+      if (initialCourseCode) setFormCourseCode(initialCourseCode);
+      if (initialTopicId) setFormTopicId(initialTopicId);
+      if (initialTopicTitle) {
+        setFormTitle(`${initialCourseCode ? initialCourseCode + ': ' : ''}${initialTopicTitle} Quiz`);
+      }
+    }
+  }, [autoOpenCreate, initialTopicId, initialCourseId, initialCourseCode, initialTopicTitle, initialLinkScope]);
 
   // Open Edit Modal
   const handleOpenEdit = async (quiz: QuizItem) => {
@@ -234,7 +308,15 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormPassingScore(quiz.passingScore !== undefined ? String(quiz.passingScore) : '70');
     setFormAttemptsAllowed(quiz.attemptsAllowed !== undefined ? String(quiz.attemptsAllowed) : '0');
     setFormPointsPerQuestion(quiz.pointsPerQuestion !== undefined ? String(quiz.pointsPerQuestion) : '1');
+
+    // Linking setup
+    const resolvedScope: 'general' | 'course' | 'topic' =
+      quiz.scope || (quiz.topicId ? 'topic' : (quiz.courseId ? 'course' : 'general'));
+    setFormScope(resolvedScope);
+    setFormCourseId(quiz.courseId || '');
     setFormTopicId(quiz.topicId || '');
+    setFormUnlockAfterTopicsComplete(quiz.unlockAfterTopicsComplete !== false);
+
     setFormHasTimer(hasLimit);
     setFormShuffle(Boolean(quiz.shuffle));
     setFormAllowPartialCredit(Boolean(quiz.allowPartialCredit));
@@ -364,11 +446,6 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
 
     // 2. Theory (Self-check)
     if (singleType === 'theory-self-check') {
-      if (!singleModelAnswer.trim()) {
-        setSingleError('Please enter the model answer for self-check comparison.');
-        return;
-      }
-
       const newQ: QuizQuestion = {
         id: qId,
         type: 'theory-self-check',
@@ -628,7 +705,10 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         published: formPublished,
         questionCount: sanitizedQuestions.length,
         questions: sanitizedQuestions, // Questions with options only, NO correct answers!
-        topicId: formTopicId.trim(),
+        scope: formScope || 'general',
+        courseId: (formScope === 'course' || formScope === 'topic') ? (formCourseId || '').trim() : '',
+        topicId: formScope === 'topic' ? (formTopicId || '').trim() : '',
+        unlockAfterTopicsComplete: formScope === 'course' ? Boolean(formUnlockAfterTopicsComplete) : false,
         passingScore,
         attemptsAllowed,
         pointsPerQuestion,
@@ -743,13 +823,21 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const matchDept = deptFilter === 'All' || q.department === deptFilter;
       const matchLevel = levelFilter === 'All' || q.level === levelFilter;
       const matchSem = semesterFilter === 'All' || q.semester === semesterFilter;
+
+      const qScope = q.scope || (q.topicId ? 'topic' : (q.courseId ? 'course' : 'general'));
+      const matchLink =
+        linkFilter === 'All' ||
+        (linkFilter === 'general' && qScope === 'general') ||
+        (linkFilter === 'course' && qScope === 'course') ||
+        (linkFilter === 'topic' && qScope === 'topic');
+
       const matchSearch =
         !searchQuery.trim() ||
         q.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
         q.courseCode.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchDept && matchLevel && matchSem && matchSearch;
+      return matchDept && matchLevel && matchSem && matchLink && matchSearch;
     });
-  }, [quizzes, deptFilter, levelFilter, semesterFilter, searchQuery]);
+  }, [quizzes, deptFilter, levelFilter, semesterFilter, linkFilter, searchQuery]);
 
   // Results computed stats
   const resultsStats = useMemo(() => {
@@ -868,6 +956,21 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Linked to Filter */}
+          <div className="flex items-center gap-1 text-xs">
+            <span className="text-[#9AA8C7] text-[11px] font-semibold">Linked to:</span>
+            <select
+              value={linkFilter}
+              onChange={e => setLinkFilter(e.target.value as any)}
+              className="px-2 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF]"
+            >
+              <option value="All">All Quizzes</option>
+              <option value="general">General (No link)</option>
+              <option value="course">Course Quizzes</option>
+              <option value="topic">Topic Quizzes</option>
+            </select>
+          </div>
         </div>
 
         {/* Search */}
@@ -963,9 +1066,41 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                 <h3 className="font-heading font-bold text-sm text-[#E6ECFA] line-clamp-2">
                   {quiz.title}
                 </h3>
-                <p className="text-[11px] text-[#9AA8C7] mt-0.5 line-clamp-1">
-                  {quiz.department}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-1.5 mt-1">
+                  <p className="text-[11px] text-[#9AA8C7] truncate">
+                    {quiz.department}
+                  </p>
+
+                  {/* Linked to badge */}
+                  {(() => {
+                    const scope = quiz.scope || (quiz.topicId ? 'topic' : (quiz.courseId ? 'course' : 'general'));
+                    if (scope === 'topic') {
+                      const top = availableTopics.find(t => t.id === quiz.topicId);
+                      return (
+                        <span className="px-2 py-0.5 rounded-full bg-[#FFC700]/15 text-[#FFC700] border border-[#FFC700]/30 text-[10px] font-bold inline-flex items-center gap-1" title={top?.title || quiz.topicId}>
+                          <FileQuestion className="w-3 h-3" />
+                          <span>Topic: {top?.title ? (top.title.slice(0, 24) + (top.title.length > 24 ? '…' : '')) : (quiz.courseCode || 'Topic')}</span>
+                        </span>
+                      );
+                    }
+                    if (scope === 'course') {
+                      return (
+                        <span className="px-2 py-0.5 rounded-full bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-[10px] font-bold inline-flex items-center gap-1">
+                          <BookOpen className="w-3 h-3" />
+                          <span>Course: {quiz.courseCode}</span>
+                          {quiz.unlockAfterTopicsComplete !== false && (
+                            <span className="text-[9px] text-[#FFC700] font-normal">• Locked until topics done</span>
+                          )}
+                        </span>
+                      );
+                    }
+                    return (
+                      <span className="px-2 py-0.5 rounded-full bg-[#0A1224] text-[#9AA8C7] border border-[#24315A] text-[10px] font-medium">
+                        General (No link)
+                      </span>
+                    );
+                  })()}
+                </div>
 
                 {/* Metadata Pills */}
                 <div className="flex flex-wrap items-center gap-3 text-[11px] text-[#9AA8C7] mt-3 pt-2.5 border-t border-[#24315A]/60">
@@ -1202,24 +1337,183 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                       className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#60A5FA] text-center focus:outline-none focus:border-[#2F52FF]"
                     />
                   </div>
+                </div>
 
-                  <div>
-                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Link to Topic (Optional)</label>
-                    <select
-                      value={formTopicId}
-                      onChange={e => setFormTopicId(e.target.value)}
-                      className="w-full px-2 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                    >
-                      <option value="">No linked topic</option>
-                      {availableTopics
-                        .filter(t => !formDept || !t.department || t.department === formDept)
-                        .map(top => (
-                          <option key={top.id} value={top.id}>
-                            {top.courseCode ? `${top.courseCode}: ` : ''}{top.title}
-                          </option>
-                        ))}
-                    </select>
+                {/* 1.1 LINK TO SECTION (OPTIONAL) */}
+                <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#24315A] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="text-xs font-bold text-[#E6ECFA] flex items-center gap-1.5">
+                        <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
+                        <span>Link to (Optional)</span>
+                      </span>
+                      <p className="text-[10px] text-[#9AA8C7]">
+                        Choose whether this quiz is general (Quizzes page), linked to a Course, or linked directly under a Topic.
+                      </p>
+                    </div>
+                    <span className="text-[10px] px-2 py-0.5 rounded bg-[#121C36] text-[#9AA8C7] border border-[#24315A]">
+                      Never required
+                    </span>
                   </div>
+
+                  {/* 3 Choices: None (general), Course, Topic */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormScope('general');
+                        setFormCourseId('');
+                        setFormTopicId('');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        formScope === 'general'
+                          ? 'bg-[#2F52FF]/20 border-[#2F52FF] text-[#60A5FA] shadow-[0_0_12px_rgba(47,82,255,0.25)]'
+                          : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-[#E6ECFA] flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${formScope === 'general' ? 'bg-[#2F52FF]' : 'bg-[#24315A]'}`} />
+                        <span>None</span>
+                      </div>
+                      <div className="text-[10px] text-[#9AA8C7] mt-0.5">General quiz (Quizzes page)</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormScope('course');
+                        setFormTopicId('');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        formScope === 'course'
+                          ? 'bg-[#2F52FF]/20 border-[#2F52FF] text-[#60A5FA] shadow-[0_0_12px_rgba(47,82,255,0.25)]'
+                          : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-[#E6ECFA] flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${formScope === 'course' ? 'bg-[#2F52FF]' : 'bg-[#24315A]'}`} />
+                        <span>Course</span>
+                      </div>
+                      <div className="text-[10px] text-[#9AA8C7] mt-0.5">Course quiz at end of syllabus</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormScope('topic');
+                      }}
+                      className={`p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
+                        formScope === 'topic'
+                          ? 'bg-[#2F52FF]/20 border-[#2F52FF] text-[#60A5FA] shadow-[0_0_12px_rgba(47,82,255,0.25)]'
+                          : 'bg-[#121C36] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      <div className="font-bold text-xs text-[#E6ECFA] flex items-center gap-1.5">
+                        <span className={`w-2 h-2 rounded-full ${formScope === 'topic' ? 'bg-[#2F52FF]' : 'bg-[#24315A]'}`} />
+                        <span>Topic</span>
+                      </div>
+                      <div className="text-[10px] text-[#9AA8C7] mt-0.5">Inside specific topic lesson</div>
+                    </button>
+                  </div>
+
+                  {/* Course linking options */}
+                  {formScope === 'course' && (
+                    <div className="pt-2 border-t border-[#24315A]/60 space-y-2.5">
+                      <div>
+                        <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Select Course</label>
+                        <select
+                          value={formCourseId}
+                          onChange={e => {
+                            const cId = e.target.value;
+                            setFormCourseId(cId);
+                            const found = availableCourses.find(c => c.id === cId);
+                            if (found) {
+                              setFormCourseCode(found.code);
+                              if (found.department) setFormDept(found.department);
+                            }
+                          }}
+                          className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF]"
+                        >
+                          <option value="">-- Choose Course for this Quiz --</option>
+                          {availableCourses
+                            .filter(c => !formDept || c.department === formDept)
+                            .map(c => (
+                              <option key={c.id} value={c.id}>
+                                {c.code}: {c.title} ({c.level || formLevel})
+                              </option>
+                            ))}
+                        </select>
+                      </div>
+
+                      <div className="flex items-center gap-2 p-2 rounded-lg bg-[#121C36] border border-[#24315A]">
+                        <input
+                          type="checkbox"
+                          id="unlockAfterTopicsCompleteCheck"
+                          checked={formUnlockAfterTopicsComplete}
+                          onChange={e => setFormUnlockAfterTopicsComplete(e.target.checked)}
+                          className="w-4 h-4 rounded text-[#2F52FF] bg-[#0A1224] border-[#24315A] cursor-pointer"
+                        />
+                        <label htmlFor="unlockAfterTopicsCompleteCheck" className="text-xs text-[#E6ECFA] font-medium cursor-pointer">
+                          Unlock after all topics are completed <span className="text-[#9AA8C7] text-[11px]">(Shows locked with &quot;Complete all topics to unlock&quot; until finished)</span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Topic linking options */}
+                  {formScope === 'topic' && (
+                    <div className="pt-2 border-t border-[#24315A]/60 space-y-2.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                        <div>
+                          <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">1. Select Course</label>
+                          <select
+                            value={formCourseId}
+                            onChange={e => {
+                              const cId = e.target.value;
+                              setFormCourseId(cId);
+                              setFormTopicId('');
+                              const found = availableCourses.find(c => c.id === cId);
+                              if (found) {
+                                setFormCourseCode(found.code);
+                                if (found.department) setFormDept(found.department);
+                              }
+                            }}
+                            className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF]"
+                          >
+                            <option value="">-- Choose Course --</option>
+                            {availableCourses
+                              .filter(c => !formDept || c.department === formDept)
+                              .map(c => (
+                                <option key={c.id} value={c.id}>
+                                  {c.code}: {c.title}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        <div>
+                          <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">2. Select Topic</label>
+                          <select
+                            value={formTopicId}
+                            onChange={e => setFormTopicId(e.target.value)}
+                            className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                          >
+                            <option value="">-- Choose Topic --</option>
+                            {availableTopics
+                              .filter(t => !formCourseId || t.courseId === formCourseId || (formCourseCode && t.courseCode === formCourseCode))
+                              .map(top => (
+                                <option key={top.id} value={top.id}>
+                                  {top.order ? `#${top.order} ` : ''}{top.title}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-[#60A5FA]">
+                        ✦ Topic quizzes appear directly inside this topic's lesson page and do NOT appear on the general Quizzes page.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Timer & Shuffle row */}
@@ -1386,12 +1680,13 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                     <div className="p-2.5 rounded-lg bg-[#121C36]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1">
                       <span className="font-bold text-[#FFC700] block">Format Guidelines (Mixed quizzes &amp; Theory questions supported):</span>
                       <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap leading-relaxed">
-{`Q: Explain why a stack is used to evaluate postfix expressions.
+{`Q: Explain the meaning of feedback in communication.
 Type: Theory
-* Each number is pushed, and an operator pops the top two numbers and pushes the result back.
-- The numbers are stored in a queue so the first number is processed first.
-- A tree is built and the expression is read from the root.
-Explanation: Each number is pushed onto the stack. When an operator is reached, the operands are popped, evaluated, and the result pushed back.
+* The response the receiver gives back to the sender...
+- The first message the sender sends...
+- The unwanted disturbance that interferes with a message...
+Explanation: Feedback is the return information, reaction, or response that the receiver transmits back to the original sender to confirm reception and clarify understanding.
+Why not B: The first message the sender sends is the original transmission or encoding.
 
 Q: Which of the following data structures are linear?
 Type: Select all
@@ -1400,7 +1695,8 @@ Type: Select all
 * Singly linked list
 - Binary search tree
 - Graph
-Explanation: Stacks, queues, and linked lists organize elements sequentially.
+Explanation: Stacks, queues, and linked lists organize elements sequentially in a linear chain.
+Why not D: Trees are non-linear hierarchical structures.
 
 Q: Describe synchronous vs asynchronous data transmission.
 Type: Self-check
@@ -1408,15 +1704,15 @@ Model answer: Synchronous transmission sends continuous data blocks timed by a s
 Explanation: Shared clock pulse vs start and stop framing bits.`}
                       </pre>
                       <p className="text-[10px] text-[#9AA8C7]/80">
-                        * Bullet options start with * for correct and - for wrong. Explanation continues on following lines until next Q:. Self-check uses 'Model answer:'.
+                        * Bullet options: * for correct, - for wrong. Explanation continues across lines until next Q:. Self-check uses 'Model answer:'. Questions without explanation or model answer will still save.
                       </p>
                     </div>
 
                     <textarea
-                      rows={8}
+                      rows={9}
                       value={bulkText}
                       onChange={e => setBulkText(e.target.value)}
-                      placeholder={`Paste questions here following the format above...`}
+                      placeholder={`Q: Explain the meaning of feedback in communication.\nType: Theory\n* The response the receiver gives back to the sender...\n- The first message the sender sends...\n- The unwanted disturbance that interferes with a message...\nExplanation: Feedback is the response returned to the sender.\nWhy not B: That describes the initial message.\n\nQ: Which of the following data structures are linear?\nType: Select all\n* Stack\n* Queue\n* Singly linked list\n- Graph\nExplanation: Stacks, queues, and linked lists are sequential linear chains.\n\nQ: What is a deadlock?\nType: Self-check\nModel answer: A state where two or more processes cannot proceed because each is waiting for the other to release resources.\nExplanation: Mutual exclusion, hold and wait, no preemption, circular wait.`}
                       className="w-full px-3 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-mono text-[#E6ECFA] placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
                     />
 
