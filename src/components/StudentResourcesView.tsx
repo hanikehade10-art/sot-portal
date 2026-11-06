@@ -946,6 +946,9 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                             const isExpanded = expandedTopicIds[topic.id] !== false;
                             const topicBookmarked = isBookmarked('topic', topic.id);
                             const isTopicDone = completedTopicsList.includes(topic.id);
+                            const topicLinkedQuiz = topic.linkedQuizId
+                              ? quizzes.find(q => q.id === topic.linkedQuizId)
+                              : quizzes.find(q => q.scope === 'topic' && q.topicId === topic.id);
 
                             return (
                               <div
@@ -1019,13 +1022,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                 </div>
 
                                 {/* Expanded Content Row: Two Big Buttons + Handouts */}
-                                {isExpanded && (() => {
-                                  const topicLinkedQuiz = topic.linkedQuizId
-                                    ? quizzes.find(q => q.id === topic.linkedQuizId)
-                                    : quizzes.find(q => q.scope === 'topic' && q.topicId === topic.id);
-
-                                  return (
-                                    <div className="px-4 pb-4 pt-2 border-t border-[#24315A]/60 space-y-3">
+                                {isExpanded && (
+                                  <div className="px-4 pb-4 pt-2 border-t border-[#24315A]/60 space-y-3">
                                       {/* Two Big Action Buttons */}
                                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                                         <button
@@ -1051,6 +1049,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                             <span>Quiz ({topicLinkedQuiz.questionCount || topicLinkedQuiz.questions?.length || 0} Qs)</span>
                                           </button>
                                         )}
+                                      </div>
+
                                       {items.length > 0 && (
                                         <div className="space-y-1.5 pt-1">
                                           <span className="text-[10px] font-bold text-[#9FB0C8] uppercase tracking-wider block">
@@ -1099,9 +1099,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                           </div>
                                         </div>
                                       )}
-                                    </div>
-                                  );
-                                })()}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}

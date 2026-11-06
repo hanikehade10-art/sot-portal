@@ -28,7 +28,8 @@ import {
   Layers,
   ArrowRight,
   FileText,
-  Type
+  Type,
+  AlertCircle
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 

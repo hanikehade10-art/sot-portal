@@ -984,6 +984,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return upcomingQuizzes.filter(q => !attemptsQuizIds.has(q.id)).length;
   }, [upcomingQuizzes, attemptsQuizIds]);
 
+  const myCoursesPreview = useMemo(() => enrolledCourses.slice(0, 3), [enrolledCourses]);
+
   const recentActivityCombined = useMemo(() => {
     const list: Array<{ id: string; type: 'topic' | 'quiz'; title: string; subtitle: string; timestamp?: string }> = [];
 
@@ -1000,20 +1002,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
     // Add from quiz attempts if not already present
     studentQuizAttempts.forEach(qa => {
-      if (!list.some(item => item.title.includes(qa.quizTitle))) {
+      const matchedQuiz = deptQuizzes.find(q => q.id === qa.quizId);
+      const quizTitle = qa.quizTitle || matchedQuiz?.title || 'Quiz';
+      const courseCode = qa.courseCode || matchedQuiz?.courseCode || 'Quiz';
+      const timestamp = qa.completedAt || qa.submittedAt || qa.updatedAt;
+      if (!list.some(item => item.title.includes(quizTitle))) {
         list.push({
           id: qa.id,
           type: 'quiz',
-          title: `${qa.courseCode}: ${qa.quizTitle}`,
+          title: `${courseCode}: ${quizTitle}`,
           subtitle: `Scored ${qa.score}% (${qa.passed ? 'Passed' : 'Needs practice'})`,
-          timestamp: qa.completedAt
+          timestamp
         });
       }
     });
 
     list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
     return list.slice(0, 5);
-  }, [studentActivities, studentQuizAttempts]);
+  }, [studentActivities, studentQuizAttempts, deptQuizzes]);
 
   // Handle Profile Save
   const handleProfileSave = async (e: React.FormEvent) => {

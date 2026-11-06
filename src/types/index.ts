@@ -392,6 +392,8 @@ export interface QuizAttempt {
   id: string; // `${uid}_${quizId}`
   uid: string;
   quizId: string;
+  quizTitle?: string;
+  courseCode?: string;
   department: string;
   studentName?: string;
   matricNumber?: string;
@@ -405,6 +407,7 @@ export interface QuizAttempt {
   percentage?: number; // Calculated score percentage
   aiExplanations?: Record<string, string>; // questionId -> cached AI generated explanation
   submittedAt: string;
+  completedAt?: string;
   updatedAt?: string;
 }
 
