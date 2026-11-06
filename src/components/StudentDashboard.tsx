@@ -24,8 +24,11 @@ import {
   CourseMaterial,
   ResourceItem,
   BookmarkItem,
-  TopicItem
+  TopicItem,
+  QuizItem,
+  QuizAttempt
 } from '../types';
+import { getCourseAccent } from '../config/courseAccents';
 import {
   INITIAL_COURSES,
   INITIAL_TIMETABLES,
@@ -239,6 +242,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const [timetables, setTimetables] = useState<TimetableEntry[]>(INITIAL_TIMETABLES);
   const [announcements, setAnnouncements] = useState<AnnouncementItem[]>(INITIAL_ANNOUNCEMENTS);
   const [links, setLinks] = useState<LinkItem[]>([]);
+  const [deptQuizzes, setDeptQuizzes] = useState<QuizItem[]>([]);
+  const [studentQuizAttempts, setStudentQuizAttempts] = useState<QuizAttempt[]>([]);
+  const [studentActivities, setStudentActivities] = useState<Array<{ id: string; type: string; title: string; timestamp?: string }>>([]);
   const [myMessages, setMyMessages] = useState<ContactMessage[]>([]);
   const [loadingMessages, setLoadingMessages] = useState(false);
 
@@ -653,6 +659,71 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     return () => unsub();
   }, []);
 
+  // Department Quizzes (Published only)
+  useEffect(() => {
+    if (!studentDept) return;
+    const q = query(
+      collection(db, 'quizzes'),
+      where('department', '==', studentDept),
+      where('published', '==', true)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: QuizItem[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setDeptQuizzes(list);
+      },
+      (err) => console.warn('Quizzes listener note:', err)
+    );
+    return () => unsub();
+  }, [studentDept]);
+
+  // Student Quiz Attempts
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(
+      collection(db, 'quizAttempts'),
+      where('uid', '==', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: QuizAttempt[] = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        setStudentQuizAttempts(list);
+      },
+      (err) => console.warn('Quiz attempts listener note:', err)
+    );
+    return () => unsub();
+  }, [user?.uid]);
+
+  // Student Activity (Recent actions)
+  useEffect(() => {
+    if (!user?.uid) return;
+    const q = query(
+      collection(db, 'studentActivity'),
+      where('uid', '==', user.uid)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: Array<{ id: string; type: string; title: string; timestamp?: string }> = [];
+        snap.forEach((d) => {
+          list.push({ id: d.id, ...(d.data() as any) });
+        });
+        list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+        setStudentActivities(list.slice(0, 10));
+      },
+      (err) => console.warn('Student activity listener note:', err)
+    );
+    return () => unsub();
+  }, [user?.uid]);
+
   // Student's Messages
   const fetchMyMessages = async () => {
     if (!user?.uid) return;
@@ -860,16 +931,89 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     };
   }, [homeSearchQuery, courses, topics, deptResources, studentDept, homeLevelFilter, homeSemesterFilter]);
 
-  // "My Courses" preview (First 3 courses for active semester & level)
-  const myCoursesPreview = useMemo(() => {
-    const list = courses.filter((c) => {
+  // -------------------------------------------------------------
+  // LEARNING HUB STATS & MEMOS
+  // -------------------------------------------------------------
+  const enrolledCourses = useMemo(() => {
+    return courses.filter((c) => {
       const matchDept = c.department === studentDept;
       const matchLvl = normalizeCourseLevel(c.level) === homeLevelFilter;
       const matchSem = homeSemesterFilter === 'All' || normalizeCourseSemester(c.semester) === homeSemesterFilter;
       return matchDept && matchLvl && matchSem;
     });
-    return list.slice(0, 3);
   }, [courses, studentDept, homeLevelFilter, homeSemesterFilter]);
+
+  const completedTopicsList = useMemo(() => profile?.completedTopics || [], [profile]);
+
+  const completedTopicsCount = useMemo(() => {
+    const enrolledCourseIds = new Set(enrolledCourses.map(c => c.id));
+    const relevantTopics = topics.filter(t => enrolledCourseIds.has(t.courseId));
+    return relevantTopics.filter(t => completedTopicsList.includes(t.id)).length;
+  }, [enrolledCourses, topics, completedTopicsList]);
+
+  const averageProgressPct = useMemo(() => {
+    if (enrolledCourses.length === 0) return 0;
+    let totalPct = 0;
+    let count = 0;
+    enrolledCourses.forEach(c => {
+      const cTopics = topics.filter(t => t.courseId === c.id);
+      if (cTopics.length === 0) return;
+      const done = cTopics.filter(t => completedTopicsList.includes(t.id)).length;
+      totalPct += Math.round((done / cTopics.length) * 100);
+      count++;
+    });
+    return count > 0 ? Math.round(totalPct / count) : 0;
+  }, [enrolledCourses, topics, completedTopicsList]);
+
+  const attemptsQuizIds = useMemo(() => new Set(studentQuizAttempts.map(a => a.quizId)), [studentQuizAttempts]);
+
+  const upcomingQuizzes = useMemo(() => {
+    return deptQuizzes
+      .filter(q => {
+        return normalizeCourseLevel(q.level) === homeLevelFilter;
+      })
+      .sort((a, b) => {
+        if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+        if (a.dueDate) return -1;
+        if (b.dueDate) return 1;
+        return new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime();
+      });
+  }, [deptQuizzes, homeLevelFilter]);
+
+  const quizzesWaitingCount = useMemo(() => {
+    return upcomingQuizzes.filter(q => !attemptsQuizIds.has(q.id)).length;
+  }, [upcomingQuizzes, attemptsQuizIds]);
+
+  const recentActivityCombined = useMemo(() => {
+    const list: Array<{ id: string; type: 'topic' | 'quiz'; title: string; subtitle: string; timestamp?: string }> = [];
+
+    // Add from studentActivities
+    studentActivities.forEach(a => {
+      list.push({
+        id: a.id,
+        type: a.type.includes('quiz') ? 'quiz' : 'topic',
+        title: a.title,
+        subtitle: a.type === 'topic completed' ? 'Completed topic' : a.type === 'lesson opened' ? 'Opened topic' : a.type,
+        timestamp: a.timestamp
+      });
+    });
+
+    // Add from quiz attempts if not already present
+    studentQuizAttempts.forEach(qa => {
+      if (!list.some(item => item.title.includes(qa.quizTitle))) {
+        list.push({
+          id: qa.id,
+          type: 'quiz',
+          title: `${qa.courseCode}: ${qa.quizTitle}`,
+          subtitle: `Scored ${qa.score}% (${qa.passed ? 'Passed' : 'Needs practice'})`,
+          timestamp: qa.completedAt
+        });
+      }
+    });
+
+    list.sort((a, b) => new Date(b.timestamp || 0).getTime() - new Date(a.timestamp || 0).getTime());
+    return list.slice(0, 5);
+  }, [studentActivities, studentQuizAttempts]);
 
   // Handle Profile Save
   const handleProfileSave = async (e: React.FormEvent) => {
@@ -1217,31 +1361,6 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               )}
             </div>
 
-            {/* CONTINUE LEARNING CARD */}
-            {profile?.lastTopic && (
-              <div className="p-3.5 sm:p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#162548] to-[#1A2E63] border border-[#2F52FF]/50 shadow-md flex items-center justify-between gap-3">
-                <div className="min-w-0 space-y-0.5">
-                  <div className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-[#FFC700] tracking-wider">
-                    <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
-                    <span>Continue Learning</span>
-                  </div>
-                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate">
-                    {profile.lastTopic.topicTitle || 'Current Topic'}
-                  </h3>
-                  <p className="text-[11px] text-[#9AA8C7] truncate">
-                    {profile.lastTopic.courseCode ? `${profile.lastTopic.courseCode}: ` : ''}{profile.lastTopic.courseTitle || 'Course Lesson'}
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleResumeLastTopic(profile.lastTopic!)}
-                  className="px-3.5 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold shrink-0 flex items-center gap-1.5 shadow-[0_0_12px_rgba(47,82,255,0.4)] transition-all cursor-pointer"
-                >
-                  <span>Resume</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
 
             {/* INSTANT SEARCH RESULTS OVERLAY */}
             {homeSearchResults && (

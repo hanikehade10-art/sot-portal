@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
-import { db } from '../lib/firebase';
+import { db, auth } from '../lib/firebase';
 import { CourseItem, TopicItem, ResourceItem, BookmarkItem } from '../types';
 import {
   normalizeCourseLevel,
@@ -29,12 +29,16 @@ import {
   Eye,
   CheckCircle2,
   Sparkles,
-  Link2
+  Link2,
+  Clock,
+  Lock
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 import { StudentLessonView } from './StudentLessonView';
-import { QuizItem, UserProfile } from '../types';
+import { StudentQuizzesView } from './StudentQuizzesView';
+import { QuizItem, UserProfile, QuizAttempt } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
+import { getCourseAccent } from '../config/courseAccents';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -89,6 +93,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   const [selectedCourseId, setSelectedCourseId] = useState<string | null>(initialCourseId || null);
   const [courseDetailTab, setCourseDetailTab] = useState<CourseDetailTab>('topics');
   const [expandedTopicIds, setExpandedTopicIds] = useState<Record<string, boolean>>({});
+  const [curriculumQuizState, setCurriculumQuizState] = useState<{ quizId: string; topicTitle: string; topicId: string } | null>(null);
 
   // Lesson View state (interactive lesson experience)
   const [selectedLessonTopic, setSelectedLessonTopic] = useState<TopicItem | null>(null);
@@ -181,6 +186,24 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
     });
     return () => unsub();
   }, [department]);
+
+  // Student's quiz attempts map
+  const [attemptsMap, setAttemptsMap] = useState<Record<string, QuizAttempt>>({});
+  useEffect(() => {
+    if (!studentProfile?.uid) return;
+    const attQuery = query(collection(db, 'quizAttempts'), where('uid', '==', studentProfile.uid));
+    const unsub = onSnapshot(attQuery, (snap) => {
+      const map: Record<string, QuizAttempt> = {};
+      snap.forEach(d => {
+        const data = d.data() as QuizAttempt;
+        map[data.quizId] = data;
+      });
+      setAttemptsMap(map);
+    }, (err) => {
+      console.warn('Attempts listener notice:', err);
+    });
+    return () => unsub();
+  }, [studentProfile?.uid]);
 
   // Handle deep-link props (initialCourseId, initialTopicId)
   useEffect(() => {
@@ -514,6 +537,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                   ? quizzes.find(q => q.id === selectedLessonTopic.linkedQuizId)
                   : null
               }
+              allQuizzes={quizzes}
+              attemptsMap={attemptsMap}
             />
           ) : !selectedCourse ? (
             /* CASE 1A: NO COURSE OPENED -> CLEAN LIST OF COURSES WITH PROGRESS RINGS */
@@ -540,16 +565,13 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {displayedCourses.map(course => {
+                    const courseAccent = getCourseAccent(course.accentColor);
                     const courseTopicsList = topics.filter(t => t.courseId === course.id);
                     const courseCompletedTopics = courseTopicsList.filter(t => completedTopicsList.includes(t.id));
                     const progressPct = courseTopicsList.length > 0
                       ? Math.round((courseCompletedTopics.length / courseTopicsList.length) * 100)
                       : 0;
-
-                    const coursePQsCount = resources.filter(
-                      r => (r.courseId === course.id || r.courseCode === course.code) &&
-                           (r.type === 'Past Question' || r.category === 'Past Question')
-                    ).length;
+                    const isStarted = progressPct > 0;
                     const bookmarked = isBookmarked('course', course.id);
 
                     return (
@@ -559,98 +581,127 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                           setSelectedCourseId(course.id);
                           setCourseDetailTab('topics');
                         }}
-                        className="p-4 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all cursor-pointer group flex flex-col justify-between space-y-3 shadow-sm hover:shadow-[0_4px_20px_rgba(47,82,255,0.12)]"
+                        className={`rounded-2xl bg-[#111A2E] border border-[#24315A] ${courseAccent.borderHover} transition-all cursor-pointer group flex flex-col justify-between overflow-hidden shadow-sm hover:shadow-[0_8px_25px_rgba(47,82,255,0.15)] hover:scale-[1.01]`}
                       >
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between gap-2">
-                            {/* Course Code with SVG Progress Ring */}
-                            <div className="flex items-center gap-2.5">
-                              <div className="relative w-9 h-9 flex items-center justify-center shrink-0">
-                                <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
-                                  <path
-                                    className="text-[#0A1224]"
-                                    strokeWidth="3.5"
-                                    stroke="currentColor"
-                                    fill="none"
-                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                  />
-                                  <path
-                                    className="text-[#FFC700] transition-all duration-500 ease-out"
-                                    strokeDasharray={`${progressPct}, 100`}
-                                    strokeWidth="3.5"
-                                    strokeLinecap="round"
-                                    stroke="currentColor"
-                                    fill="none"
-                                    d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                                  />
-                                </svg>
-                                <span className="absolute text-[8px] font-bold text-[#FFC700]">
-                                  {progressPct}%
+                        {/* Course Card Original Cover */}
+                        {course.coverImageUrl ? (
+                          <div
+                            className="relative h-28 w-full bg-cover bg-center overflow-hidden border-b border-[#24315A]/60"
+                            style={{ backgroundImage: `url(${course.coverImageUrl})` }}
+                          >
+                            <div className="absolute inset-0 bg-gradient-to-t from-[#111A2E] via-[#111A2E]/60 to-transparent" />
+                            <div className="absolute top-2.5 left-3 right-3 flex items-center justify-between">
+                              <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black shadow-sm`}>
+                                {course.code}
+                              </span>
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <span className="px-2 py-0.5 rounded bg-[#0B1220]/80 text-[#E8EEF8] border border-[#24315A] text-[10px] font-bold">
+                                  {course.units || 3} Units
                                 </span>
+                                <button
+                                  onClick={() => toggleBookmark({
+                                    id: course.id,
+                                    type: 'course',
+                                    title: `${course.code}: ${course.title}`,
+                                    code: course.code,
+                                    department: course.department
+                                  })}
+                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
+                                    bookmarked
+                                      ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                                      : 'bg-[#0B1220]/80 text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
+                                  }`}
+                                  title={bookmarked ? 'Remove bookmark' : 'Bookmark this course'}
+                                >
+                                  {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                                </button>
                               </div>
-                              <div>
-                                <span className="font-heading font-extrabold text-sm text-[#FFC700] tracking-wide block leading-tight">
-                                  {course.code}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className={`relative h-28 w-full bg-gradient-to-br ${courseAccent.coverGradient} p-3.5 flex flex-col justify-between border-b border-[#24315A]/60 overflow-hidden`}>
+                            <div className="flex items-center justify-between relative z-10">
+                              <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black`}>
+                                {course.code}
+                              </span>
+                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+                                <span className="px-2 py-0.5 rounded bg-[#0B1220]/70 text-[#E8EEF8] border border-[#24315A] text-[10px] font-bold">
+                                  {course.units || 3} Units
                                 </span>
-                                <span className="text-[10px] text-[#9AA8C7]">
-                                  {courseCompletedTopics.length}/{courseTopicsList.length} completed
-                                </span>
+                                <button
+                                  onClick={() => toggleBookmark({
+                                    id: course.id,
+                                    type: 'course',
+                                    title: `${course.code}: ${course.title}`,
+                                    code: course.code,
+                                    department: course.department
+                                  })}
+                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
+                                    bookmarked
+                                      ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                                      : 'bg-[#0B1220]/70 text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
+                                  }`}
+                                  title={bookmarked ? 'Remove bookmark' : 'Bookmark this course'}
+                                >
+                                  {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                                </button>
+                              </div>
+                            </div>
+                            <div className="flex items-end justify-between relative z-10">
+                              <div className={`w-8 h-8 rounded-xl ${courseAccent.iconBg} border ${courseAccent.badgeBorder} flex items-center justify-center`}>
+                                <BookOpen className="w-4 h-4" />
+                              </div>
+                              <span className="font-mono text-2xl font-black text-white/10 select-none tracking-widest">
+                                {course.code}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Card Body */}
+                        <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                          <div className="space-y-1.5">
+                            <div className="flex items-center justify-between text-[11px] text-[#9FB0C8]">
+                              <span className="flex items-center gap-1 font-medium text-[#60A5FA]">
+                                <Layers className="w-3.5 h-3.5 text-[#2F52FF]" />
+                                <span>{courseTopicsList.length} {courseTopicsList.length === 1 ? 'topic' : 'topics'}</span>
+                              </span>
+                              <span>{courseCompletedTopics.length} of {courseTopicsList.length} complete</span>
+                            </div>
+
+                            <h3 className="font-heading font-black text-sm sm:text-base text-[#E8EEF8] group-hover:text-white transition-colors line-clamp-2 leading-snug">
+                              {course.title}
+                            </h3>
+                          </div>
+
+                          {/* Progress Bar & Action Button */}
+                          <div className="space-y-2.5 pt-2 border-t border-[#24315A]/60">
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-[#9FB0C8]">Progress</span>
+                                <span className={`font-bold ${courseAccent.accentText}`}>{progressPct}%</span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/50">
+                                <div
+                                  className={`h-full rounded-full bg-gradient-to-r ${courseAccent.progressGradient} transition-all duration-300`}
+                                  style={{ width: `${progressPct}%` }}
+                                />
                               </div>
                             </div>
 
-                            <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                              <span className="px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A] text-[10px] font-bold text-[#E6ECFA]">
-                                {course.units || 3} Units
+                            <div className="flex items-center justify-between pt-1">
+                              <span className="text-[10px] text-[#9FB0C8]">
+                                {course.semester}
                               </span>
-                              <ShareButton
-                                title={`${course.code}: ${course.title}`}
-                                itemType="course"
-                                code={course.code}
-                                id={course.id}
-                                textDetails={`${course.units || 3} Units`}
-                                variant="icon"
-                              />
                               <button
-                                onClick={() => toggleBookmark({
-                                  id: course.id,
-                                  type: 'course',
-                                  title: `${course.code}: ${course.title}`,
-                                  code: course.code,
-                                  department: course.department
-                                })}
-                                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                  bookmarked
-                                    ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                                    : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
-                                }`}
-                                title={bookmarked ? 'Remove bookmark' : 'Bookmark this course'}
+                                type="button"
+                                className={`px-3 py-1.5 rounded-xl ${courseAccent.buttonBg} text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all`}
                               >
-                                {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                                <span>{isStarted ? 'Continue' : 'Start learning'}</span>
+                                <ChevronRight className="w-3.5 h-3.5" />
                               </button>
                             </div>
                           </div>
-
-                          <h3 className="font-heading font-bold text-sm text-[#E6ECFA] group-hover:text-white transition-colors line-clamp-2">
-                            {course.title}
-                          </h3>
-                        </div>
-
-                        <div className="flex items-center justify-between pt-2 border-t border-[#24315A]/60 text-xs text-[#9AA8C7]">
-                          <div className="flex items-center gap-2">
-                            <span className="flex items-center gap-1 text-[11px] font-medium text-[#60A5FA]">
-                              <Layers className="w-3 h-3 text-[#2F52FF]" />
-                              <span>{courseTopicsList.length} {courseTopicsList.length === 1 ? 'Topic' : 'Topics'}</span>
-                            </span>
-                            {coursePQsCount > 0 && (
-                              <span className="text-[11px] text-amber-300">
-                                • {coursePQsCount} PQ
-                              </span>
-                            )}
-                          </div>
-                          <span className="text-[11px] font-semibold text-[#FFC700] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
-                            <span>Study Course</span>
-                            <ChevronRight className="w-3.5 h-3.5" />
-                          </span>
                         </div>
                       </div>
                     );
@@ -660,432 +711,616 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
             </div>
           ) : (
             /* CASE 1B: COURSE PAGE OPENED -> TABS: TOPICS & MATERIALS */
-            <div className="space-y-4">
-              {/* Back Bar & Course Header */}
-              <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => {
-                      setSelectedLessonTopic(null);
-                      setSelectedCourseId(null);
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer"
-                  >
-                    <ArrowLeft className="w-3.5 h-3.5" />
-                    <span>Back to all courses</span>
-                  </button>
+            (() => {
+              const courseAccent = getCourseAccent(selectedCourse.accentColor);
+              const courseCompletedTopics = courseTopics.filter(t => completedTopicsList.includes(t.id));
+              const allTopicsDone = courseTopics.length > 0 && courseCompletedTopics.length === courseTopics.length;
+              const coursePct = courseTopics.length > 0
+                ? Math.round((courseCompletedTopics.length / courseTopics.length) * 100)
+                : 0;
 
-                  <button
-                    onClick={() => toggleBookmark({
-                      id: selectedCourse.id,
-                      type: 'course',
-                      title: `${selectedCourse.code}: ${selectedCourse.title}`,
-                      code: selectedCourse.code,
-                      department: selectedCourse.department
-                    })}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold border cursor-pointer ${
-                      isBookmarked('course', selectedCourse.id)
-                        ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                        : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-white'
-                    }`}
-                  >
-                    {isBookmarked('course', selectedCourse.id) ? (
-                      <>
-                        <BookmarkCheck className="w-3.5 h-3.5" />
-                        <span>Bookmarked</span>
-                      </>
-                    ) : (
-                      <>
-                        <Bookmark className="w-3.5 h-3.5" />
-                        <span>Bookmark Course</span>
-                      </>
-                    )}
-                  </button>
-                </div>
+              // Quizzes linked to this course (scope === 'course' or matches courseId/courseCode)
+              const linkedCourseQuizzes = quizzes.filter(q => {
+                if (q.scope === 'course') {
+                  return q.courseId === selectedCourse.id || q.courseCode === selectedCourse.code;
+                }
+                return false;
+              });
 
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-heading font-black text-lg text-[#FFC700]">
-                      {selectedCourse.code}
-                    </span>
-                    <span className="px-2 py-0.5 rounded bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-xs font-bold">
-                      {selectedCourse.units || 3} Credit Units
-                    </span>
+              // Check if in-place curriculum quiz is open
+              if (curriculumQuizState) {
+                return (
+                  <div className="space-y-4">
+                    {/* Back arrow returns to curriculum */}
+                    <div className="p-3.5 rounded-2xl bg-[#111A2E] border border-[#24315A] flex items-center justify-between">
+                      <button
+                        onClick={() => setCurriculumQuizState(null)}
+                        className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:underline cursor-pointer"
+                      >
+                        <ArrowLeft className="w-4 h-4" />
+                        <span>Back to {selectedCourse.code} curriculum</span>
+                      </button>
+                      <span className="text-[11px] text-[#9FB0C8]">
+                        {selectedCourse.code} • {curriculumQuizState.topicTitle}
+                      </span>
+                    </div>
+
+                    <StudentQuizzesView
+                      studentDepartment={selectedCourse.department || department}
+                      studentLevel={selectedCourse.level || userLevel || 'ND1'}
+                      studentName={studentProfile?.fullName || auth.currentUser?.displayName || 'Student'}
+                      matricNumber={studentProfile?.matricNumber || ''}
+                      uid={studentProfile?.uid || auth.currentUser?.uid || ''}
+                      initialQuizId={curriculumQuizState.quizId}
+                      topicTitle={curriculumQuizState.topicTitle}
+                      onBackToTopic={() => setCurriculumQuizState(null)}
+                      onTopicCompleted={() => {
+                        if (!completedTopicsList.includes(curriculumQuizState.topicId)) {
+                          handleToggleTopicCompleted(curriculumQuizState.topicId);
+                        }
+                      }}
+                      isBookmarked={(type, id) => isBookmarked(type as any, id)}
+                      toggleBookmark={async (item) => { toggleBookmark(item); }}
+                    />
                   </div>
-                  <h2 className="font-heading font-bold text-base sm:text-lg text-[#E6ECFA] mt-0.5">
-                    {selectedCourse.title}
-                  </h2>
-                  <p className="text-xs text-[#9AA8C7] mt-1">
-                    {selectedCourse.department} • {selectedCourse.level} • {selectedCourse.semester}
-                  </p>
-                </div>
+                );
+              }
 
-                {/* Internal Course Tabs: Topics, Materials */}
-                <div className="flex items-center gap-2 pt-2 border-t border-[#24315A]/60">
-                  <button
-                    onClick={() => setCourseDetailTab('topics')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      courseDetailTab === 'topics'
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
-                        : 'bg-[#0A1224] text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    <Layers className="w-3.5 h-3.5" />
-                    <span>Topics ({courseTopics.length})</span>
-                  </button>
+              const totalEstimatedMinutes = courseTopics.reduce((acc, t) => acc + (t.estimatedMinutes || 15), 0);
+              const totalHours = Math.floor(totalEstimatedMinutes / 60);
+              const totalMins = totalEstimatedMinutes % 60;
+              const timeString = totalHours > 0 ? `${totalHours}h ${totalMins}m` : `${totalMins} mins`;
 
-                  <button
-                    onClick={() => setCourseDetailTab('materials')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
-                      courseDetailTab === 'materials'
-                        ? 'bg-[#2F52FF] text-white shadow-[0_0_10px_rgba(47,82,255,0.4)]'
-                        : 'bg-[#0A1224] text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    <FolderOpen className="w-3.5 h-3.5" />
-                    <span>Materials ({courseMaterials.length})</span>
-                  </button>
-                </div>
-              </div>
+              return (
+                <div className="space-y-5">
+                  {/* Back Navigation Bar */}
+                  <div className="flex items-center justify-between">
+                    <button
+                      onClick={() => {
+                        setSelectedLessonTopic(null);
+                        setSelectedCourseId(null);
+                        setCurriculumQuizState(null);
+                      }}
+                      className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      <span>Back to all courses</span>
+                    </button>
 
-              {/* TAB 1: TOPICS (STRUCTURED LESSON TOPICS) */}
-              {courseDetailTab === 'topics' && (
-                <div className="space-y-3">
-                  {courseTopics.length === 0 ? (
-                    <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-                      <Layers className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-                      <p className="font-heading font-bold text-sm text-[#E6ECFA]">
-                        No syllabus topics added for this course yet
-                      </p>
-                      <p className="text-xs text-[#9AA8C7]">
-                        Detailed lecture topics, video tutorials and notes will appear here once published.
+                    <button
+                      onClick={() => toggleBookmark({
+                        id: selectedCourse.id,
+                        type: 'course',
+                        title: `${selectedCourse.code}: ${selectedCourse.title}`,
+                        code: selectedCourse.code,
+                        department: selectedCourse.department
+                      })}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+                        isBookmarked('course', selectedCourse.id)
+                          ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                          : 'bg-[#111A2E] text-[#9FB0C8] border-[#24315A] hover:text-[#FFFFFF]'
+                      }`}
+                    >
+                      {isBookmarked('course', selectedCourse.id) ? (
+                        <>
+                          <BookmarkCheck className="w-3.5 h-3.5" />
+                          <span>Bookmarked</span>
+                        </>
+                      ) : (
+                        <>
+                          <Bookmark className="w-3.5 h-3.5" />
+                          <span>Bookmark Course</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* COVER BANNER WITH CODE, TITLE, UNITS, TOPIC COUNT, TOTAL TIME & PROGRESS RING */}
+                  <div className={`p-6 sm:p-7 rounded-2xl bg-[#111A2E] border border-[#24315A] shadow-md flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden`}>
+                    {selectedCourse.coverImageUrl && (
+                      <div
+                        className="absolute inset-0 bg-cover bg-center opacity-15 pointer-events-none"
+                        style={{ backgroundImage: `url(${selectedCourse.coverImageUrl})` }}
+                      />
+                    )}
+                    <div className="space-y-2.5 flex-1 relative z-10">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className={`font-mono font-black text-2xl sm:text-3xl tracking-tight text-[#FFFFFF]`}>
+                          {selectedCourse.code}
+                        </span>
+                        <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-bold`}>
+                          {selectedCourse.units || 3} Credit Units
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-md bg-[#16223A] text-[#9FB0C8] border border-[#24315A] text-xs font-medium">
+                          {courseTopics.length} {courseTopics.length === 1 ? 'topic' : 'topics'}
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-md bg-[#16223A] text-[#FACC15] border border-[#24315A] text-xs font-medium flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          <span>{timeString} total time</span>
+                        </span>
+                      </div>
+
+                      <h2 className="font-heading font-black text-xl sm:text-2xl text-[#E8EEF8] leading-snug">
+                        {selectedCourse.title}
+                      </h2>
+
+                      <p className="text-xs text-[#9FB0C8]">
+                        {selectedCourse.department} • {selectedCourse.level} • {selectedCourse.semester}
                       </p>
                     </div>
-                  ) : (
-                    <div className="space-y-2.5">
-                      {courseTopics.map((topic, idx) => {
-                        const items = getTopicItems(topic.id);
-                        const isExpanded = expandedTopicIds[topic.id] !== false; // default expanded
-                        const topicBookmarked = isBookmarked('topic', topic.id);
-                        const isTopicDone = completedTopicsList.includes(topic.id);
 
-                        return (
-                          <div
-                            key={topic.id}
-                            className={`rounded-xl bg-[#121C36] border transition-all shadow-sm ${
-                              isTopicDone ? 'border-emerald-500/40 bg-[#0c182c]' : 'border-[#24315A]'
-                            }`}
-                          >
-                            {/* Topic Card Header */}
-                            <div
-                              onClick={() => handleOpenLesson(topic, selectedCourse)}
-                              className="p-3.5 flex items-center justify-between gap-3 cursor-pointer hover:bg-[#1A2E63]/40 transition-colors"
-                            >
-                              <div className="flex items-center gap-3 min-w-0 flex-wrap">
-                                <span className={`w-6 h-6 rounded-md border font-bold text-xs flex items-center justify-center shrink-0 ${
+                    {/* Circular Progress Ring */}
+                    <div className="flex items-center gap-4 bg-[#16223A] border border-[#24315A] p-3.5 rounded-2xl shrink-0 relative z-10">
+                      <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
+                        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+                          <path
+                            className="text-[#0B1220]"
+                            strokeWidth="3.5"
+                            stroke="currentColor"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                          <path
+                            className="transition-all duration-700 ease-out"
+                            stroke={courseAccent.stroke}
+                            strokeDasharray={`${coursePct}, 100`}
+                            strokeWidth="3.5"
+                            strokeLinecap="round"
+                            fill="none"
+                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                          />
+                        </svg>
+                        <span className="absolute text-xs font-mono font-black text-[#FFFFFF]">
+                          {coursePct}%
+                        </span>
+                      </div>
+
+                      <div className="text-left">
+                        <span className="text-[10px] uppercase font-bold text-[#9FB0C8] tracking-wider block">
+                          Syllabus Mastery
+                        </span>
+                        <span className="font-heading font-extrabold text-sm text-[#E8EEF8] block">
+                          {courseCompletedTopics.length} of {courseTopics.length} done
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ABOUT THIS COURSE */}
+                  <div className="p-5 rounded-2xl bg-[#111A2E] border border-[#24315A] space-y-2 shadow-sm">
+                    <div className="flex items-center gap-2">
+                      <BookOpen className={`w-4 h-4 ${courseAccent.accentText}`} />
+                      <h3 className="font-heading font-bold text-sm text-[#E8EEF8]">
+                        About this course
+                      </h3>
+                    </div>
+                    <p className="text-xs sm:text-[13px] text-[#9FB0C8] leading-relaxed">
+                      {selectedCourse.about || `Official syllabus curriculum and study modules for ${selectedCourse.code} (${selectedCourse.title}) in the Department of ${selectedCourse.department}. Complete topics sequentially and verify your progress with quizzes.`}
+                    </p>
+                  </div>
+
+                  {/* Course Tabs: Topics vs Materials */}
+                  <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#111A2E] border border-[#24315A] w-fit">
+                    <button
+                      onClick={() => setCourseDetailTab('topics')}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                        courseDetailTab === 'topics'
+                          ? `${courseAccent.buttonBg} text-white shadow-sm`
+                          : 'text-[#9FB0C8] hover:text-[#E8EEF8]'
+                      }`}
+                    >
+                      <Layers className="w-3.5 h-3.5" />
+                      <span>Syllabus Topics ({courseTopics.length})</span>
+                    </button>
+
+                    <button
+                      onClick={() => setCourseDetailTab('materials')}
+                      className={`px-4 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                        courseDetailTab === 'materials'
+                          ? `${courseAccent.buttonBg} text-white shadow-sm`
+                          : 'text-[#9FB0C8] hover:text-[#E8EEF8]'
+                      }`}
+                    >
+                      <FolderOpen className="w-3.5 h-3.5" />
+                      <span>Course Materials ({courseMaterials.length})</span>
+                    </button>
+                  </div>
+
+                  {/* TAB 1: TOPICS (NUMBERED CARDS WITH COMPLETED TICK & ESTIMATED TIME) */}
+                  {courseDetailTab === 'topics' && (
+                    <div className="space-y-4">
+                      {courseTopics.length === 0 ? (
+                        <div className="p-8 rounded-2xl bg-[#111A2E] border border-[#24315A] text-center space-y-2">
+                          <Layers className="w-8 h-8 text-[#FACC15] mx-auto opacity-70" />
+                          <p className="font-heading font-bold text-sm text-[#E8EEF8]">
+                            No syllabus topics added for this course yet
+                          </p>
+                          <p className="text-xs text-[#9FB0C8]">
+                            Detailed lecture topics, video tutorials and notes will appear here once published.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          {courseTopics.map((topic, idx) => {
+                            const items = getTopicItems(topic.id);
+                            const isExpanded = expandedTopicIds[topic.id] !== false;
+                            const topicBookmarked = isBookmarked('topic', topic.id);
+                            const isTopicDone = completedTopicsList.includes(topic.id);
+
+                            return (
+                              <div
+                                key={topic.id}
+                                className={`rounded-2xl bg-[#16223A] border transition-all shadow-sm ${
                                   isTopicDone
-                                    ? 'bg-emerald-950/60 border-emerald-500 text-emerald-400'
-                                    : 'bg-[#0A1224] border-[#24315A] text-[#FFC700]'
-                                }`}>
-                                  {isTopicDone ? '✓' : idx + 1}
-                                </span>
-                                <div>
-                                  <h4 className="font-heading font-bold text-sm text-[#E6ECFA] hover:text-[#FFC700] transition-colors break-words">
-                                    {topic.title}
-                                  </h4>
-                                  <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[#9AA8C7] flex-wrap">
-                                    <span>{topic.estimatedMinutes || 15} mins read</span>
-                                    {isTopicDone && (
-                                      <span className="text-emerald-400 font-bold flex items-center gap-0.5">
-                                        • Completed
-                                      </span>
-                                    )}
-                                    {topic.videoUrl && (
-                                      <span className="text-rose-400 font-semibold">• Video available</span>
-                                    )}
-                                    {topic.linkedQuizId && (
-                                      <span className="text-[#FFC700] font-semibold">• Practice quiz</span>
-                                    )}
+                                    ? 'border-emerald-500/50 bg-[#16253c]'
+                                    : 'border-[#24315A] hover:border-[#384a75]'
+                                }`}
+                              >
+                                {/* Topic Card Header */}
+                                <div
+                                  onClick={() => handleOpenLesson(topic, selectedCourse)}
+                                  className="p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer"
+                                >
+                                  <div className="flex items-center gap-3.5 min-w-0">
+                                    {/* Number / Completed Tick */}
+                                    <div
+                                      className={`w-8 h-8 rounded-xl font-mono font-black text-xs flex items-center justify-center shrink-0 border transition-colors ${
+                                        isTopicDone
+                                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
+                                          : 'bg-[#111A2E] border-[#24315A] text-[#9FB0C8]'
+                                      }`}
+                                    >
+                                      {isTopicDone ? '✓' : idx + 1}
+                                    </div>
+
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <h4 className="font-heading font-bold text-sm sm:text-base text-[#E8EEF8] hover:text-[#FFFFFF] transition-colors leading-snug">
+                                          {topic.title}
+                                        </h4>
+                                        {topic.levelTag && (
+                                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40">
+                                            {topic.levelTag}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-2.5 mt-1 text-xs text-[#9FB0C8] flex-wrap">
+                                        <span className="flex items-center gap-1">
+                                          <Clock className="w-3 h-3 text-[#FACC15]" />
+                                          <span>{topic.estimatedMinutes || 15} mins read</span>
+                                        </span>
+                                        {isTopicDone && (
+                                          <span className="text-emerald-400 font-bold flex items-center gap-1">
+                                            <span>• Completed</span>
+                                          </span>
+                                        )}
+                                        {topic.notesPdfUrl && (
+                                          <span className="text-teal-400 font-semibold">• PDF Handout</span>
+                                        )}
+                                        {topic.videoUrl && (
+                                          <span className="text-rose-400 font-semibold">• Video lecture</span>
+                                        )}
+                                        {topic.linkedQuizId && (
+                                          <span className="text-[#FACC15] font-semibold">• Topic Quiz</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                    <button
+                                      onClick={() => toggleTopicExpand(topic.id)}
+                                      className="p-1.5 text-[#9FB0C8] hover:text-[#E8EEF8] cursor-pointer"
+                                      title="Toggle details"
+                                    >
+                                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                    </button>
                                   </div>
                                 </div>
-                              </div>
 
-                              <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  onClick={() => handleOpenLesson(topic, selectedCourse)}
-                                  className="px-3 py-1 rounded-lg bg-[#2F52FF] hover:bg-[#4364FF] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
-                                >
-                                  <BookOpen className="w-3.5 h-3.5 text-[#FFC700]" />
-                                  <span className="hidden sm:inline">Study</span>
-                                </button>
+                                {/* Expanded Content Row: Two Big Buttons + Handouts */}
+                                {isExpanded && (() => {
+                                  const topicLinkedQuiz = topic.linkedQuizId
+                                    ? quizzes.find(q => q.id === topic.linkedQuizId)
+                                    : quizzes.find(q => q.scope === 'topic' && q.topicId === topic.id);
 
-                                <button
-                                  onClick={() => toggleBookmark({
-                                    id: topic.id,
-                                    type: 'topic',
-                                    title: topic.title,
-                                    code: selectedCourse.code,
-                                    department: selectedCourse.department
-                                  })}
-                                  className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                    topicBookmarked
-                                      ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                                      : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
-                                  }`}
-                                  title={topicBookmarked ? 'Remove bookmark' : 'Bookmark topic'}
-                                >
-                                  {topicBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                                </button>
-
-                                <button
-                                  onClick={() => toggleTopicExpand(topic.id)}
-                                  className="p-1 text-[#9AA8C7] hover:text-[#E6ECFA]"
-                                  title="Toggle resources"
-                                >
-                                  {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                                </button>
-                              </div>
-                            </div>
-
-                            {/* Expanded Topic Items */}
-                            {isExpanded && (
-                              <div className="px-3.5 pb-3.5 pt-1 border-t border-[#24315A]/60 space-y-2.5 bg-[#0A1224]/50">
-                                {items.length === 0 ? (
-                                  <p className="text-xs text-[#9AA8C7] py-2 text-center">
-                                    Notes and video resources for this topic will be uploaded soon.
-                                  </p>
-                                ) : (
-                                  <div className="space-y-2.5">
-                                    {items.map(item => {
-                                      const isItemBookmarked = isBookmarked('material', item.id);
-                                      const ytEmbed = item.type === 'Video' ? getYouTubeEmbedUrl(item.url) : null;
-                                      const isPdf = item.type === 'Note' || item.url.toLowerCase().includes('.pdf') || item.url.includes('drive.google.com');
-
-                                      return (
-                                        <div
-                                          key={item.id}
-                                          className="p-3 rounded-lg bg-[#121C36] border border-[#24315A] space-y-2"
+                                  return (
+                                    <div className="px-4 pb-4 pt-2 border-t border-[#24315A]/60 space-y-3">
+                                      {/* Two Big Action Buttons */}
+                                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleOpenLesson(topic, selectedCourse)}
+                                          className={`w-full py-2.5 px-4 rounded-xl ${courseAccent.buttonBg} text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer`}
                                         >
-                                          {/* Item Title & Actions */}
-                                          <div className="flex items-start sm:items-center justify-between gap-2">
-                                            <div className="flex items-center gap-2 min-w-0">
-                                              {item.type === 'Video' ? (
-                                                <div className="w-6 h-6 rounded bg-rose-500/20 text-rose-400 flex items-center justify-center shrink-0">
-                                                  <Video className="w-3.5 h-3.5" />
-                                                </div>
-                                              ) : item.type === 'Note' ? (
-                                                <div className="w-6 h-6 rounded bg-[#FFC700]/20 text-[#FFC700] flex items-center justify-center shrink-0">
-                                                  <FileText className="w-3.5 h-3.5" />
-                                                </div>
-                                              ) : (
-                                                <div className="w-6 h-6 rounded bg-emerald-500/20 text-emerald-400 flex items-center justify-center shrink-0">
-                                                  <Link2 className="w-3.5 h-3.5" />
-                                                </div>
-                                              )}
+                                          <BookOpen className="w-4 h-4 text-[#FACC15]" />
+                                          <span>Study content</span>
+                                        </button>
 
-                                              <div>
-                                                <p className="font-heading font-semibold text-xs text-[#E6ECFA] line-clamp-1">
-                                                  {item.title}
-                                                </p>
-                                                <span className="text-[10px] text-[#9AA8C7]">
-                                                  {item.type || 'Resource'}
-                                                </span>
-                                              </div>
-                                            </div>
-
-                                            <div className="flex items-center gap-1.5 shrink-0">
-                                              {/* Bookmark Item */}
-                                              <button
-                                                onClick={() => toggleBookmark({
-                                                  id: item.id,
-                                                  type: 'material',
-                                                  title: item.title,
-                                                  code: selectedCourse.code,
-                                                  link: item.url
-                                                })}
-                                                className={`p-1 rounded border transition-all cursor-pointer ${
-                                                  isItemBookmarked
-                                                    ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                                                    : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
-                                                }`}
-                                                title={isItemBookmarked ? 'Remove bookmark' : 'Bookmark item'}
-                                              >
-                                                {isItemBookmarked ? <BookmarkCheck className="w-3 h-3" /> : <Bookmark className="w-3 h-3" />}
-                                              </button>
-
-                                              {/* If PDF, open in-app viewer modal */}
-                                              {isPdf && (
-                                                <button
-                                                  onClick={() => setViewerItem({
-                                                    title: item.title,
-                                                    url: item.url,
-                                                    courseCode: selectedCourse.code,
-                                                    type: item.type || 'Lecture Note'
-                                                  })}
-                                                  className="px-2 py-1 rounded bg-[#2F52FF] hover:bg-[#2545df] text-white text-[11px] font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                        {topicLinkedQuiz && (
+                                          <button
+                                            type="button"
+                                            onClick={() => setCurriculumQuizState({
+                                              quizId: topicLinkedQuiz.id,
+                                              topicTitle: topic.title,
+                                              topicId: topic.id
+                                            })}
+                                            className="w-full py-2.5 px-4 rounded-xl bg-[#FACC15] hover:bg-[#ffd233] text-[#0A1224] font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+                                          >
+                                            <FileQuestion className="w-4 h-4 text-[#0A1224]" />
+                                            <span>Quiz ({topicLinkedQuiz.questionCount || topicLinkedQuiz.questions?.length || 0} Qs)</span>
+                                          </button>
+                                        )}
+                                      {items.length > 0 && (
+                                        <div className="space-y-1.5 pt-1">
+                                          <span className="text-[10px] font-bold text-[#9FB0C8] uppercase tracking-wider block">
+                                            Topic Study Handouts &amp; Materials:
+                                          </span>
+                                          <div className="space-y-1.5">
+                                            {items.map(item => {
+                                              const isPdf = item.url.toLowerCase().includes('.pdf') || item.url.includes('drive.google.com');
+                                              return (
+                                                <div
+                                                  key={item.id}
+                                                  className="p-2.5 rounded-xl bg-[#0B1220] border border-[#24315A] flex items-center justify-between gap-2 text-xs"
                                                 >
-                                                  <Eye className="w-3 h-3" />
-                                                  <span>Preview</span>
-                                                </button>
-                                              )}
-
-                                              {/* Open Link / File in new tab */}
-                                              <a
-                                                href={item.url}
-                                                target="_blank"
-                                                rel="noreferrer"
-                                                className="px-2 py-1 rounded bg-[#0A1224] hover:bg-[#1A2E63] border border-[#24315A] text-[#E6ECFA] text-[11px] font-semibold flex items-center gap-1"
-                                              >
-                                                <span>Open</span>
-                                                <ExternalLink className="w-3 h-3 text-[#9AA8C7]" />
-                                              </a>
-
-                                              {/* Download button for files */}
-                                              {isPdf && (
-                                                <a
-                                                  href={getPdfDownloadUrl(item.url)}
-                                                  target="_blank"
-                                                  rel="noreferrer"
-                                                  download
-                                                  className="p-1 rounded bg-[#0A1224] hover:bg-[#1A2E63] border border-[#24315A] text-[#FFC700]"
-                                                  title="Download file"
-                                                >
-                                                  <Download className="w-3 h-3" />
-                                                </a>
-                                              )}
-                                            </div>
+                                                  <div className="flex items-center gap-2 min-w-0">
+                                                    <FileText className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                                                    <span className="text-[#E8EEF8] truncate">{item.title}</span>
+                                                  </div>
+                                                  <div className="flex items-center gap-2 shrink-0">
+                                                    {isPdf && (
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => setViewerItem({
+                                                          title: item.title,
+                                                          url: item.url,
+                                                          courseCode: selectedCourse.code,
+                                                          type: item.type || 'Lecture Note'
+                                                        })}
+                                                        className="px-2 py-0.5 rounded bg-teal-600 hover:bg-teal-500 text-white text-[11px] font-semibold cursor-pointer"
+                                                      >
+                                                        Preview
+                                                      </button>
+                                                    )}
+                                                    <a
+                                                      href={item.url}
+                                                      target="_blank"
+                                                      rel="noreferrer"
+                                                      className="text-[#60A5FA] hover:underline text-[11px] flex items-center gap-1"
+                                                    >
+                                                      <span>Open</span>
+                                                      <ExternalLink className="w-3 h-3" />
+                                                    </a>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })}
                                           </div>
-
-                                          {/* Embedded YouTube Player if YouTube Link */}
-                                          {ytEmbed && (
-                                            <div className="w-full aspect-video rounded-lg overflow-hidden bg-black/60 border border-[#24315A] shadow-md mt-2">
-                                              <iframe
-                                                src={ytEmbed}
-                                                title={item.title}
-                                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                                                allowFullScreen
-                                                className="w-full h-full border-0"
-                                              />
-                                            </div>
-                                          )}
                                         </div>
-                                      );
-                                    })}
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* STICKY BOTTOM BAR: "x of y topics complete" & Continue button */}
+                      <div className="sticky bottom-3 z-30 p-3.5 sm:p-4 rounded-2xl bg-[#0B1220]/95 backdrop-blur-md border border-[#24315A] shadow-2xl flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className={`w-9 h-9 rounded-xl ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} flex items-center justify-center font-mono font-bold text-xs shrink-0`}>
+                            {courseCompletedTopics.length}/{courseTopics.length}
+                          </div>
+                          <div className="min-w-0">
+                            <span className="text-xs sm:text-sm font-bold text-[#E8EEF8] block truncate">
+                              {courseCompletedTopics.length} of {courseTopics.length} topics complete
+                            </span>
+                            <span className="text-[11px] text-[#9FB0C8]">
+                              {coursePct}% syllabus finished
+                            </span>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const nextTopicToStudy = courseTopics.find(t => !completedTopicsList.includes(t.id)) || courseTopics[0];
+                            if (nextTopicToStudy) {
+                              handleOpenLesson(nextTopicToStudy, selectedCourse);
+                            }
+                          }}
+                          className={`px-5 py-2.5 rounded-xl ${courseAccent.buttonBg} text-white text-xs font-black flex items-center gap-2 cursor-pointer shadow-lg transition-all hover:scale-[1.02] shrink-0`}
+                        >
+                          <span>{courseCompletedTopics.length === 0 ? 'Start Learning' : 'Continue'}</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+
+                      {/* COURSE QUIZ CARD AT END OF COURSE TOPICS */}
+                      {linkedCourseQuizzes.length > 0 && (
+                        <div className="pt-4 border-t border-[#24315A] space-y-3">
+                          <div className="flex items-center gap-2">
+                            <span className="w-2.5 h-2.5 rounded-full bg-[#FACC15]" />
+                            <h3 className="font-heading font-black text-base text-[#FFFFFF]">
+                              Comprehensive Course Quizzes
+                            </h3>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {linkedCourseQuizzes.map(quiz => {
+                              const isLocked = (quiz.unlockAfterTopicsComplete !== false) && !allTopicsDone;
+                              const attempt = attemptsMap[quiz.id];
+
+                              return (
+                                <div
+                                  key={quiz.id}
+                                  className={`p-5 rounded-2xl border transition-all ${
+                                    isLocked
+                                      ? 'bg-[#0B1220] border-[#24315A]/60 opacity-80'
+                                      : 'bg-[#16223A] border-teal-500/60 shadow-md'
+                                  }`}
+                                >
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-mono font-bold text-xs text-[#FACC15]">
+                                        Course Quiz
+                                      </span>
+                                      {isLocked && (
+                                        <span className="px-2 py-0.5 rounded bg-[#111A2E] text-amber-300 border border-amber-500/40 text-[10px] font-bold">
+                                          Locked
+                                        </span>
+                                      )}
+                                    </div>
+
+                                    <h4 className="font-heading font-bold text-sm text-[#E8EEF8]">
+                                      {quiz.title}
+                                    </h4>
+
+                                    <p className="text-xs text-[#9FB0C8]">
+                                      {quiz.questionCount || quiz.questions?.length || 0} questions • Passing: {quiz.passingScore || 70}%
+                                    </p>
                                   </div>
-                                )}
-                              </div>
-                            )}
+
+                                  <div className="pt-3 mt-3 border-t border-[#24315A]/60 flex items-center justify-between">
+                                    {isLocked ? (
+                                      <span className="text-xs text-amber-300 font-medium">
+                                        Complete all topics to unlock
+                                      </span>
+                                    ) : (
+                                      <span className="text-xs text-teal-400 font-medium">
+                                        {attempt ? `Best: ${attempt.bestScore}/${attempt.total}` : 'Unlocked! Ready to take'}
+                                      </span>
+                                    )}
+
+                                    <button
+                                      disabled={isLocked}
+                                      onClick={() => onTakeQuiz?.(quiz.id)}
+                                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer ${
+                                        isLocked
+                                          ? 'bg-[#111A2E] text-[#9FB0C8] border border-[#24315A] cursor-not-allowed'
+                                          : `${courseAccent.buttonBg} text-white shadow-md`
+                                      }`}
+                                    >
+                                      {attempt ? 'Take Again' : 'Start Course Quiz'}
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* TAB 2: COURSE MATERIALS */}
+                  {courseDetailTab === 'materials' && (
+                    <div className="space-y-3">
+                      {courseMaterials.length === 0 ? (
+                        <div className="p-8 rounded-2xl bg-[#111A2E] border border-[#24315A] text-center space-y-2">
+                          <FolderOpen className="w-8 h-8 text-[#FACC15] mx-auto opacity-70" />
+                          <p className="font-heading font-bold text-sm text-[#E8EEF8]">
+                            No general course materials uploaded yet
+                          </p>
+                          <p className="text-xs text-[#9FB0C8]">
+                            Handouts and general lecture files not tied to a single topic will appear here.
+                          </p>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {courseMaterials.map(mat => {
+                            const isMatBookmarked = isBookmarked('material', mat.id);
+                            const isPdf = mat.url.toLowerCase().includes('.pdf') || mat.url.includes('drive.google.com');
+
+                            return (
+                              <div
+                                key={mat.id}
+                                className="p-4 rounded-xl bg-[#16223A] border border-[#24315A] flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div className="w-8 h-8 rounded-lg bg-teal-500/20 text-teal-300 flex items-center justify-center shrink-0">
+                                    <FileText className="w-4 h-4" />
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="font-heading font-bold text-xs sm:text-sm text-[#E8EEF8] truncate">
+                                      {mat.title}
+                                    </h4>
+                                    <p className="text-[10px] text-[#9FB0C8]">
+                                      {mat.courseCode || selectedCourse.code} • {mat.type || 'Handout'}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                  <button
+                                    onClick={() => toggleBookmark({
+                                      id: mat.id,
+                                      type: 'material',
+                                      title: mat.title,
+                                      code: selectedCourse.code,
+                                      link: mat.url
+                                    })}
+                                    className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                                      isMatBookmarked
+                                        ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                                        : 'bg-[#111A2E] text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
+                                    }`}
+                                    title={isMatBookmarked ? 'Remove bookmark' : 'Bookmark material'}
+                                  >
+                                    {isMatBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                                  </button>
+
+                                  {isPdf && (
+                                    <button
+                                      onClick={() => setViewerItem({
+                                        title: mat.title,
+                                        url: mat.url,
+                                        courseCode: selectedCourse.code,
+                                        type: mat.type || 'Course Material'
+                                      })}
+                                      className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <Eye className="w-3.5 h-3.5" />
+                                      <span>Preview</span>
+                                    </button>
+                                  )}
+
+                                  <a
+                                    href={mat.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-3 py-1.5 rounded-lg bg-[#111A2E] border border-[#24315A] text-[#E8EEF8] hover:text-white text-xs font-semibold flex items-center gap-1"
+                                  >
+                                    <span>Open</span>
+                                    <ExternalLink className="w-3.5 h-3.5 text-[#9FB0C8]" />
+                                  </a>
+
+                                  {isPdf && (
+                                    <a
+                                      href={getPdfDownloadUrl(mat.url)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      download
+                                      className="p-1.5 rounded-lg bg-[#111A2E] border border-[#24315A] text-[#FACC15] hover:bg-[#FACC15]/10"
+                                      title="Download PDF"
+                                    >
+                                      <Download className="w-3.5 h-3.5" />
+                                    </a>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
-              )}
-
-              {/* TAB 2: COURSE MATERIALS */}
-              {courseDetailTab === 'materials' && (
-                <div className="space-y-3">
-                  {courseMaterials.length === 0 ? (
-                    <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-                      <FolderOpen className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-                      <p className="font-heading font-bold text-sm text-[#E6ECFA]">
-                        No general course materials uploaded yet
-                      </p>
-                      <p className="text-xs text-[#9AA8C7]">
-                        Handouts and general lecture files not tied to a single topic will appear here.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {courseMaterials.map(mat => {
-                        const isMatBookmarked = isBookmarked('material', mat.id);
-                        const isPdf = mat.url.toLowerCase().includes('.pdf') || mat.url.includes('drive.google.com');
-
-                        return (
-                          <div
-                            key={mat.id}
-                            className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div className="w-8 h-8 rounded-lg bg-[#2F52FF]/20 text-[#60A5FA] flex items-center justify-center shrink-0">
-                                <FileText className="w-4 h-4" />
-                              </div>
-                              <div className="min-w-0">
-                                <h4 className="font-heading font-bold text-xs sm:text-sm text-[#E6ECFA] truncate">
-                                  {mat.title}
-                                </h4>
-                                <p className="text-[10px] text-[#9AA8C7]">
-                                  {mat.courseCode || selectedCourse.code} • {mat.type || 'Handout'}
-                                </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                              <button
-                                onClick={() => toggleBookmark({
-                                  id: mat.id,
-                                  type: 'material',
-                                  title: mat.title,
-                                  code: selectedCourse.code,
-                                  link: mat.url
-                                })}
-                                className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
-                                  isMatBookmarked
-                                    ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                                    : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
-                                }`}
-                                title={isMatBookmarked ? 'Remove bookmark' : 'Bookmark material'}
-                              >
-                                {isMatBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                              </button>
-
-                              {isPdf && (
-                                <button
-                                  onClick={() => setViewerItem({
-                                    title: mat.title,
-                                    url: mat.url,
-                                    courseCode: selectedCourse.code,
-                                    type: mat.type || 'Course Material'
-                                  })}
-                                  className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
-                                >
-                                  <Eye className="w-3.5 h-3.5" />
-                                  <span>Preview</span>
-                                </button>
-                              )}
-
-                              <a
-                                href={mat.url}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] hover:text-white text-xs font-semibold flex items-center gap-1"
-                              >
-                                <span>Open</span>
-                                <ExternalLink className="w-3.5 h-3.5 text-[#9AA8C7]" />
-                              </a>
-
-                              {isPdf && (
-                                <a
-                                  href={getPdfDownloadUrl(mat.url)}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  download
-                                  className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#FFC700] hover:bg-[#FFC700]/10"
-                                  title="Download PDF"
-                                >
-                                  <Download className="w-3.5 h-3.5" />
-                                </a>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
+              );
+            })()
           )}
         </div>
       )}

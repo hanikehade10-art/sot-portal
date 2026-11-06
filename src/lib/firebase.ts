@@ -77,6 +77,13 @@ const CONVERT_TO_EMPTY_STRING_KEYS = new Set([
   'session',
   'year',
   'modelAnswer',
+  'notesPdfUrl',
+  'accentColor',
+  'coverImageUrl',
+  'about',
+  'beforeYouBegin',
+  'levelTag',
+  'dueDate',
   'scope'
 ]);
 

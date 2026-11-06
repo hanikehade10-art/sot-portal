@@ -162,6 +162,10 @@ export type ResourceType = 'Video' | 'Note' | 'Past Question' | 'Solution' | 'Ot
 export type CourseMaterialCategory = 'Lecture Note' | 'Past Question' | 'Video' | 'Other';
 export type ResourceCategory = 'Course Outline' | 'Lecture Note' | 'Past Question' | 'Solution' | 'Video' | 'Assignment' | 'Other';
 
+export type CourseAccentColor = 'Teal' | 'Emerald' | 'Indigo' | 'Sky' | 'Amber' | 'Rose';
+
+export type TopicLevelTag = 'Beginner' | 'Intermediate' | 'Advanced';
+
 export interface FurtherReadingItem {
   title: string;
   url: string;
@@ -175,9 +179,13 @@ export interface TopicItem {
   semester: string; // 'First Semester' | 'Second Semester'
   title: string;
   order: number;
+  levelTag?: TopicLevelTag; // 'Beginner' | 'Intermediate' | 'Advanced'
+  whatYoullLearn?: string[]; // Bulleted objectives: "What you'll learn"
+  beforeYouBegin?: string; // Optional prerequisites or instructions
   estimatedMinutes?: number; // Estimated reading/learning time in minutes
   videoUrl?: string; // YouTube or direct video link (embeddable)
-  notes?: string; // Notes with numbered section headings, bold, bullets
+  notes?: string; // Notes with numbered section headings, bold, bullets, tables, callouts
+  notesPdfUrl?: string; // Optional Google Drive link or direct PDF URL for handouts
   summary?: string; // Highlighted summary box / key takeaways
   furtherReading?: FurtherReadingItem[]; // List of reference links
   linkedQuizId?: string; // Document ID of linked quiz
@@ -227,6 +235,9 @@ export interface CourseItem {
   semester: string; // 'First Semester' | 'Second Semester' (or '1st Semester' | '2nd Semester')
   units: number;
   type: 'Core' | 'Elective';
+  accentColor?: CourseAccentColor; // Teal (default), Emerald, Indigo, Sky, Amber, Rose
+  coverImageUrl?: string; // Optional image link for original course cover
+  about?: string; // 'About this course' overview
   description?: string;
   materials?: CourseMaterial[];
   createdAt?: string;
@@ -353,6 +364,7 @@ export interface QuizItem {
   unlockAfterTopicsComplete?: boolean; // For course quizzes: unlock only after all topics are completed (default true)
   title: string;
   instructions?: string;
+  dueDate?: string; // Optional due date string YYYY-MM-DD or ISO string for upcoming quizzes
   timeLimit?: number; // In minutes (0 or undefined for no limit)
   passingScore?: number; // Percentage needed to pass (e.g. 70, default 70)
   attemptsAllowed?: number; // Allowed attempts (0 or undefined for unlimited)

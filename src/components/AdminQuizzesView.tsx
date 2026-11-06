@@ -39,7 +39,8 @@ import {
   Award,
   Users,
   Check,
-  BookOpen
+  BookOpen,
+  Calendar
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 import { logActivity } from '../lib/activityLogger';
@@ -110,6 +111,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [formCourseId, setFormCourseId] = useState<string>('');
   const [formTopicId, setFormTopicId] = useState<string>('');
   const [formUnlockAfterTopicsComplete, setFormUnlockAfterTopicsComplete] = useState<boolean>(true);
+  const [formDueDate, setFormDueDate] = useState<string>('');
 
   const [formHasTimer, setFormHasTimer] = useState<boolean>(true);
   const [formShuffle, setFormShuffle] = useState<boolean>(true);
@@ -247,6 +249,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormCourseId('');
     setFormTopicId('');
     setFormUnlockAfterTopicsComplete(true);
+    setFormDueDate('');
     setFormHasTimer(true);
     setFormShuffle(true);
     setFormAllowPartialCredit(false);
@@ -316,6 +319,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
     setFormCourseId(quiz.courseId || '');
     setFormTopicId(quiz.topicId || '');
     setFormUnlockAfterTopicsComplete(quiz.unlockAfterTopicsComplete !== false);
+    setFormDueDate(quiz.dueDate || '');
 
     setFormHasTimer(hasLimit);
     setFormShuffle(Boolean(quiz.shuffle));
@@ -709,6 +713,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
         courseId: (formScope === 'course' || formScope === 'topic') ? (formCourseId || '').trim() : '',
         topicId: formScope === 'topic' ? (formTopicId || '').trim() : '',
         unlockAfterTopicsComplete: formScope === 'course' ? Boolean(formUnlockAfterTopicsComplete) : false,
+        dueDate: formDueDate ? formDueDate.trim() : '',
         passingScore,
         attemptsAllowed,
         pointsPerQuestion,
@@ -1336,6 +1341,20 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                       placeholder="1"
                       className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#60A5FA] text-center focus:outline-none focus:border-[#2F52FF]"
                     />
+                  </div>
+
+                  <div>
+                    <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-[#60A5FA]" />
+                      <span>Due Date (Optional)</span>
+                    </label>
+                    <input
+                      type="date"
+                      value={formDueDate}
+                      onChange={e => setFormDueDate(e.target.value)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                    <span className="text-[9px] text-[#9AA8C7] block mt-0.5">Used for Upcoming Quizzes</span>
                   </div>
                 </div>
 

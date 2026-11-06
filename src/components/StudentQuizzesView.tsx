@@ -683,9 +683,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }
   };
 
-  // Filtered quizzes for student list
+  // Filtered quizzes for student list (topic quizzes do NOT appear on the Quizzes page)
   const filteredQuizzes = useMemo(() => {
     return quizzes.filter(q => {
+      // Exclude topic-linked quizzes from main Quizzes page
+      const isTopicQuiz = q.scope === 'topic' || (Boolean(q.topicId) && q.scope !== 'course' && q.scope !== 'general');
+      if (isTopicQuiz) return false;
+
       const matchLevel = levelFilter === 'All' || q.level === levelFilter;
       const matchSem = semesterFilter === 'All' || q.semester === semesterFilter;
       const matchSearch =

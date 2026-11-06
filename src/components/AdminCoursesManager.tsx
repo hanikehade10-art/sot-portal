@@ -9,8 +9,10 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { db, auth, safeAddDoc, safeUpdateDoc, cleanFirestoreData } from '../lib/firebase';
-import { CourseItem, TopicItem, ResourceItem, ResourceType, QuizItem } from '../types';
+import { CourseItem, TopicItem, ResourceItem, ResourceType, QuizItem, CourseAccentColor } from '../types';
 import { SOT_DEPARTMENTS_LIST } from '../data/departments';
+import { ACCENT_COLOR_OPTIONS, getCourseAccent } from '../config/courseAccents';
+import { FormattedLessonNotes } from './FormattedLessonNotes';
 import {
   normalizeCourseLevel,
   normalizeCourseSemester,
@@ -107,6 +109,9 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   const [courseCode, setCourseCode] = useState('');
   const [courseTitle, setCourseTitle] = useState('');
   const [courseUnits, setCourseUnits] = useState<number | string>(3);
+  const [courseAccentColor, setCourseAccentColor] = useState<CourseAccentColor>('Teal');
+  const [courseCoverImageUrl, setCourseCoverImageUrl] = useState('');
+  const [courseAbout, setCourseAbout] = useState('');
   const [batchCoursesText, setBatchCoursesText] = useState('');
   const [savingCourse, setSavingCourse] = useState(false);
 
@@ -141,9 +146,13 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   const [showLessonModal, setShowLessonModal] = useState(false);
   const [editingLessonTopic, setEditingLessonTopic] = useState<TopicItem | null>(null);
   const [lessonTitle, setLessonTitle] = useState('');
+  const [lessonLevelTag, setLessonLevelTag] = useState<'Beginner' | 'Intermediate' | 'Advanced'>('Beginner');
+  const [lessonWhatYoullLearnText, setLessonWhatYoullLearnText] = useState('');
+  const [lessonBeforeYouBegin, setLessonBeforeYouBegin] = useState('');
   const [lessonEstimatedMinutes, setLessonEstimatedMinutes] = useState('15');
   const [lessonVideoUrl, setLessonVideoUrl] = useState('');
   const [lessonNotes, setLessonNotes] = useState('');
+  const [lessonNotesPdfUrl, setLessonNotesPdfUrl] = useState('');
   const [lessonSummary, setLessonSummary] = useState('');
   const [lessonFurtherReading, setLessonFurtherReading] = useState<Array<{ title: string; url: string }>>([]);
   const [lessonOrder, setLessonOrder] = useState<number>(1);
@@ -158,9 +167,17 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   const handleOpenLessonEditor = (topic: TopicItem) => {
     setEditingLessonTopic(topic);
     setLessonTitle(topic.title || '');
+    setLessonLevelTag(topic.levelTag || 'Beginner');
+    setLessonWhatYoullLearnText(
+      topic.whatYoullLearn && topic.whatYoullLearn.length > 0
+        ? topic.whatYoullLearn.join('\n')
+        : ''
+    );
+    setLessonBeforeYouBegin(topic.beforeYouBegin || '');
     setLessonEstimatedMinutes(topic.estimatedMinutes ? String(topic.estimatedMinutes) : '15');
     setLessonVideoUrl(topic.videoUrl || '');
     setLessonNotes(topic.notes || '');
+    setLessonNotesPdfUrl(topic.notesPdfUrl || '');
     setLessonSummary(topic.summary || '');
     setLessonFurtherReading(topic.furtherReading && topic.furtherReading.length > 0 ? [...topic.furtherReading] : []);
     setLessonOrder(topic.order || 1);
@@ -215,8 +232,12 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       const updatePayload: Partial<TopicItem> = {
         title: lessonTitle.trim(),
         estimatedMinutes: estMinutes,
+        levelTag: lessonLevelTag,
+        whatYoullLearn: lessonWhatYoullLearnText.split('\n').map(l => l.trim()).filter(Boolean),
+        beforeYouBegin: lessonBeforeYouBegin.trim() || '',
         videoUrl: lessonVideoUrl.trim() || '',
         notes: lessonNotes || '',
+        notesPdfUrl: lessonNotesPdfUrl.trim() || '',
         summary: lessonSummary.trim() || '',
         furtherReading: cleanReading.length > 0 ? cleanReading : [],
         order: Number(lessonOrder) || 1,
@@ -375,6 +396,9 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setCourseCode('');
     setCourseTitle('');
     setCourseUnits(3);
+    setCourseAccentColor('Teal');
+    setCourseCoverImageUrl('');
+    setCourseAbout('');
     setShowAddCourseModal(true);
   };
 
@@ -383,6 +407,9 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setCourseCode(course.code);
     setCourseTitle(course.title);
     setCourseUnits(typeof course.units === 'number' ? course.units : 3);
+    setCourseAccentColor(course.accentColor || 'Teal');
+    setCourseCoverImageUrl(course.coverImageUrl || '');
+    setCourseAbout(course.about || '');
     setShowAddCourseModal(true);
   };
 
@@ -403,13 +430,16 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setSavingCourse(true);
     try {
       const nowIso = new Date().toISOString();
-      const payload = {
+      const payload: Partial<CourseItem> = {
         department: selectedDept,
         level: selectedLevel,
         semester: selectedSemester,
         code: courseCode.trim().toUpperCase(),
         title: courseTitle.trim(),
         units: finalUnits,
+        accentColor: courseAccentColor,
+        coverImageUrl: courseCoverImageUrl.trim() || '',
+        about: courseAbout.trim() || '',
         updatedAt: nowIso
       };
 
@@ -427,7 +457,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
           ...payload,
           createdAt: nowIso,
           type: 'Core'
-        };
+        } as CourseItem;
         setCourses(prev => [...prev, newCourse]);
         showSaved('Saved');
       }
@@ -1471,6 +1501,67 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                 </p>
               </div>
 
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Course Accent Color (Default: Teal)
+                </label>
+                <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                  {ACCENT_COLOR_OPTIONS.map(color => {
+                    const previewTheme = getCourseAccent(color);
+                    const isSelected = courseAccentColor === color;
+                    return (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setCourseAccentColor(color)}
+                        className={`p-2 rounded-xl border flex flex-col items-center gap-1.5 transition-all cursor-pointer ${
+                          isSelected
+                            ? `${previewTheme.badgeBg} ${previewTheme.badgeBorder} shadow-sm ring-1 ring-[#FACC15]`
+                            : 'bg-[#070D1A] border-[#1E2E52] hover:border-[#24315A]'
+                        }`}
+                      >
+                        <div
+                          className="w-4 h-4 rounded-full"
+                          style={{ backgroundColor: previewTheme.stroke }}
+                        />
+                        <span className={`text-[10px] font-bold ${isSelected ? previewTheme.accentText : 'text-[#9AA8C7]'}`}>
+                          {color}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  Cover Image URL (Optional)
+                </label>
+                <input
+                  type="url"
+                  placeholder="https://example.com/course-cover.jpg (or leave empty for accent gradient)"
+                  value={courseCoverImageUrl}
+                  onChange={(e) => setCourseCoverImageUrl(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                />
+                <p className="text-[10px] text-[#9AA8C7] mt-1">
+                  Leave blank to use the accent-colour gradient cover with course code and icon.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                  About this course (Overview)
+                </label>
+                <textarea
+                  rows={3}
+                  placeholder="A clear overview describing the learning goals, prerequisites and scope of this course..."
+                  value={courseAbout}
+                  onChange={(e) => setCourseAbout(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
               <div className="flex justify-end gap-2 pt-3 border-t border-[#1E2E52]">
                 <button
                   type="button"
@@ -1852,8 +1943,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
 
               {/* Title & Timing Row */}
               <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                  <div className="sm:col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-6 gap-3">
+                  <div className="sm:col-span-3">
                     <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
                       Topic Title *
                     </label>
@@ -1865,6 +1956,21 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                       placeholder="e.g. Overview of Operating Systems"
                       className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                     />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                      Level
+                    </label>
+                    <select
+                      value={lessonLevelTag}
+                      onChange={e => setLessonLevelTag(e.target.value as any)}
+                      className="w-full px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs font-semibold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    >
+                      <option value="Beginner">Beginner</option>
+                      <option value="Intermediate">Intermediate</option>
+                      <option value="Advanced">Advanced</option>
+                    </select>
                   </div>
 
                   <div>
@@ -1887,7 +1993,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
 
                   <div>
                     <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
-                      Syllabus Order
+                      Order
                     </label>
                     <input
                       type="number"
@@ -1897,6 +2003,37 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                       className="w-full px-2.5 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-center font-bold text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                     />
                   </div>
+                </div>
+
+                {/* What you'll learn */}
+                <div className="pt-2 border-t border-[#1E2E52]">
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    What You'll Learn (Enter one key takeaway / outcome per line)
+                  </label>
+                  <textarea
+                    rows={3}
+                    placeholder={`Understand the difference between processes and threads\nLearn how CPU scheduling algorithms prioritize tasks\nAnalyze race conditions and synchronization primitives`}
+                    value={lessonWhatYoullLearnText}
+                    onChange={e => setLessonWhatYoullLearnText(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  />
+                  <p className="text-[10px] text-[#9AA8C7] mt-1">
+                    Displayed at the top of the lesson as a helpful learning roadmap.
+                  </p>
+                </div>
+
+                {/* Before you begin */}
+                <div className="pt-2 border-t border-[#1E2E52]">
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1">
+                    Before You Begin (Prerequisites or setup notes, optional)
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="e.g. Ensure you have reviewed Chapter 1 on binary representations, or have a notepad ready for algorithm traces."
+                    value={lessonBeforeYouBegin}
+                    onChange={e => setLessonBeforeYouBegin(e.target.value)}
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  />
                 </div>
 
                 {/* Video URL with Live Preview */}
@@ -1930,48 +2067,79 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Optional Notes PDF Document Link */}
+                <div className="pt-2 border-t border-[#1E2E52]">
+                  <label className="block text-[11px] font-semibold text-[#9AA8C7] mb-1 flex items-center justify-between">
+                    <span className="flex items-center gap-1.5">
+                      <FileText className="w-3.5 h-3.5 text-teal-400" />
+                      <span>Topic Notes PDF (Optional Google Drive link or PDF URL)</span>
+                    </span>
+                    {lessonNotesPdfUrl && (
+                      <span className="text-[10px] text-teal-400 font-semibold">PDF Document Linked</span>
+                    )}
+                  </label>
+                  <input
+                    type="url"
+                    value={lessonNotesPdfUrl}
+                    onChange={e => setLessonNotesPdfUrl(e.target.value)}
+                    placeholder="https://drive.google.com/file/d/... or PDF handout URL"
+                    className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                  />
+                  <p className="text-[10px] text-[#9AA8C7] mt-1">
+                    When provided, students see an in-app PDF viewer with Zoom, Open and Download buttons alongside or instead of typed notes.
+                  </p>
+                </div>
               </div>
 
-              {/* Lesson Notes with Formatting Toolbar and Live Preview */}
+              {/* Lesson Notes with Formatting Toolbar (Heading, Bold, Bullet list, Numbered list, Callout) and Live Preview */}
               <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-2.5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <span className="text-[10px] uppercase font-bold text-[#FFC700] tracking-wider block">
-                    Lesson Notes (Text with Section Headings &amp; Bullets)
+                    Lesson Notes (Formatted Markdown with Callouts &amp; Tables)
                   </span>
 
                   {/* Formatting Toolbar */}
                   <div className="flex items-center gap-1 flex-wrap">
                     <button
                       type="button"
-                      onClick={() => insertFormatting('# Section Heading')}
+                      onClick={() => insertFormatting('## Section Heading')}
                       className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
-                      title="Add Level 1 Heading"
+                      title="Add Heading"
                     >
-                      # H1
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => insertFormatting('## Subheading')}
-                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
-                      title="Add Level 2 Heading"
-                    >
-                      ## H2
+                      Heading
                     </button>
                     <button
                       type="button"
                       onClick={() => insertFormatting('**bold text**')}
                       className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
-                      title="Bold text"
+                      title="Add Bold text"
                     >
-                      **B**
+                      Bold
                     </button>
                     <button
                       type="button"
-                      onClick={() => insertFormatting('• Key concept')}
+                      onClick={() => insertFormatting('• Key takeaway point')}
                       className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
-                      title="Bullet point"
+                      title="Add Bullet point"
                     >
-                      • List
+                      Bullet List
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('1. First sequential step\n2. Second sequential step')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-[#1E2E52] text-[10px] text-[#E6ECFA] font-bold cursor-pointer"
+                      title="Add Numbered list"
+                    >
+                      Numbered List
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => insertFormatting('> Tip: Remember to review this principle before practicals.')}
+                      className="px-2 py-0.5 rounded bg-[#0F1E36] hover:bg-[#1A2E63] border border-teal-500/40 text-[10px] text-teal-300 font-bold cursor-pointer"
+                      title="Add Callout (> Tip: / > Note: / > Remember:)"
+                    >
+                      Callout
                     </button>
 
                     <div className="h-4 w-[1px] bg-[#24315A] mx-1" />
@@ -2007,51 +2175,19 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
 
                 {!lessonLivePreview ? (
                   <textarea
-                    rows={10}
+                    rows={11}
                     value={lessonNotes}
                     onChange={e => setLessonNotes(e.target.value)}
-                    placeholder={`# 1. Introduction to the Topic\nWrite the overview of the topic here...\n\n## Core Principles\n• Point one explaining the mechanism\n• Point two covering real-world applications\n\n# 2. Key Architecture & Diagrams\nDetails about system design and workflow...`}
-                    className="w-full p-3 rounded-xl bg-[#0F1E36] border border-[#1E2E52] font-mono text-xs text-[#E6ECFA] leading-relaxed placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
+                    placeholder={`## 1. Overview of System Architecture\nThis topic covers foundational computer architecture principles...\n\n> Tip: Make sure to understand the distinction between CPU registers and primary memory.\n\n## Core Components\n• Arithmetic Logic Unit (ALU)\n• Control Unit (CU)\n• System Buses\n\n> Note: Memory access latency is significantly higher than cache hits.\n\n1. Fetch instruction from memory\n2. Decode instruction\n3. Execute operation`}
+                    className="w-full p-3.5 rounded-xl bg-[#0F1E36] border border-[#1E2E52] font-mono text-xs text-[#E6ECFA] leading-relaxed placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
                   />
                 ) : (
-                  <div className="p-4 rounded-xl bg-[#0F1E36] border border-[#1E2E52] min-h-[200px] max-h-72 overflow-y-auto space-y-3">
-                    {!lessonNotes.trim() ? (
-                      <p className="text-xs text-[#9AA8C7] italic">No notes entered yet. Type notes above or use the formatting buttons.</p>
-                    ) : (
-                      lessonNotes.split('\n').map((line, idx) => {
-                        const trimmed = line.trim();
-                        if (trimmed.startsWith('# ')) {
-                          return (
-                            <h3 key={idx} className="font-heading font-extrabold text-sm text-[#FFC700] pt-2 pb-1 border-b border-[#24315A]/60">
-                              {trimmed.replace(/^#\s+/, '')}
-                            </h3>
-                          );
-                        }
-                        if (trimmed.startsWith('## ')) {
-                          return (
-                            <h4 key={idx} className="font-heading font-bold text-xs text-[#60A5FA] pt-1.5">
-                              {trimmed.replace(/^##\s+/, '')}
-                            </h4>
-                          );
-                        }
-                        if (trimmed.startsWith('• ') || trimmed.startsWith('- ') || trimmed.startsWith('* ')) {
-                          return (
-                            <div key={idx} className="flex items-start gap-2 pl-2 text-xs text-[#E6ECFA]">
-                              <span className="text-[#FFC700] font-bold">•</span>
-                              <span>{trimmed.replace(/^[•\-\*]\s+/, '')}</span>
-                            </div>
-                          );
-                        }
-                        if (!trimmed) {
-                          return <div key={idx} className="h-1.5" />;
-                        }
-                        return (
-                          <p key={idx} className="text-xs text-[#E6ECFA] leading-relaxed">
-                            {trimmed}
-                          </p>
-                        );
-                      })
-                    )}
+                  <div className="p-5 rounded-xl bg-[#111A2E] border border-[#1E2E52] min-h-[220px] max-h-80 overflow-y-auto">
+                    <FormattedLessonNotes
+                      notes={lessonNotes || ''}
+                      theme={getCourseAccent(currentManagingCourse?.accentColor)}
+                      fontSize={16}
+                    />
                   </div>
                 )}
               </div>

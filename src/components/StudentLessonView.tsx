@@ -3,11 +3,15 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useMemo, useEffect, useRef } from 'react';
-import { CourseItem, TopicItem, QuizItem, BookmarkItem } from '../types';
+import React, { useMemo, useEffect, useRef, useState } from 'react';
+import { CourseItem, TopicItem, QuizItem, QuizAttempt } from '../types';
 import { getYouTubeEmbedUrl } from '../data/coursesAndTimetables';
 import { useAuth } from '../context/AuthContext';
 import { logStudentActivity } from '../lib/studentActivity';
+import { getCourseAccent } from '../config/courseAccents';
+import { FormattedLessonNotes } from './FormattedLessonNotes';
+import { LessonPdfViewer } from './LessonPdfViewer';
+import { StudentQuizzesView } from './StudentQuizzesView';
 import {
   ArrowLeft,
   ChevronRight,
@@ -21,9 +25,10 @@ import {
   BookOpen,
   Lightbulb,
   Play,
-  RotateCcw,
   Layers,
-  ArrowRight
+  ArrowRight,
+  FileText,
+  Type
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 
@@ -41,93 +46,11 @@ interface StudentLessonViewProps {
   isBookmarked: (type: 'course' | 'topic' | 'material' | 'announcement', id: string) => boolean;
   toggleBookmark: (item: any) => void;
   linkedQuiz?: QuizItem | null;
+  // All quizzes available in this department / course to discover any quizzes linked to this topic
+  allQuizzes?: QuizItem[];
+  // Student's existing quiz attempts map
+  attemptsMap?: Record<string, QuizAttempt>;
 }
-
-/**
- * Clean renderer for lesson notes with numbered headings, bold styling, and bullet points
- */
-const LessonNotesRenderer: React.FC<{ notes: string }> = ({ notes }) => {
-  const blocks = useMemo(() => {
-    if (!notes || !notes.trim()) return [];
-    return notes.split(/\n\s*\n+/).map(b => b.trim()).filter(Boolean);
-  }, [notes]);
-
-  if (blocks.length === 0) {
-    return (
-      <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] italic">
-        Detailed lesson notes for this syllabus topic will be uploaded soon.
-      </div>
-    );
-  }
-
-  // Helper to render bold markup **text** safely
-  const renderFormattedInline = (text: string) => {
-    const parts = text.split(/(\*\*.*?\*\*)/g);
-    return parts.map((part, i) => {
-      if (part.startsWith('**') && part.endsWith('**') && part.length >= 4) {
-        return (
-          <strong key={i} className="text-[#E6ECFA] font-bold">
-            {part.slice(2, -2)}
-          </strong>
-        );
-      }
-      return part;
-    });
-  };
-
-  return (
-    <div className="space-y-4 text-xs sm:text-sm text-[#CDD7EC] leading-relaxed">
-      {blocks.map((block, idx) => {
-        const lines = block.split('\n').map(l => l.trim()).filter(Boolean);
-
-        // Check if block is a heading (e.g. "# Heading", "## Heading", "1. Title", "Section 1:")
-        const isHeading =
-          /^(?:#+\s*|\d+[\.\)]\s+|Section\s+\d+[\:\.\-]\s*)/i.test(lines[0]) &&
-          lines.length === 1;
-
-        if (isHeading) {
-          const cleanHeading = lines[0].replace(/^#+\s*/, '');
-          return (
-            <div key={idx} className="pt-2 border-b border-[#24315A]/70 pb-1.5">
-              <h3 className="font-heading font-extrabold text-sm sm:text-base text-[#FFC700] tracking-wide flex items-center gap-2">
-                <span className="w-1.5 h-3.5 bg-[#2F52FF] rounded-full inline-block" />
-                <span>{cleanHeading}</span>
-              </h3>
-            </div>
-          );
-        }
-
-        // Check if block is a bullet list
-        const isBulletList = lines.every(l => /^[-*•]\s+/.test(l));
-        if (isBulletList) {
-          return (
-            <ul key={idx} className="space-y-1.5 pl-4 sm:pl-5 list-disc marker:text-[#FFC700]">
-              {lines.map((line, lineIdx) => {
-                const cleaned = line.replace(/^[-*•]\s+/, '');
-                return (
-                  <li key={lineIdx} className="pl-1">
-                    {renderFormattedInline(cleaned)}
-                  </li>
-                );
-              })}
-            </ul>
-          );
-        }
-
-        // Standard paragraph
-        return (
-          <div key={idx} className="space-y-1.5">
-            {lines.map((line, lIdx) => (
-              <p key={lIdx}>
-                {renderFormattedInline(line)}
-              </p>
-            ))}
-          </div>
-        );
-      })}
-    </div>
-  );
-};
 
 export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   course,
@@ -142,10 +65,102 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   onAskAiWithContext,
   isBookmarked,
   toggleBookmark,
-  linkedQuiz
-}: StudentLessonViewProps) => {
+  linkedQuiz,
+  allQuizzes = [],
+  attemptsMap = {}
+}) => {
   const { user, profile } = useAuth();
   const loggedTopicRef = useRef<string | null>(null);
+
+  // Course accent theme (palette: Teal, Emerald, Indigo, Sky, Amber, Rose)
+  const theme = useMemo(() => getCourseAccent(course.accentColor), [course.accentColor]);
+
+  // Persistent Font Size: 17px default, range 15 to 22
+  const [fontSize, setFontSize] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('sot_study_font_size');
+      if (saved) {
+        const parsed = parseInt(saved, 10);
+        if (!isNaN(parsed) && parsed >= 15 && parsed <= 24) return parsed;
+      }
+    } catch {}
+    return 18;
+  });
+
+  const handleIncreaseFont = () => {
+    setFontSize(prev => {
+      const next = Math.min(23, prev + 1);
+      try {
+        localStorage.setItem('sot_study_font_size', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const handleDecreaseFont = () => {
+    setFontSize(prev => {
+      const next = Math.max(15, prev - 1);
+      try {
+        localStorage.setItem('sot_study_font_size', String(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  // Active in-place topic quiz session
+  const [activeTopicQuizId, setActiveTopicQuizId] = useState<string | null>(null);
+
+  // Discover all quizzes linked to this topic
+  const topicQuizzes = useMemo(() => {
+    const list: QuizItem[] = [];
+    // 1. Check allQuizzes for quizzes scoped/linked to this topic
+    allQuizzes.forEach(q => {
+      const isTopicMatch =
+        (q.scope === 'topic' && q.topicId === topic.id) ||
+        (q.topicId === topic.id) ||
+        (topic.linkedQuizId === q.id);
+      if (isTopicMatch && !list.some(existing => existing.id === q.id)) {
+        list.push(q);
+      }
+    });
+
+    // 2. Also include linkedQuiz prop if not already in list
+    if (linkedQuiz && !list.some(existing => existing.id === linkedQuiz.id)) {
+      list.push(linkedQuiz);
+    }
+
+    return list;
+  }, [allQuizzes, topic.id, topic.linkedQuizId, linkedQuiz]);
+
+  // Check if student has passed any topic quiz
+  const hasPassedAnyTopicQuiz = useMemo(() => {
+    return topicQuizzes.some(q => {
+      const att = attemptsMap[q.id];
+      if (!att) return false;
+      const passReq = q.passingScore || 70;
+      const pct = att.percentage ?? (att.total ? Math.round((att.score / att.total) * 100) : 0);
+      return pct >= passReq || att.passed;
+    });
+  }, [topicQuizzes, attemptsMap]);
+
+  // Content Tabs if both typed notes and a PDF exist: 'notes' | 'pdf'
+  const hasNotes = Boolean(topic.notes && topic.notes.trim());
+  const hasPdf = Boolean(topic.notesPdfUrl && topic.notesPdfUrl.trim());
+
+  const [activeContentTab, setActiveContentTab] = useState<'notes' | 'pdf'>(() => {
+    if (!hasNotes && hasPdf) return 'pdf';
+    return 'notes';
+  });
+
+  // Reset tab when topic changes
+  useEffect(() => {
+    if (!hasNotes && hasPdf) {
+      setActiveContentTab('pdf');
+    } else {
+      setActiveContentTab('notes');
+    }
+    setActiveTopicQuizId(null);
+  }, [topic.id, hasNotes, hasPdf]);
 
   // Log "lesson opened" event strictly once per topic visit
   useEffect(() => {
@@ -186,36 +201,95 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   const currentStep = currentIndex >= 0 ? currentIndex + 1 : 1;
   const progressPercent = Math.round((currentStep / totalTopics) * 100);
 
-  // Next topic in syllabus
+  // Next and Previous topics
   const nextTopic = currentIndex >= 0 && currentIndex + 1 < sortedTopics.length
     ? sortedTopics[currentIndex + 1]
     : null;
-
-  // Previous topic
   const prevTopic = currentIndex > 0 ? sortedTopics[currentIndex - 1] : null;
 
   // Video embed url
   const ytEmbedUrl = topic.videoUrl ? getYouTubeEmbedUrl(topic.videoUrl) : null;
   const hasVideo = Boolean(topic.videoUrl && topic.videoUrl.trim());
-
   const topicBookmarked = isBookmarked('topic', topic.id);
 
+  // If in-place quiz is active, render StudentQuizzesView right inside this topic flow!
+  if (activeTopicQuizId) {
+    return (
+      <div className="space-y-4">
+        {/* Back arrow returns to topic */}
+        <div className="p-3.5 rounded-2xl bg-[#111A2E] border border-[#24315A] flex items-center justify-between">
+          <button
+            onClick={() => setActiveTopicQuizId(null)}
+            className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:underline cursor-pointer"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            <span>Back to Topic: {topic.title}</span>
+          </button>
+          <span className="text-[11px] text-[#9FB0C8]">
+            {course.code} • Topic Quiz Flow
+          </span>
+        </div>
+
+        <StudentQuizzesView
+          studentDepartment={course.department || profile?.department || ''}
+          studentLevel={course.level || profile?.level || 'ND1'}
+          studentName={profile?.fullName || user?.displayName || 'Student'}
+          matricNumber={profile?.matricNumber || ''}
+          uid={user?.uid || ''}
+          initialQuizId={activeTopicQuizId}
+          topicTitle={topic.title}
+          onBackToTopic={() => setActiveTopicQuizId(null)}
+          onTopicCompleted={() => {
+            if (!isCompleted) {
+              onToggleComplete(topic.id);
+            }
+          }}
+          isBookmarked={(type, id) => isBookmarked(type as any, id)}
+          toggleBookmark={async (item) => { toggleBookmark(item); }}
+        />
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-4 pb-8">
-      {/* 1. BREADCRUMB & BACK NAVIGATION */}
-      <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3 shadow-sm">
+    <div className="space-y-6 pb-12">
+      {/* ========================================================= */}
+      {/* 1. BREADCRUMB & BACK NAVIGATION                           */}
+      {/* ========================================================= */}
+      <div className="p-3.5 rounded-2xl bg-[#111A2E] border border-[#24315A] space-y-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           {/* Back button */}
           <button
             onClick={onBackToCourse}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:text-[#ffd633] transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer"
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span>Back to {course.code}</span>
           </button>
 
-          {/* Quick bookmark & Share */}
-          <div className="flex items-center gap-1.5">
+          {/* Controls: A- / A+ Font Size & Quick Bookmark & Share */}
+          <div className="flex items-center gap-2">
+            {/* Font size adjustment */}
+            <div className="flex items-center bg-[#0B1220] border border-[#24315A] rounded-xl px-1 py-0.5 text-xs">
+              <button
+                onClick={handleDecreaseFont}
+                className="px-2 py-1 text-[#9FB0C8] hover:text-[#FFFFFF] cursor-pointer font-bold transition-colors"
+                title="Decrease reading text size"
+              >
+                A-
+              </button>
+              <span className="px-1 text-[11px] font-mono text-[#FACC15] select-none">
+                {fontSize}px
+              </span>
+              <button
+                onClick={handleIncreaseFont}
+                className="px-2 py-1 text-[#9FB0C8] hover:text-[#FFFFFF] cursor-pointer font-bold transition-colors"
+                title="Increase reading text size"
+              >
+                A+
+              </button>
+            </div>
+
             <ShareButton
               title={`${course.code}: ${topic.title}`}
               itemType="topic"
@@ -234,8 +308,8 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
               })}
               className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                 topicBookmarked
-                  ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
-                  : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
+                  ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                  : 'bg-[#0B1220] text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
               }`}
               title={topicBookmarked ? 'Remove bookmark' : 'Bookmark topic'}
             >
@@ -245,57 +319,43 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
         </div>
 
         {/* Breadcrumb path: Courses > Course > Topic */}
-        <div className="flex items-center gap-1.5 text-[11px] text-[#9AA8C7] truncate">
+        <div className="flex items-center gap-1.5 text-[11px] text-[#9FB0C8] truncate">
           <button
             onClick={onBackToCourses}
-            className="hover:text-[#E6ECFA] hover:underline cursor-pointer truncate"
+            className="hover:text-[#E8EEF8] hover:underline cursor-pointer truncate"
           >
             Courses
           </button>
-          <ChevronRight className="w-3 h-3 text-[#9AA8C7]/60 shrink-0" />
+          <ChevronRight className="w-3 h-3 text-[#9FB0C8]/60 shrink-0" />
           <button
             onClick={onBackToCourse}
-            className="text-[#60A5FA] font-semibold hover:underline cursor-pointer truncate"
+            className={`${theme.accentText} font-semibold hover:underline cursor-pointer truncate`}
           >
             {course.code}
           </button>
-          <ChevronRight className="w-3 h-3 text-[#9AA8C7]/60 shrink-0" />
-          <span className="text-[#E6ECFA] font-bold truncate">
+          <ChevronRight className="w-3 h-3 text-[#9FB0C8]/60 shrink-0" />
+          <span className="text-[#E8EEF8] font-bold truncate">
             {topic.title}
           </span>
         </div>
-
-        {/* Progress bar ("Topic 2 of 6") */}
-        <div className="space-y-1.5 pt-1 border-t border-[#24315A]/60">
-          <div className="flex items-center justify-between text-[11px]">
-            <span className="text-[#FFC700] font-bold">
-              Topic {currentStep} of {totalTopics}
-            </span>
-            <span className="text-[#9AA8C7]">
-              {progressPercent}% of syllabus
-            </span>
-          </div>
-          <div className="w-full h-1.5 rounded-full bg-[#0A1224] overflow-hidden border border-[#24315A]/60">
-            <div
-              className="h-full rounded-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-300"
-              style={{ width: `${Math.max(progressPercent, 4)}%` }}
-            />
-          </div>
-        </div>
       </div>
 
-      {/* 2. TOPIC TITLE & ACTION HEADER */}
-      <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3.5 shadow-sm">
+      {/* ========================================================= */}
+      {/* 2. TOPIC TITLE & PROGRESS BAR                             */}
+      {/* ========================================================= */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-[#111A2E] border border-[#24315A] space-y-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="px-2 py-0.5 rounded bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-[10px] font-bold">
+            <span className={`px-2.5 py-0.5 rounded-md ${theme.badgeBg} ${theme.badgeText} border ${theme.badgeBorder} text-xs font-bold`}>
               {course.code}
             </span>
-            <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#FFC700] border border-[#24315A] text-[10px] font-bold">
-              {course.units ?? 3} {course.units === 1 ? 'Unit' : 'Units'}
-            </span>
-            <span className="flex items-center gap-1 text-[11px] text-[#9AA8C7]">
-              <Clock className="w-3.5 h-3.5 text-[#FFC700]" />
+            {topic.levelTag && (
+              <span className="px-2 py-0.5 rounded-md bg-[#2F52FF]/20 text-[#60A5FA] border border-[#2F52FF]/40 text-xs font-bold">
+                {topic.levelTag}
+              </span>
+            )}
+            <span className="flex items-center gap-1 text-xs text-[#9FB0C8]">
+              <Clock className="w-3.5 h-3.5 text-[#FACC15]" />
               <span>{topic.estimatedMinutes || 15} mins read</span>
             </span>
           </div>
@@ -308,43 +368,88 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
           )}
         </div>
 
-        <h1 className="font-heading font-extrabold text-base sm:text-xl text-[#E6ECFA] leading-snug">
+        <h1 className="font-heading font-black text-xl sm:text-2xl text-[#FFFFFF] leading-snug">
           {topic.title}
         </h1>
 
-        {/* "Ask AI about this topic" Primary Action */}
-        <div className="pt-2 flex flex-wrap items-center gap-2">
+        {/* Progress bar ("Topic 2 of 6") */}
+        <div className="space-y-1.5 pt-2 border-t border-[#24315A]/60">
+          <div className="flex items-center justify-between text-xs">
+            <span className={`font-bold ${theme.accentText}`}>
+              Topic {currentStep} of {totalTopics}
+            </span>
+            <span className="text-[#9FB0C8]">
+              {progressPercent}% of syllabus
+            </span>
+          </div>
+          <div className="w-full h-2 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/60">
+            <div
+              className={`h-full rounded-full bg-gradient-to-r ${theme.progressGradient} transition-all duration-300`}
+              style={{ width: `${Math.max(progressPercent, 4)}%` }}
+            />
+          </div>
+        </div>
+
+        {/* Ask AI quick action */}
+        <div className="pt-1 flex flex-wrap items-center gap-2">
           <button
             onClick={() => onAskAiWithContext(topic, course)}
             className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-[#2F52FF] to-[#1E3A8A] hover:from-[#2545df] hover:to-[#172554] text-white text-xs font-bold shadow-[0_0_15px_rgba(47,82,255,0.35)] flex items-center gap-2 cursor-pointer transition-all border border-[#60A5FA]/30"
           >
-            <Sparkles className="w-3.5 h-3.5 text-[#FFC700]" />
+            <Sparkles className="w-3.5 h-3.5 text-[#FACC15]" />
             <span>Ask AI about this topic</span>
-          </button>
-
-          <button
-            onClick={handleToggleCompleteWrapper}
-            className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-              isCompleted
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/30'
-                : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#FFC700]'
-            }`}
-          >
-            <CheckCircle2 className={`w-3.5 h-3.5 ${isCompleted ? 'text-emerald-400' : 'text-[#9AA8C7]'}`} />
-            <span>{isCompleted ? 'Marked Complete' : 'Mark as complete'}</span>
           </button>
         </div>
       </div>
 
-      {/* 3. VIDEO SECTION (YOUTUBE EMBED OR DIRECT VIDEO) */}
+      {/* What You'll Learn Box */}
+      {topic.whatYoullLearn && topic.whatYoullLearn.length > 0 && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-[#111A2E] border border-[#24315A] space-y-3 shadow-sm">
+          <div className="flex items-center gap-2">
+            <div className={`w-7 h-7 rounded-xl ${theme.badgeBg} ${theme.accentText} border ${theme.badgeBorder} flex items-center justify-center`}>
+              <CheckCircle2 className="w-4 h-4" />
+            </div>
+            <h3 className="font-heading font-bold text-sm text-[#E8EEF8]">
+              What you&apos;ll learn
+            </h3>
+          </div>
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+            {topic.whatYoullLearn.map((item, idx) => (
+              <li key={idx} className="flex items-start gap-2.5 text-xs text-[#E8EEF8] leading-relaxed">
+                <span className={`w-1.5 h-1.5 rounded-full ${theme.accentBg} mt-1.5 shrink-0`} />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Before You Begin Box */}
+      {topic.beforeYouBegin && topic.beforeYouBegin.trim() && (
+        <div className="p-4 sm:p-5 rounded-2xl bg-[#16223A] border border-[#FACC15]/40 space-y-2 shadow-sm">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-[#FACC15] shrink-0" />
+            <h4 className="font-heading font-bold text-xs uppercase tracking-wider text-[#FACC15]">
+              Before you begin
+            </h4>
+          </div>
+          <p className="text-xs sm:text-[13px] text-[#E8EEF8] leading-relaxed pl-6">
+            {topic.beforeYouBegin}
+          </p>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* 3. VIDEO SECTION (IF ANY)                                 */}
+      {/* ========================================================= */}
       {hasVideo && (
-        <div className="rounded-2xl bg-[#121C36] border border-[#24315A] overflow-hidden shadow-sm">
-          <div className="p-3.5 bg-[#0A1224] border-b border-[#24315A] flex items-center justify-between">
+        <div className="rounded-2xl bg-[#111A2E] border border-[#24315A] overflow-hidden shadow-sm">
+          <div className="p-3.5 bg-[#0B1220] border-b border-[#24315A] flex items-center justify-between">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded bg-rose-500/20 text-rose-400 flex items-center justify-center">
                 <Play className="w-3.5 h-3.5 fill-current" />
               </div>
-              <span className="font-heading font-bold text-xs text-[#E6ECFA]">
+              <span className="font-heading font-bold text-xs text-[#E8EEF8]">
                 Video Tutorial &amp; Lecture
               </span>
             </div>
@@ -372,12 +477,12 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
               />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-2">
-                <Play className="w-8 h-8 text-[#FFC700]" />
+                <Play className="w-8 h-8 text-[#FACC15]" />
                 <a
                   href={topic.videoUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="px-4 py-2 rounded-xl bg-[#2F52FF] text-white text-xs font-bold hover:bg-[#2545df] transition-colors"
+                  className={`px-4 py-2 rounded-xl ${theme.buttonBg} text-white text-xs font-bold transition-colors`}
                 >
                   Watch Lecture Video
                 </a>
@@ -387,149 +492,266 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
         </div>
       )}
 
-      {/* 4. TOPIC NOTES & SECTION HEADINGS */}
-      <div className="p-4 sm:p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 shadow-sm">
-        <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
-          <div className="flex items-center gap-2">
-            <BookOpen className="w-4 h-4 text-[#FFC700]" />
-            <h2 className="font-heading font-extrabold text-sm sm:text-base text-[#E6ECFA]">
-              Lesson Notes &amp; Syllabus Study
-            </h2>
+      {/* ========================================================= */}
+      {/* 4. NOTES OR PDF (WITH TABS IF BOTH EXIST)                  */}
+      {/* ========================================================= */}
+      <div className="space-y-3">
+        {/* If both typed notes and a PDF exist, show two tabs */}
+        {hasNotes && hasPdf && (
+          <div className="flex items-center gap-2 p-1.5 rounded-2xl bg-[#111A2E] border border-[#24315A] w-fit">
+            <button
+              onClick={() => setActiveContentTab('notes')}
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                activeContentTab === 'notes'
+                  ? `${theme.buttonBg} text-white shadow-sm`
+                  : 'text-[#9FB0C8] hover:text-[#E8EEF8]'
+              }`}
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              <span>Study Notes</span>
+            </button>
+            <button
+              onClick={() => setActiveContentTab('pdf')}
+              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                activeContentTab === 'pdf'
+                  ? `${theme.buttonBg} text-white shadow-sm`
+                  : 'text-[#9FB0C8] hover:text-[#E8EEF8]'
+              }`}
+            >
+              <FileText className="w-3.5 h-3.5" />
+              <span>Notes PDF</span>
+            </button>
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-[#0A1224] border border-[#24315A] text-[#9AA8C7]">
-            Official Handout
-          </span>
-        </div>
+        )}
 
-        <LessonNotesRenderer notes={topic.notes || ''} />
+        {/* View 4A: Typed Notes */}
+        {((activeContentTab === 'notes' && hasNotes) || (!hasPdf && hasNotes) || (!hasNotes && !hasPdf)) && (
+          <div className="p-6 sm:p-8 rounded-2xl bg-[#111A2E] border border-[#24315A] shadow-sm">
+            <FormattedLessonNotes
+              notes={topic.notes || ''}
+              theme={theme}
+              fontSize={fontSize}
+            />
+          </div>
+        )}
+
+        {/* View 4B: In-App PDF Viewer */}
+        {((activeContentTab === 'pdf' && hasPdf) || (!hasNotes && hasPdf)) && topic.notesPdfUrl && (
+          <LessonPdfViewer
+            pdfUrl={topic.notesPdfUrl}
+            topicTitle={topic.title}
+          />
+        )}
       </div>
 
-      {/* 5. HIGHLIGHTED SUMMARY BOX */}
+      {/* ========================================================= */}
+      {/* 5. SUMMARY BOX / KEY TAKEAWAYS                            */}
+      {/* ========================================================= */}
       {topic.summary && topic.summary.trim() && (
-        <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-[#121C36] to-[#0A1224] border-2 border-[#FFC700]/50 shadow-[0_0_20px_rgba(255,199,0,0.12)] space-y-2.5">
-          <div className="flex items-center gap-2 text-[#FFC700]">
+        <div className="p-5 sm:p-6 rounded-2xl bg-[#16223A] border-2 border-[#FACC15]/60 shadow-[0_0_20px_rgba(250,204,21,0.12)] space-y-2.5 max-w-[760px] mx-auto">
+          <div className="flex items-center gap-2 text-[#FACC15]">
             <Lightbulb className="w-5 h-5 shrink-0" />
-            <h3 className="font-heading font-extrabold text-sm text-[#FFC700] uppercase tracking-wider">
+            <h3 className="font-heading font-extrabold text-sm text-[#FACC15] uppercase tracking-wider">
               Topic Summary &amp; Key Takeaways
             </h3>
           </div>
-          <p className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap pl-1">
+          <p className="text-xs sm:text-sm text-[#E8EEF8] leading-relaxed whitespace-pre-wrap pl-1">
             {topic.summary}
           </p>
         </div>
       )}
 
-      {/* 6. FURTHER READING LIST */}
+      {/* ========================================================= */}
+      {/* 6. FURTHER READING LIST                                   */}
+      {/* ========================================================= */}
       {topic.furtherReading && topic.furtherReading.length > 0 && (
-        <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-3 shadow-sm">
+        <div className="p-5 rounded-2xl bg-[#111A2E] border border-[#24315A] space-y-3.5 max-w-[760px] mx-auto shadow-sm">
           <div className="flex items-center gap-2">
             <ExternalLink className="w-4 h-4 text-[#60A5FA]" />
-            <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">
+            <h3 className="font-heading font-bold text-sm text-[#E8EEF8]">
               Further Reading &amp; External References
             </h3>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {topic.furtherReading.map((item, idx) => (
               <a
                 key={idx}
                 href={item.url}
                 target="_blank"
                 rel="noreferrer"
-                className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] text-left transition-all cursor-pointer group flex items-center justify-between gap-2"
+                className="p-3.5 rounded-xl bg-[#0B1220] border border-[#24315A] hover:border-teal-500 text-left transition-all cursor-pointer group flex items-center justify-between gap-2"
               >
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-[#E6ECFA] group-hover:text-white truncate">
+                  <p className="text-xs font-semibold text-[#E8EEF8] group-hover:text-white truncate">
                     {item.title || item.url}
                   </p>
-                  <p className="text-[10px] text-[#9AA8C7] truncate">
+                  <p className="text-[10px] text-[#9FB0C8] truncate">
                     {item.url}
                   </p>
                 </div>
-                <ExternalLink className="w-3.5 h-3.5 text-[#9AA8C7] group-hover:text-[#60A5FA] shrink-0" />
+                <ExternalLink className="w-3.5 h-3.5 text-[#9FB0C8] group-hover:text-teal-400 shrink-0" />
               </a>
             ))}
           </div>
         </div>
       )}
 
-      {/* 7. "FINISHED THIS TOPIC?" CARD */}
-      <div className="p-5 rounded-2xl bg-[#0F1C38] border-2 border-[#2F52FF]/60 shadow-[0_0_25px_rgba(47,82,255,0.2)] space-y-3.5">
+      {/* ========================================================= */}
+      {/* 7. TOPIC QUIZ SECTION                                     */}
+      {/* ========================================================= */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-[#16223A] border-2 border-teal-500/50 shadow-md space-y-4 max-w-[760px] mx-auto">
         <div className="flex items-start justify-between gap-3">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-teal-400 animate-pulse" />
+              <h3 className="font-heading font-black text-base sm:text-lg text-[#FFFFFF]">
+                Topic Quiz
+              </h3>
+            </div>
+            <p className="text-xs text-[#9FB0C8]">
+              {topicQuizzes.length > 0
+                ? `Test your mastery of this syllabus topic. Quizzes open right here in the topic.`
+                : `No specific quiz is linked to this topic yet. You can mark this topic complete below.`}
+            </p>
+          </div>
+        </div>
+
+        {topicQuizzes.length > 0 ? (
+          <div className="space-y-3 pt-1">
+            {topicQuizzes.map(quiz => {
+              const attempt = attemptsMap[quiz.id];
+              const hasTaken = Boolean(attempt);
+              const maxAttempts = quiz.attemptsAllowed || 0;
+              const usedAttempts = attempt?.attempts || 0;
+              const attemptsLeft = maxAttempts > 0 ? Math.max(0, maxAttempts - usedAttempts) : 'Unlimited';
+              const passReq = quiz.passingScore || 70;
+              const isPassed = hasTaken && (
+                attempt.passed ||
+                ((attempt.bestScore / (attempt.total || 1)) >= (passReq / 100))
+              );
+
+              return (
+                <div
+                  key={quiz.id}
+                  className="p-4 rounded-xl bg-[#0B1220] border border-[#24315A] hover:border-teal-500/60 transition-all space-y-3"
+                >
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <h4 className="font-heading font-bold text-sm text-[#E8EEF8]">
+                        {quiz.title}
+                      </h4>
+                      <div className="flex flex-wrap items-center gap-2.5 mt-1 text-[11px] text-[#9FB0C8]">
+                        <span>{quiz.questionCount || quiz.questions?.length || 0} questions</span>
+                        <span>•</span>
+                        <span>{quiz.timeLimit ? `${quiz.timeLimit} mins` : 'Untimed'}</span>
+                        <span>•</span>
+                        <span>Passing: {passReq}%</span>
+                        <span>•</span>
+                        <span>Attempts left: <strong className="text-[#E8EEF8]">{attemptsLeft}</strong></span>
+                      </div>
+                    </div>
+
+                    {hasTaken && (
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full self-start sm:self-auto ${
+                        isPassed
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40'
+                          : 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                      }`}>
+                        Best: {attempt.bestScore}/{attempt.total} ({attempt.percentage || 0}%)
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="pt-2 border-t border-[#24315A]/60 flex items-center justify-between">
+                    <span className="text-[11px] text-[#9FB0C8]">
+                      {isPassed
+                        ? '✓ Topic quiz passed!'
+                        : hasTaken
+                        ? 'Try again to improve your score'
+                        : 'Practice test for this syllabus topic'}
+                    </span>
+
+                    <button
+                      onClick={() => setActiveTopicQuizId(quiz.id)}
+                      className={`px-4 py-2 rounded-xl text-xs font-black transition-all cursor-pointer shadow-sm flex items-center gap-1.5 ${
+                        isPassed
+                          ? 'bg-[#111A2E] text-teal-300 border border-teal-500/50 hover:bg-teal-500/20'
+                          : `${theme.buttonBg} text-white`
+                      }`}
+                    >
+                      <span>{hasTaken ? 'Retake Quiz' : 'Start Quiz'}</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="p-4 rounded-xl bg-[#0B1220] border border-[#24315A] text-xs text-[#9FB0C8] italic">
+            No quiz is linked to this topic. You can proceed with the syllabus notes.
+          </div>
+        )}
+      </div>
+
+      {/* ========================================================= */}
+      {/* 8. MARK AS COMPLETE CARD                                  */}
+      {/* ========================================================= */}
+      <div className="p-5 sm:p-6 rounded-2xl bg-[#111A2E] border border-[#24315A] shadow-sm max-w-[760px] mx-auto space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h3 className="font-heading font-extrabold text-base text-[#E6ECFA] flex items-center gap-2">
+            <h3 className="font-heading font-extrabold text-base text-[#FFFFFF] flex items-center gap-2">
               <span>Finished this topic?</span>
               {isCompleted && (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/50 text-[10px] font-bold">
-                  ✓ Done
+                  ✓ Completed
                 </span>
               )}
             </h3>
-            <p className="text-xs text-[#9AA8C7] mt-0.5">
-              Test your understanding with the topic quiz and mark this syllabus item as completed.
+            <p className="text-xs text-[#9FB0C8] mt-0.5">
+              {topic.requireQuizToComplete && !hasPassedAnyTopicQuiz && !isCompleted
+                ? 'Admin setting: Passing the topic quiz is required to complete this topic.'
+                : 'Mark this syllabus item as completed to update your course progress.'}
             </p>
           </div>
 
           <button
             onClick={handleToggleCompleteWrapper}
-            className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shrink-0 ${
+            disabled={topic.requireQuizToComplete && !hasPassedAnyTopicQuiz && !isCompleted}
+            className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-2 transition-all cursor-pointer shrink-0 disabled:opacity-50 disabled:cursor-not-allowed ${
               isCompleted
                 ? 'bg-emerald-500 text-white shadow-[0_0_12px_rgba(16,185,129,0.4)]'
-                : 'bg-[#2F52FF] text-white hover:bg-[#2545df] shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                : `${theme.buttonBg} text-white shadow-md`
             }`}
           >
             <CheckCircle2 className="w-4 h-4" />
             <span>{isCompleted ? 'Marked Done' : 'Mark as complete'}</span>
           </button>
         </div>
-
-        {/* Linked Quiz Option */}
-        {linkedQuiz && (
-          <div className="pt-3 border-t border-[#24315A] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-[#FFC700]/20 text-[#FFC700] flex items-center justify-center shrink-0">
-                <FileQuestion className="w-4 h-4" />
-              </div>
-              <div>
-                <p className="text-xs font-bold text-[#E6ECFA]">
-                  {linkedQuiz.title}
-                </p>
-                <p className="text-[10px] text-[#9AA8C7]">
-                  {linkedQuiz.questionCount} Questions • Passing: {linkedQuiz.passingScore || 70}%
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => onStartQuiz(linkedQuiz.id)}
-              className="px-4 py-2 rounded-xl bg-[#FFC700] hover:bg-[#ffd633] text-[#0A1224] text-xs font-black shadow-[0_0_15px_rgba(255,199,0,0.3)] flex items-center justify-center gap-1.5 cursor-pointer transition-all"
-            >
-              <span>Take Quiz</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        )}
       </div>
 
-      {/* 8. "NEXT TOPIC" & PREVIOUS TOPIC NAVIGATION CARDS */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+      {/* ========================================================= */}
+      {/* 9. PREVIOUS AND NEXT TOPIC CARDS                          */}
+      {/* ========================================================= */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-[760px] mx-auto pt-2">
         {prevTopic ? (
           <button
             onClick={() => onSelectTopic(prevTopic)}
-            className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-left transition-all cursor-pointer group flex items-center gap-2.5"
+            className="p-4 rounded-xl bg-[#111A2E] border border-[#24315A] hover:border-teal-500 text-left transition-all cursor-pointer group flex items-center gap-3"
           >
-            <ArrowLeft className="w-4 h-4 text-[#9AA8C7] group-hover:text-white shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+            <ArrowLeft className="w-4 h-4 text-[#9FB0C8] group-hover:text-white shrink-0 group-hover:-translate-x-0.5 transition-transform" />
             <div className="min-w-0">
-              <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">
+              <span className="text-[10px] text-[#9FB0C8] uppercase font-bold block">
                 Previous Topic
               </span>
-              <p className="text-xs font-bold text-[#E6ECFA] truncate group-hover:text-white">
+              <p className="text-xs font-bold text-[#E8EEF8] truncate group-hover:text-white">
                 {prevTopic.order || currentIndex}. {prevTopic.title}
               </p>
             </div>
           </button>
         ) : (
-          <div className="p-3.5 rounded-xl bg-[#0A1224]/50 border border-[#24315A]/40 text-xs text-[#9AA8C7]/60 flex items-center gap-2">
+          <div className="p-4 rounded-xl bg-[#0B1220]/60 border border-[#24315A]/40 text-xs text-[#9FB0C8]/60 flex items-center gap-2">
             <Layers className="w-4 h-4" />
             <span>This is the first topic in the syllabus</span>
           </div>
@@ -538,20 +760,20 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
         {nextTopic ? (
           <button
             onClick={() => onSelectTopic(nextTopic)}
-            className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] text-right transition-all cursor-pointer group flex items-center justify-end gap-2.5 sm:col-start-2"
+            className={`p-4 rounded-xl bg-[#111A2E] border border-[#24315A] ${theme.borderHover} text-right transition-all cursor-pointer group flex items-center justify-end gap-3 sm:col-start-2`}
           >
             <div className="min-w-0">
-              <span className="text-[10px] text-[#FFC700] uppercase font-bold block">
+              <span className={`text-[10px] ${theme.accentText} uppercase font-bold block`}>
                 Next Topic &rarr;
               </span>
-              <p className="text-xs font-bold text-[#E6ECFA] truncate group-hover:text-white">
+              <p className="text-xs font-bold text-[#E8EEF8] truncate group-hover:text-white">
                 {nextTopic.order || currentIndex + 2}. {nextTopic.title}
               </p>
             </div>
-            <ArrowRight className="w-4 h-4 text-[#FFC700] group-hover:text-white shrink-0 group-hover:translate-x-0.5 transition-transform" />
+            <ArrowRight className={`w-4 h-4 ${theme.accentText} group-hover:text-white shrink-0 group-hover:translate-x-0.5 transition-transform`} />
           </button>
         ) : (
-          <div className="p-3.5 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-300 flex items-center justify-between sm:col-start-2">
+          <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-300 flex items-center justify-between sm:col-start-2">
             <span>🎉 End of syllabus for {course.code}!</span>
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />
           </div>
