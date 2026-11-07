@@ -46,9 +46,17 @@ import { WhatsAppIcon } from './WhatsAppIcon';
 import { StudentResourcesView } from './StudentResourcesView';
 import { StudentPastQuestionsView } from './StudentPastQuestionsView';
 import { StudentQuizzesView } from './StudentQuizzesView';
+import { StudentMockCbtView } from './StudentMockCbtView';
 import { CommunitiesLinksView } from './CommunitiesLinksView';
 import { NotificationsPopover, DashboardNotificationItem } from './NotificationsPopover';
 import { PWAInstallRow } from './PWAInstallRow';
+import { StudentBadgesView } from './StudentBadgesView';
+import { WeeklyLeaderboardView } from './WeeklyLeaderboardView';
+import { BadgeUnlockedModal } from './BadgeUnlockedModal';
+import { OfflineBanner } from './OfflineBanner';
+import { checkAndAwardBadges } from '../lib/badges';
+import { setLeaderboardOptInStatus } from '../utils/leaderboard';
+import { BadgeItem } from '../types';
 import { useSiteSettings } from '../hooks/useSiteSettings';
 import { LinkItem } from '../types';
 import {
@@ -102,7 +110,9 @@ import {
   ArrowRight,
   ChevronRight,
   FileQuestion,
-  Download
+  Download,
+  Trophy,
+  Award
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 import { SITE_CONFIG } from '../config/site';
@@ -120,6 +130,9 @@ type TabType =
   | 'courses'
   | 'past-questions'
   | 'quizzes'
+  | 'mock-cbt'
+  | 'badges'
+  | 'leaderboard'
   | 'ask-ai'
   | 'profile'
   | 'timetables'
@@ -225,9 +238,35 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   // Logout confirmation sheet
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
+  // Badges & Leaderboard states
+  const [recentlyAwardedBadge, setRecentlyAwardedBadge] = useState<BadgeItem | null>(null);
+  const [leaderboardOptInSaving, setLeaderboardOptInSaving] = useState(false);
+
   // Student Department is AUTOMATIC - strictly locked to enrolled department
   const studentDept = profile?.department || 'Computer Technology';
   const studentInitial = (profile?.fullName || user?.email || 'S').charAt(0).toUpperCase();
+
+  const handleToggleLeaderboardOptIn = async () => {
+    if (!user?.uid || leaderboardOptInSaving) return;
+    setLeaderboardOptInSaving(true);
+    const nextVal = !Boolean(profile?.showOnLeaderboard);
+    try {
+      await updateDoc(doc(db, 'users', user.uid), {
+        showOnLeaderboard: nextVal
+      });
+      await setLeaderboardOptInStatus({
+        uid: user.uid,
+        department: studentDept,
+        fullName: profile?.fullName,
+        optIn: nextVal
+      });
+      await refreshProfile();
+    } catch (err) {
+      console.warn('Failed to update leaderboard preference:', err);
+    } finally {
+      setLeaderboardOptInSaving(false);
+    }
+  };
 
   // Home Filters: Defaults to student's level and 1st semester
   const defaultLevel = profile?.level ? normalizeCourseLevel(profile.level) : 'ND1';
@@ -778,7 +817,24 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       streakCount: nextStreak,
       longestStreak: nextLongest,
       lastActiveDate: todayLagos
-    }).then(() => refreshProfile()).catch(() => {});
+    })
+      .then(async () => {
+        await refreshProfile();
+        if (nextStreak >= 7 || nextLongest >= 7) {
+          try {
+            const unlocked = await checkAndAwardBadges({
+              uid: user.uid,
+              currentBadges: profile.badges,
+              streakCount: nextStreak,
+              longestStreak: nextLongest
+            });
+            if (unlocked.length > 0) {
+              setRecentlyAwardedBadge(unlocked[0]);
+            }
+          } catch {}
+        }
+      })
+      .catch(() => {});
   }, [user?.uid, profile?.lastActiveDate]);
 
   // Bookmarks Helper
@@ -1133,6 +1189,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         return 'Past Questions';
       case 'quizzes':
         return 'Quizzes';
+      case 'mock-cbt':
+        return 'Mock CBT Exam';
+      case 'badges':
+        return 'My Badges';
+      case 'leaderboard':
+        return 'Department Leaderboard';
       case 'ask-ai':
         return 'Ask AI';
       case 'profile':
@@ -1160,6 +1222,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
   return (
     <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col pb-24 max-w-2xl mx-auto w-full px-3.5 sm:px-5">
+      {/* Offline Mode Banner */}
+      <OfflineBanner />
+
+      {/* Badge Unlocked Celebration Modal */}
+      <BadgeUnlockedModal
+        badge={recentlyAwardedBadge}
+        onClose={() => setRecentlyAwardedBadge(null)}
+        onViewAllBadges={() => navigateToTab('badges', 'My Badges', true)}
+      />
+
       {/* ======================================================== */}
       {/* TOP HEADER: Shows Blue Back Arrow on any Inner Page      */}
       {/* ======================================================== */}
@@ -1502,10 +1574,58 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
             )}
 
-            {/* 3. ROUNDED SQUARE TILES (2 COLUMNS) - REPLACES THE MENU */}
+            {/* 3. ROUNDED SQUARE TILES & MOCK CBT - REPLACES THE MENU */}
             {!homeSearchQuery && (
               <div className="space-y-4">
+                {/* Featured Mock CBT Banner */}
+                <div
+                  onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
+                  className="p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#16254a] to-[#121C36] border border-[#FFC700]/40 hover:border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.12)] flex items-center justify-between gap-3 cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] group"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-11 h-11 rounded-xl bg-[#FFC700]/15 border border-[#FFC700]/40 text-[#FFC700] flex items-center justify-center shrink-0">
+                      <Clock className="w-6 h-6 text-[#FFC700]" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-heading font-extrabold text-xs sm:text-sm text-[#E6ECFA] group-hover:text-white">
+                          Practice Mock CBT Exam
+                        </span>
+                        <span className="px-1.5 py-0.2 rounded bg-[#FFC700] text-[#0A1224] font-black text-[9px] uppercase tracking-wider">
+                          New
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#9AA8C7] truncate">
+                        Timed test simulation with 20, 40, or 60 questions &amp; full review
+                      </p>
+                    </div>
+                  </div>
+                  <div className="hidden xs:flex items-center gap-1 text-xs font-bold text-[#FFC700] shrink-0 group-hover:translate-x-1 transition-transform">
+                    <span>Start</span>
+                    <ChevronRight className="w-4 h-4" />
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-2 gap-3">
+                  {/* Tile: Mock CBT */}
+                  <div
+                    onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.2)] hover:scale-[1.02] active:scale-[0.98] group relative overflow-hidden"
+                  >
+                    <span className="absolute top-2 right-2 px-1.5 py-0.2 rounded-full bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/40 font-extrabold text-[8px] uppercase tracking-wider">
+                      Timed
+                    </span>
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <Clock className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Mock CBT
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Timed exam drill</p>
+                    </div>
+                  </div>
+
                   {/* Tile 1: Courses */}
                   <div
                     onClick={() => navigateToTab('courses', 'Courses', true)}
@@ -1684,6 +1804,40 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         Ask AI
                       </h4>
                       <p className="text-[10px] text-[#9AA8C7]">Smart study assistant</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 11: Weekly Leaderboard */}
+                  <div
+                    onClick={() => navigateToTab('leaderboard', 'Department Leaderboard', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
+                      <Trophy className="w-5 h-5 text-[#FFC700]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        Leaderboard
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">Weekly Top 10</p>
+                    </div>
+                  </div>
+
+                  {/* Tile 12: My Badges */}
+                  <div
+                    onClick={() => navigateToTab('badges', 'My Badges', true)}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
+                      <Award className="w-5 h-5 text-[#2F52FF]" />
+                    </div>
+                    <div>
+                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                        My Badges
+                      </h4>
+                      <p className="text-[10px] text-[#9AA8C7]">
+                        {(profile?.badges || []).length}/4 unlocked
+                      </p>
                     </div>
                   </div>
                 </div>
@@ -2080,6 +2234,41 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 )}
               </div>
 
+              {/* Leaderboard Participation Switch (Requirement: OPT-IN, off by default, first name only) */}
+              <div className="pt-3 border-t border-[#24315A] space-y-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-8 h-8 rounded-lg bg-[#FFC700]/15 text-[#FFC700] flex items-center justify-center shrink-0">
+                      <Trophy className="w-4 h-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-xs text-[#E6ECFA]">Show me on the leaderboard</h4>
+                      <p className="text-[11px] text-[#9AA8C7] leading-tight">
+                        Display your first name on the weekly departmental leaderboard. Emails, matric numbers, and JAMB registration numbers are never shown.
+                      </p>
+                    </div>
+                  </div>
+
+                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(profile?.showOnLeaderboard)}
+                      disabled={leaderboardOptInSaving}
+                      onChange={handleToggleLeaderboardOptIn}
+                      className="sr-only peer"
+                    />
+                    <div className="w-11 h-6 bg-[#0A1224] border border-[#24315A] peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-[#24315A] after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#FFC700] peer-checked:border-[#FFC700] disabled:opacity-50" />
+                  </label>
+                </div>
+
+                {leaderboardOptInSaving && (
+                  <div className="flex items-center gap-2 text-[11px] text-[#FFC700]">
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Updating leaderboard preference...</span>
+                  </div>
+                )}
+              </div>
+
               {/* Install SOT App (PWA) */}
               <div className="pt-3 border-t border-[#24315A]">
                 <PWAInstallRow />
@@ -2347,6 +2536,53 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             isBookmarked={isBookmarked}
             toggleBookmark={toggleBookmark}
             bookmarks={profile?.bookmarks || []}
+            profile={profile}
+            onBadgeUnlocked={(badge) => setRecentlyAwardedBadge(badge)}
+          />
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: MOCK CBT EXAM                                      */}
+        {/* ======================================================== */}
+        {activeTab === 'mock-cbt' && (
+          <StudentMockCbtView
+            studentDepartment={studentDept}
+            studentLevel={profile?.level || 'ND1'}
+            studentName={profile?.fullName}
+            matricNumber={profile?.matricNumber || profile?.jambNumber}
+            uid={user?.uid || ''}
+            courses={courses}
+            quizzes={deptQuizzes}
+            onBackToHome={handleGoBack}
+            onOpenCourses={() => navigateToTab('courses', 'Courses', true)}
+            profile={profile}
+            onBadgeUnlocked={(badge) => setRecentlyAwardedBadge(badge)}
+          />
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: MY BADGES (Achievements)                           */}
+        {/* ======================================================== */}
+        {activeTab === 'badges' && (
+          <StudentBadgesView
+            profile={profile}
+            onBackToHome={handleGoBack}
+            onOpenQuizzes={() => navigateToTab('quizzes', 'Quizzes', true)}
+          />
+        )}
+
+        {/* ======================================================== */}
+        {/* VIEW: DEPARTMENT LEADERBOARD                             */}
+        {/* ======================================================== */}
+        {activeTab === 'leaderboard' && (
+          <WeeklyLeaderboardView
+            studentDepartment={studentDept}
+            profile={profile}
+            uid={user?.uid || ''}
+            onBackToHome={handleGoBack}
+            onOpenProfile={() => navigateToBottomTab('profile')}
+            onOpenQuizzes={() => navigateToTab('quizzes', 'Quizzes', true)}
+            onRefreshProfile={refreshProfile}
           />
         )}
       </main>

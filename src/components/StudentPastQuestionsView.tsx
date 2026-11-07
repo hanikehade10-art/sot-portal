@@ -19,6 +19,8 @@ import {
   getPdfDownloadUrl
 } from '../data/coursesAndTimetables';
 import { ShareButton } from './ShareButton';
+import { EmptyState } from './EmptyState';
+import { QuizListSkeleton } from './SkeletonLoader';
 import { logActivity } from '../lib/activityLogger';
 import { logStudentActivity } from '../lib/studentActivity';
 import {
@@ -362,17 +364,19 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
 
       {/* Past Questions List */}
       {loading ? (
-        <div className="p-8 text-center text-xs text-[#9AA8C7]">
-          Loading past questions...
-        </div>
+        <QuizListSkeleton count={4} />
       ) : filteredList.length === 0 ? (
-        <div className="p-10 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-          <FileQuestion className="w-10 h-10 text-[#9AA8C7]/50 mx-auto" />
-          <h4 className="text-sm font-bold text-[#E6ECFA]">No past questions yet</h4>
-          <p className="text-xs text-[#9AA8C7] max-w-sm mx-auto">
-            No past questions uploaded for {selectedLevel} ({selectedSemester === 'First Semester' ? '1st Sem' : '2nd Sem'}). Check back soon or contact your Course Rep.
-          </p>
-        </div>
+        <EmptyState
+          icon={FileQuestion}
+          title="No Past Questions Available"
+          description={
+            searchQuery
+              ? `No past question records match "${searchQuery}". Try a different course code or keyword.`
+              : `No past questions uploaded for ${selectedLevel} (${selectedSemester === 'First Semester' ? '1st Sem' : '2nd Sem'}) yet. Check back soon or contact your Course Rep.`
+          }
+          actionLabel={searchQuery ? 'Clear Search' : undefined}
+          onAction={() => setSearchQuery('')}
+        />
       ) : (
         <div className="grid grid-cols-1 gap-3">
           {filteredList.map((item) => {

@@ -81,6 +81,8 @@ export interface UserProfile {
   lastActiveAt?: string; // Updated at most once every 10 minutes while app is open
   lastDevice?: 'Android' | 'iPhone' | 'Desktop';
   completedTopics?: string[]; // IDs of completed syllabus topics
+  badges?: string[]; // Array of earned badge IDs e.g. ['first-quiz', '7-day-streak', 'perfect-score', '10-quizzes']
+  showOnLeaderboard?: boolean; // Opt-in switch for weekly department leaderboard (default false)
   lastTopic?: {
     topicId: string;
     courseId: string;
@@ -93,6 +95,28 @@ export interface UserProfile {
   updatedAt?: string;
 }
 
+export type BadgeId = 'first-quiz' | '7-day-streak' | 'perfect-score' | '10-quizzes';
+
+export interface BadgeItem {
+  id: BadgeId;
+  name: string;
+  description: string;
+  criteria: string;
+  iconName: string;
+}
+
+export interface WeeklyLeaderboardEntry {
+  id: string; // `${weekId}_${uid}`
+  weekId: string; // e.g. '2026-W45'
+  uid: string;
+  department: string;
+  firstName: string;
+  points: number;
+  quizzesCompleted: number;
+  optIn: boolean;
+  updatedAt: string;
+}
+
 export type StudentActivityType =
   | 'login'
   | 'logout'
@@ -100,6 +124,8 @@ export type StudentActivityType =
   | 'topic completed'
   | 'quiz started'
   | 'quiz submitted'
+  | 'mock exam started'
+  | 'mock exam completed'
   | 'past question opened';
 
 export interface StudentActivityItem {
@@ -419,6 +445,42 @@ export interface ActivityLog {
   action: 'Created' | 'Updated' | 'Deleted' | string;
   itemType: 'Course' | 'Topic' | 'Resource' | 'Past Question' | 'Quiz' | 'Announcement' | 'Link' | 'Solution' | string;
   title: string;
+  createdAt: string;
+}
+
+export interface MockExamQuestionReview {
+  questionId: string;
+  parentQuizId?: string;
+  text: string;
+  options: string[];
+  type?: QuizQuestionType;
+  studentAnswer: any; // number | number[] | string | null
+  correctOptionIndex?: number;
+  correctOptionIndices?: number[];
+  modelAnswer?: string;
+  isCorrect: boolean;
+  explanation?: string;
+  whyNotNotes?: Record<string, string>;
+  flagged?: boolean;
+}
+
+export interface MockExamAttempt {
+  id: string;
+  uid: string;
+  department: string;
+  courseId?: string;
+  courseCode: string;
+  courseTitle: string;
+  totalQuestions: number;
+  answeredCount: number;
+  correctCount: number;
+  score: number;
+  percentage: number;
+  timeLimitMinutes: number;
+  timeUsedSeconds: number;
+  passed?: boolean;
+  questionsReview: MockExamQuestionReview[];
+  submittedAt: string;
   createdAt: string;
 }
 

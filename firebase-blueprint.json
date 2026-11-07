@@ -289,6 +289,46 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "type", "title", "createdAt"]
+    },
+    "MockExamAttempt": {
+      "title": "MockExamAttempt",
+      "description": "Student Mock CBT exam session result and review record",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "courseId": { "type": "string", "maxLength": 128 },
+        "courseCode": { "type": "string", "maxLength": 32 },
+        "courseTitle": { "type": "string", "maxLength": 200 },
+        "totalQuestions": { "type": "number" },
+        "answeredCount": { "type": "number" },
+        "correctCount": { "type": "number" },
+        "score": { "type": "number" },
+        "percentage": { "type": "number" },
+        "timeLimitMinutes": { "type": "number" },
+        "timeUsedSeconds": { "type": "number" },
+        "passed": { "type": "boolean" },
+        "questionsReview": { "type": "array" },
+        "submittedAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "department", "courseCode", "totalQuestions", "score", "percentage", "submittedAt"]
+    },
+    "WeeklyLeaderboardEntry": {
+      "title": "WeeklyLeaderboardEntry",
+      "description": "Weekly department quiz points leaderboard entry for opted-in students",
+      "type": "object",
+      "properties": {
+        "weekId": { "type": "string", "maxLength": 32 },
+        "uid": { "type": "string", "maxLength": 128 },
+        "department": { "type": "string", "maxLength": 64 },
+        "firstName": { "type": "string", "maxLength": 64 },
+        "points": { "type": "number" },
+        "quizzesCompleted": { "type": "number" },
+        "optIn": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["weekId", "uid", "department", "firstName", "points", "optIn"]
     }
   },
   "firestore": {
@@ -355,6 +395,14 @@
     "/studentActivity/{id}": {
       "schema": "StudentActivity",
       "description": "Student engagement and event telemetry logs. Read by admins; Created by signed-in students"
+    },
+    "/mockExamAttempts/{attemptId}": {
+      "schema": "MockExamAttempt",
+      "description": "Student Mock CBT exam attempts, scores, and question review data. Read/created by the student"
+    },
+    "/weeklyLeaderboard/{docId}": {
+      "schema": "WeeklyLeaderboardEntry",
+      "description": "Weekly department quiz points leaderboard. Read by students; Created/updated by the student owner"
     }
   }
 }

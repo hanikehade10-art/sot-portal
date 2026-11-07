@@ -37,7 +37,14 @@ import {
   Bookmark
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
-import { BookmarkItem } from '../types';
+import { WhatsAppScoreShare } from './WhatsAppScoreShare';
+import { ConfettiEffect } from './ConfettiEffect';
+import { BadgeUnlockedModal } from './BadgeUnlockedModal';
+import { EmptyState } from './EmptyState';
+import { QuizListSkeleton } from './SkeletonLoader';
+import { checkAndAwardBadges } from '../lib/badges';
+import { recordWeeklyQuizPoints } from '../utils/leaderboard';
+import { BookmarkItem, UserProfile, BadgeItem } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
 
 interface StudentQuizzesViewProps {
@@ -54,6 +61,8 @@ interface StudentQuizzesViewProps {
   isBookmarked?: (type: string, id: string) => boolean;
   toggleBookmark?: (item: any) => Promise<void>;
   bookmarks?: BookmarkItem[];
+  profile?: UserProfile | null;
+  onBadgeUnlocked?: (badge: BadgeItem) => void;
 }
 
 const ACADEMIC_LEVELS = ['All', 'ND1', 'ND2', 'HND1', 'HND2'] as const;
@@ -71,10 +80,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   onTopicCompleted,
   isBookmarked,
   toggleBookmark,
-  bookmarks
+  bookmarks,
+  profile,
+  onBadgeUnlocked
 }) => {
   // Navigation Screens: 'list' | 'intro' | 'taking' | 'review'
   const [currentScreen, setCurrentScreen] = useState<'list' | 'intro' | 'taking' | 'review'>('list');
+
+  // Polish & Badge states
+  const [showConfetti, setShowConfetti] = useState(false);
+  const [newlyAwardedBadge, setNewlyAwardedBadge] = useState<BadgeItem | null>(null);
 
   // Quizzes list state
   const [quizzes, setQuizzes] = useState<QuizItem[]>([]);
@@ -493,6 +508,44 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         type: 'quiz submitted',
         title: `Scored ${score}/${totalPossible} (${percentage}%) on ${activeQuiz.courseCode}: ${activeQuiz.title}`
       });
+
+      // Trigger celebration confetti if passed with 50% or more
+      if (percentage >= 50) {
+        setShowConfetti(true);
+      }
+
+      // Update weekly leaderboard points (opt-in respected)
+      try {
+        await recordWeeklyQuizPoints({
+          uid,
+          department: activeQuiz.department || studentDepartment,
+          fullName: studentName || profile?.fullName,
+          earnedPoints: score,
+          optIn: Boolean(profile?.showOnLeaderboard)
+        });
+      } catch (lbErr) {
+        console.warn('Leaderboard score update notice:', lbErr);
+      }
+
+      // Evaluate badges (First Quiz, 10 Quizzes, Perfect Score)
+      try {
+        const totalQuizzes = Object.keys(attemptsMap).length + (attemptsMap[activeQuiz.id] ? 0 : 1);
+        const unlockedBadges = await checkAndAwardBadges({
+          uid,
+          currentBadges: profile?.badges,
+          streakCount: profile?.streakCount,
+          longestStreak: profile?.longestStreak,
+          totalQuizzesTaken: totalQuizzes,
+          latestScorePercentage: percentage
+        });
+        if (unlockedBadges.length > 0) {
+          setNewlyAwardedBadge(unlockedBadges[0]);
+          setShowConfetti(true);
+          onBadgeUnlocked?.(unlockedBadges[0]);
+        }
+      } catch (bErr) {
+        console.warn('Badge award check notice:', bErr);
+      }
 
       // Set review screen data with all questions shown
       setReviewAttempt(attemptPayload);
@@ -1391,6 +1444,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
     return (
       <div className="space-y-4 max-w-xl mx-auto">
+        {/* Celebration Confetti when passing (>=50%) */}
+        {showConfetti && (
+          <ConfettiEffect onComplete={() => setShowConfetti(false)} />
+        )}
+
+        {/* Badge Unlocked Popup Modal */}
+        {newlyAwardedBadge && (
+          <BadgeUnlockedModal
+            badge={newlyAwardedBadge}
+            onClose={() => setNewlyAwardedBadge(null)}
+          />
+        )}
+
         {/* Navigation Bar */}
         <div className="flex items-center justify-between">
           <button
@@ -1478,6 +1544,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               {studentPct}% final score • Attempt #{reviewAttempt.attempts || 1} • Best score: {reviewAttempt.bestScore}/{studentTotal}
             </p>
           </div>
+
+          <WhatsAppScoreShare
+            percentage={studentPct}
+            courseCode={activeQuiz.courseCode}
+            examLabel="Quiz"
+            className="text-left max-w-lg mx-auto"
+          />
 
           {/* Retake & Action Buttons */}
           <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 border-t border-[#24315A]/70">
@@ -1576,29 +1649,53 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
           {/* Empty State for Selected Tab */}
           {activeDisplayList.length === 0 ? (
-            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
+            <div className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-3">
               {reviewTab === 'missed' ? (
                 <>
-                  <CheckCircle2 className="w-9 h-9 text-emerald-400 mx-auto" />
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400 mx-auto" />
                   <h4 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
                     🎉 Perfect score on this attempt!
                   </h4>
-                  <p className="text-xs text-[#9AA8C7]">
+                  <p className="text-xs text-[#9AA8C7] max-w-sm mx-auto">
                     You didn't miss any questions. Switch to the <strong>Correct</strong> or <strong>All</strong> tab to review your answers.
                   </p>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setReviewTab('all')}
+                      className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold transition-all cursor-pointer shadow-md"
+                    >
+                      View All Questions
+                    </button>
+                  </div>
                 </>
               ) : reviewTab === 'correct' ? (
                 <>
-                  <XCircle className="w-9 h-9 text-rose-400 mx-auto" />
+                  <XCircle className="w-10 h-10 text-rose-400 mx-auto" />
                   <h4 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
                     No correct answers yet
                   </h4>
-                  <p className="text-xs text-[#9AA8C7]">
-                    Review the <strong>Missed</strong> questions tab to learn the principles and try retaking!
+                  <p className="text-xs text-[#9AA8C7] max-w-sm mx-auto">
+                    Review the <strong>Missed</strong> questions tab to learn the key concepts and try retaking!
                   </p>
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setReviewTab('missed')}
+                      className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold transition-all cursor-pointer shadow-md"
+                    >
+                      Review Missed Questions
+                    </button>
+                  </div>
                 </>
               ) : (
-                <p className="text-xs text-[#9AA8C7]">No questions found in this quiz.</p>
+                <EmptyState
+                  icon={FileQuestion}
+                  title="No Questions Available"
+                  description="This quiz doesn't contain any questions to review."
+                  actionLabel="Back to Quizzes"
+                  onAction={() => setCurrentScreen('list')}
+                />
               )}
             </div>
           ) : (
@@ -2145,18 +2242,33 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
       {/* Quizzes List */}
       {loading ? (
-        <div className="p-8 text-center space-y-2">
-          <RefreshCw className="w-6 h-6 animate-spin text-[#FFC700] mx-auto" />
-          <p className="text-xs text-[#9AA8C7]">Loading department quizzes...</p>
-        </div>
+        <QuizListSkeleton count={4} />
       ) : filteredQuizzes.length === 0 ? (
-        <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-          <FileQuestion className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
-          <p className="font-heading font-bold text-sm text-[#E6ECFA]">No quizzes found</p>
-          <p className="text-xs text-[#9AA8C7]">
-            Practice tests published by department administrators and reps will appear here.
-          </p>
-        </div>
+        <EmptyState
+          icon={FileQuestion}
+          title="No Quizzes Available"
+          description={
+            searchQuery || semesterFilter !== 'All' || levelFilter !== 'All'
+              ? 'No quizzes matched your search query or semester filters.'
+              : `Practice tests published by ${studentDepartment} lecturers and reps will appear here.`
+          }
+          actionLabel={
+            searchQuery || semesterFilter !== 'All' || levelFilter !== 'All'
+              ? 'Reset Filters'
+              : onBackToHome
+              ? 'Back to Home'
+              : undefined
+          }
+          onAction={() => {
+            if (searchQuery || semesterFilter !== 'All' || levelFilter !== 'All') {
+              setSearchQuery('');
+              setSemesterFilter('All');
+              setLevelFilter('All');
+            } else if (onBackToHome) {
+              onBackToHome();
+            }
+          }}
+        />
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {filteredQuizzes.map(quiz => {
