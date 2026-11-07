@@ -128,7 +128,7 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
 
   // Single question input state
   const [singleType, setSingleType] = useState<
-    'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check'
+    'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check' | 'fill-gaps'
   >('multiple-choice');
   const [singleText, setSingleText] = useState('');
   const [singleOptions, setSingleOptions] = useState<string[]>(['', '', '', '']);
@@ -138,6 +138,21 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
   const [singleExplanation, setSingleExplanation] = useState('');
   const [singleWhyNotNotes, setSingleWhyNotNotes] = useState<Record<string, string>>({});
   const [singleError, setSingleError] = useState<string | null>(null);
+
+  // Fill in the gaps (tap to pick) state
+  const [gapMode, setGapMode] = useState<'per-gap' | 'shared-bank'>('per-gap');
+  const [gapPoints, setGapPoints] = useState<number>(1);
+  const [perGapRawOptions, setPerGapRawOptions] = useState<Record<number, string>>({
+    1: '*modem | router | switch | hub',
+    2: '*internet | LAN | Bluetooth | HDMI',
+    3: '*different purposes | one purpose | no purpose | printing only'
+  });
+  const [bankRawText, setBankRawText] = useState<string>('modem, router, internet, different purposes, LAN, Bluetooth, HDMI, switch, hub');
+  const [bankAnswers, setBankAnswers] = useState<Record<number, string>>({
+    1: 'modem',
+    2: 'internet',
+    3: 'different purposes'
+  });
 
   // Bulk question input state
   const [bulkText, setBulkText] = useState('');
@@ -474,6 +489,71 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       return;
     }
 
+    // 2.5 Fill in the gaps (tap to pick)
+    if (singleType === 'fill-gaps') {
+      const detectedGaps: number[] = [];
+      const gapTokenRegex = /(?:\[(\d+)\]|\((\d+)\))/g;
+      let mToken: RegExpExecArray | null;
+      while ((mToken = gapTokenRegex.exec(singleText)) !== null) {
+        const num = parseInt(mToken[1] || mToken[2], 10);
+        if (!isNaN(num) && !detectedGaps.includes(num)) {
+          detectedGaps.push(num);
+        }
+      }
+      detectedGaps.sort((a, b) => a - b);
+
+      if (detectedGaps.length === 0) {
+        setSingleError('Please include numbered gaps in your passage using [1], [2], [3]... (up to 40 gaps).');
+        return;
+      }
+
+      if (detectedGaps.length > 40) {
+        setSingleError(`This question has ${detectedGaps.length} gaps. Maximum supported is 40 gaps.`);
+        return;
+      }
+
+      const cleanPoints = gapPoints >= 1 ? Math.round(gapPoints) : 1;
+      const gapAnswersMap: Record<string, string> = {};
+      const allAnswersInGapOrder: string[] = [];
+
+      for (const gNum of detectedGaps) {
+        const ans = bankAnswers[gNum];
+        if (!ans || !ans.trim()) {
+          setSingleError(`Please enter the answer word/phrase for Gap [${gNum}].`);
+          return;
+        }
+        const cleanAns = ans.trim();
+        gapAnswersMap[String(gNum)] = cleanAns;
+        allAnswersInGapOrder.push(cleanAns);
+      }
+
+      const newQ: QuizQuestion = {
+        id: qId,
+        type: 'fill-gaps',
+        text: singleText.trim(),
+        options: [],
+        sharedWordBank: true,
+        wordBank: allAnswersInGapOrder,
+        pointsPerGap: cleanPoints
+      };
+
+      const newK: QuizKeyItem = {
+        questionId: qId,
+        explanation: singleExplanation.trim(),
+        gapAnswers: gapAnswersMap,
+        pointsPerGap: cleanPoints,
+        whyNotNotes: Object.keys(cleanWhyNot).length > 0 ? cleanWhyNot : undefined
+      };
+
+      setDraftQuestions(prev => [...prev, newQ]);
+      setDraftKeys(prev => [...prev, newK]);
+      setSingleText('');
+      setSingleExplanation('');
+      setSingleWhyNotNotes({});
+      setBankAnswers({});
+      return;
+    }
+
     const cleanOpts = singleOptions.map(o => o.trim()).filter(Boolean);
     if (cleanOpts.length < 2) {
       setSingleError('Please provide at least 2 non-empty options/statements.');
@@ -651,13 +731,29 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
       const pointsPerQuestion = !isNaN(parsedPoints) && parsedPoints >= 1 ? Math.round(parsedPoints) : 1;
 
       // Sanitize questions - ensure no undefined and text fields are empty string
-      const sanitizedQuestions: QuizQuestion[] = draftQuestions.map((q, idx) => ({
-        id: q.id || `q_${Date.now()}_${idx}`,
-        type: q.type || 'multiple-choice',
-        text: (q.text || '').trim(),
-        options: Array.isArray(q.options) ? q.options.map(opt => (opt || '').trim()) : [],
-        modelAnswer: (q.modelAnswer || '').trim()
-      }));
+      const sanitizedQuestions: QuizQuestion[] = draftQuestions.map((q, idx) => {
+        const item: QuizQuestion = {
+          id: q.id || `q_${Date.now()}_${idx}`,
+          type: q.type || 'multiple-choice',
+          text: (q.text || '').trim(),
+          options: Array.isArray(q.options) ? q.options.map(opt => (opt || '').trim()) : [],
+          modelAnswer: (q.modelAnswer || '').trim()
+        };
+        if (q.type === 'fill-gaps') {
+          if (Array.isArray(q.gaps)) {
+            item.gaps = q.gaps.map(g => ({
+              gapNumber: g.gapNumber,
+              options: Array.isArray(g.options) ? g.options.map(o => (o || '').trim()) : []
+            }));
+          }
+          item.sharedWordBank = Boolean(q.sharedWordBank);
+          if (Array.isArray(q.wordBank)) {
+            item.wordBank = q.wordBank.map(w => (w || '').trim()).filter(Boolean);
+          }
+          item.pointsPerGap = typeof q.pointsPerGap === 'number' && q.pointsPerGap >= 1 ? Math.round(q.pointsPerGap) : 1;
+        }
+        return item;
+      });
 
       // Sanitize keys - convert undefined explanation, whyNot, topicId, etc. to empty string or safe values
       const sanitizedKeys: QuizKeyItem[] = draftKeys.map((k, idx) => {
@@ -690,6 +786,18 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
           if (Object.keys(cleanWhyNot).length > 0) {
             item.whyNotNotes = cleanWhyNot;
           }
+        }
+        if (k.gapAnswers && typeof k.gapAnswers === 'object') {
+          const cleanGapAnswers: Record<string, string> = {};
+          Object.entries(k.gapAnswers).forEach(([gapNum, val]) => {
+            if (typeof val === 'string') {
+              cleanGapAnswers[String(gapNum)] = val.trim();
+            }
+          });
+          item.gapAnswers = cleanGapAnswers;
+        }
+        if (typeof k.pointsPerGap === 'number' && k.pointsPerGap >= 1) {
+          item.pointsPerGap = Math.round(k.pointsPerGap);
         }
         return item;
       });
@@ -1697,33 +1805,23 @@ export const AdminQuizzesView: React.FC<AdminQuizzesViewProps> = ({
                 {questionInputMode === 'bulk' && (
                   <div className="space-y-2.5 pt-1">
                     <div className="p-2.5 rounded-lg bg-[#121C36]/80 border border-[#24315A] text-[11px] text-[#9AA8C7] space-y-1">
-                      <span className="font-bold text-[#FFC700] block">Format Guidelines (Mixed quizzes &amp; Theory questions supported):</span>
-                      <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap leading-relaxed">
-{`Q: Explain the meaning of feedback in communication.
+                      <span className="font-bold text-[#FFC700] block">Format Guidelines (Supports Multiple Choice, Fill in the Gaps, &amp; Theory):</span>
+                      <pre className="font-mono text-[10px] text-[#E6ECFA] p-2 rounded bg-[#0A1224] border border-[#24315A]/60 whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+{`--- 1. FILL IN THE GAPS (SHARED WORD BANK) ---
+Q: A [1] is needed in order to connect to a dial-up [2] connection. A modem can also be used for [3] purposes.
+Type: Bank
+Answers: 1. modem | 2. internet | 3. different
+Explanation: Modems modulate analog sound signals to digital computer data.
+
+--- 2. MULTIPLE CHOICE & THEORY ---
+Q: Explain the meaning of feedback in communication.
 Type: Theory
 * The response the receiver gives back to the sender...
 - The first message the sender sends...
-- The unwanted disturbance that interferes with a message...
-Explanation: Feedback is the return information, reaction, or response that the receiver transmits back to the original sender to confirm reception and clarify understanding.
-Why not B: The first message the sender sends is the original transmission or encoding.
-
-Q: Which of the following data structures are linear?
-Type: Select all
-* Stack
-* Queue
-* Singly linked list
-- Binary search tree
-- Graph
-Explanation: Stacks, queues, and linked lists organize elements sequentially in a linear chain.
-Why not D: Trees are non-linear hierarchical structures.
-
-Q: Describe synchronous vs asynchronous data transmission.
-Type: Self-check
-Model answer: Synchronous transmission sends continuous data blocks timed by a shared clock pulse, while asynchronous transmission sends bytes individually framed by start and stop bits.
-Explanation: Shared clock pulse vs start and stop framing bits.`}
+Explanation: Feedback is the return information confirming message delivery.`}
                       </pre>
                       <p className="text-[10px] text-[#9AA8C7]/80">
-                        * Bullet options: * for correct, - for wrong. Explanation continues across lines until next Q:. Self-check uses 'Model answer:'. Questions without explanation or model answer will still save.
+                        * Gaps: write [1], [2] in passage (up to 40 gaps). List answers as 'Answers: 1. word | 2. word'. Words will be automatically shuffled into a shared word bank for students. Missing explanations will not stop saving.
                       </p>
                     </div>
 
@@ -1731,7 +1829,7 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                       rows={9}
                       value={bulkText}
                       onChange={e => setBulkText(e.target.value)}
-                      placeholder={`Q: Explain the meaning of feedback in communication.\nType: Theory\n* The response the receiver gives back to the sender...\n- The first message the sender sends...\n- The unwanted disturbance that interferes with a message...\nExplanation: Feedback is the response returned to the sender.\nWhy not B: That describes the initial message.\n\nQ: Which of the following data structures are linear?\nType: Select all\n* Stack\n* Queue\n* Singly linked list\n- Graph\nExplanation: Stacks, queues, and linked lists are sequential linear chains.\n\nQ: What is a deadlock?\nType: Self-check\nModel answer: A state where two or more processes cannot proceed because each is waiting for the other to release resources.\nExplanation: Mutual exclusion, hold and wait, no preemption, circular wait.`}
+                      placeholder={`Q: A [1] is needed in order to connect to a dial-up [2] connection. A modem can also be used for [3] purposes.\nType: Bank\nAnswers: 1. modem | 2. internet | 3. different\nExplanation: Modems modulate analog to digital.\n\nQ: Which device connects different networks together?\nType: Multiple Choice\n* Router\n- Hub\n- Cable\nExplanation: Routers route traffic between subnets.`}
                       className="w-full px-3 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-mono text-[#E6ECFA] placeholder-[#9AA8C7]/40 focus:outline-none focus:border-[#2F52FF]"
                     />
 
@@ -1781,6 +1879,7 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                       <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-[#121C36] border border-[#24315A]">
                         {[
                           { id: 'multiple-choice', label: 'Multiple Choice' },
+                          { id: 'fill-gaps', label: 'Fill in the Gaps (Tap to pick)' },
                           { id: 'true-false', label: 'True / False' },
                           { id: 'theory-best', label: 'Theory (Pick Best)' },
                           { id: 'theory-select-all', label: 'Theory (Select All)' },
@@ -1807,26 +1906,222 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                       </div>
                     </div>
 
-                    <div>
-                      <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Question Prompt</label>
-                      <input
-                        type="text"
-                        value={singleText}
-                        onChange={e => setSingleText(e.target.value)}
-                        placeholder={
-                          singleType === 'true-false'
-                            ? 'e.g. A stack follows the Last In, First Out (LIFO) principle.'
-                            : singleType === 'theory-self-check'
-                            ? 'e.g. Explain why a stack is used to evaluate postfix expressions.'
-                            : singleType === 'theory-select-all'
-                            ? 'e.g. Which of the following data structures are linear?'
-                            : singleType === 'theory-best'
-                            ? 'e.g. What is the primary role of a router in OSI layer 3?'
-                            : 'e.g. Which of the following is an input device?'
-                        }
-                        className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
-                      />
-                    </div>
+                    {singleType === 'fill-gaps' ? (
+                      <div className="space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[11px] text-[#9AA8C7] font-semibold">
+                              Passage with Numbered Gaps (write [1], [2], [3]... up to 40 gaps)
+                            </label>
+                            <span className="text-[10px] text-[#FFC700] font-mono">
+                              {(() => {
+                                const matches = (singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []);
+                                const unique = new Set(matches.map(m => m.replace(/[^0-9]/g, '')));
+                                return `${unique.size} gap(s) detected`;
+                              })()}
+                            </span>
+                          </div>
+                          <textarea
+                            rows={4}
+                            value={singleText}
+                            onChange={e => setSingleText(e.target.value)}
+                            placeholder="A [1] is needed in order to connect to a dial-up [2] connection. A modem can also be used for [3] different purposes..."
+                            className="w-full px-3 py-2 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF] leading-relaxed"
+                          />
+                          <div className="flex flex-wrap items-center gap-2 mt-1">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const matches = (singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []);
+                                const nums = matches.map(m => parseInt(m.replace(/[^0-9]/g, ''), 10)).filter(n => !isNaN(n));
+                                const nextNum = nums.length > 0 ? Math.max(...nums) + 1 : 1;
+                                setSingleText(prev => (prev ? `${prev} [${nextNum}]` : `[${nextNum}]`));
+                              }}
+                              className="px-2 py-0.5 rounded bg-[#121C36] hover:bg-[#2F52FF]/20 border border-[#24315A] hover:border-[#2F52FF] text-[10px] text-[#FFC700] font-bold cursor-pointer"
+                            >
+                              + Insert next gap [{(singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []).length + 1}]
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Points per Gap */}
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                          <div>
+                            <span className="text-xs font-bold text-[#E6ECFA] block">Points per Gap (Partial Credit)</span>
+                            <span className="text-[10px] text-[#9AA8C7]">Each gap is worth 1 point by default</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={1}
+                              max={20}
+                              value={gapPoints}
+                              onChange={e => setGapPoints(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                              className="w-20 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#FFC700] text-center focus:outline-none focus:border-[#2F52FF]"
+                            />
+                            <span className="text-xs text-[#9AA8C7]">pt(s)</span>
+                          </div>
+                        </div>
+
+                        {/* Shared Word Bank Builder */}
+                        <div className="space-y-3 p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <span className="text-[11px] font-bold text-[#E6ECFA] block">Gap Answers (Shared Word Bank)</span>
+                              <span className="text-[10px] text-[#9AA8C7]">
+                                Enter the correct answer for each gap. These answers will be shuffled to form the student's word bank.
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-[#60A5FA] font-mono">
+                              {(() => {
+                                const matches = (singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []);
+                                const rawNums = matches.map(m => parseInt(m.replace(/[^0-9]/g, ''), 10)).filter(n => !isNaN(n));
+                                const nums = Array.from(new Set(rawNums));
+                                return `${nums.length} gap(s)`;
+                              })()}
+                            </span>
+                          </div>
+
+                          {/* Quick Paste Row */}
+                          <div className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] space-y-1.5">
+                            <span className="text-[10px] font-bold text-[#9AA8C7] block uppercase">Quick Paste Answers:</span>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                placeholder="1. modem | 2. internet | 3. purposes"
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    const val = (e.target as HTMLInputElement).value;
+                                    const segments = val.split(/[|;\n]/).map(s => s.trim()).filter(Boolean);
+                                    const updated: Record<number, string> = { ...bankAnswers };
+                                    segments.forEach((seg, idx) => {
+                                      const m = seg.match(/^(?:Gap\s*)?(\d+)[\.\:=]\s*(.+)$/i);
+                                      if (m) {
+                                        updated[parseInt(m[1], 10)] = m[2].trim();
+                                      } else {
+                                        updated[idx + 1] = seg;
+                                      }
+                                    });
+                                    setBankAnswers(updated);
+                                    (e.target as HTMLInputElement).value = '';
+                                  }
+                                }}
+                                className="flex-1 px-2.5 py-1 rounded bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                              />
+                              <button
+                                type="button"
+                                onClick={e => {
+                                  const input = (e.currentTarget.previousElementSibling as HTMLInputElement);
+                                  const val = input.value;
+                                  if (!val) return;
+                                  const segments = val.split(/[|;\n]/).map(s => s.trim()).filter(Boolean);
+                                  const updated: Record<number, string> = { ...bankAnswers };
+                                  segments.forEach((seg, idx) => {
+                                    const m = seg.match(/^(?:Gap\s*)?(\d+)[\.\:=]\s*(.+)$/i);
+                                    if (m) {
+                                      updated[parseInt(m[1], 10)] = m[2].trim();
+                                    } else {
+                                      updated[idx + 1] = seg;
+                                    }
+                                  });
+                                  setBankAnswers(updated);
+                                  input.value = '';
+                                }}
+                                className="px-3 py-1 rounded bg-[#2F52FF] hover:bg-[#2F52FF]/80 text-white text-xs font-bold cursor-pointer transition-colors"
+                              >
+                                Apply
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Individual Gap Answers */}
+                          {(() => {
+                            const matches = (singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []);
+                            const rawNums = matches.map(m => parseInt(m.replace(/[^0-9]/g, ''), 10)).filter(n => !isNaN(n));
+                            const nums = Array.from(new Set(rawNums)).sort((a, b) => a - b);
+                            const activeNums = nums.length > 0 ? nums : [1, 2, 3];
+
+                            return (
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1">
+                                {activeNums.map(gNum => (
+                                  <div key={gNum} className="p-2 rounded-lg bg-[#121C36] border border-[#24315A] space-y-1">
+                                    <div className="flex items-center justify-between text-xs">
+                                      <span className="font-extrabold text-[#FFC700]">Gap [{gNum}] Answer:</span>
+                                      {bankAnswers[gNum] ? (
+                                        <span className="text-[10px] text-emerald-400 font-medium">✓ set</span>
+                                      ) : (
+                                        <span className="text-[10px] text-rose-400 font-medium">*required</span>
+                                      )}
+                                    </div>
+                                    <input
+                                      type="text"
+                                      value={bankAnswers[gNum] || ''}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        setBankAnswers(prev => ({ ...prev, [gNum]: val }));
+                                      }}
+                                      placeholder={`e.g. ${gNum === 1 ? 'modem' : gNum === 2 ? 'internet' : 'purposes'}`}
+                                      className="w-full px-2.5 py-1 rounded bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                                    />
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+
+                          {/* Word Bank Preview */}
+                          {(() => {
+                            const matches = (singleText.match(/(?:\[(\d+)\]|\((\d+)\))/g) || []);
+                            const rawNums = matches.map(m => parseInt(m.replace(/[^0-9]/g, ''), 10)).filter(n => !isNaN(n));
+                            const nums = Array.from(new Set(rawNums)).sort((a, b) => a - b);
+                            const activeNums = nums.length > 0 ? nums : [1, 2, 3];
+                            const words = activeNums.map(n => bankAnswers[n]?.trim()).filter(Boolean);
+
+                            if (words.length === 0) return null;
+
+                            return (
+                              <div className="pt-2 border-t border-[#24315A]/60 space-y-1.5">
+                                <span className="text-[10px] font-bold text-[#FFC700] uppercase block">
+                                  Word Bank Preview ({words.length} items - will be shuffled for student):
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {words.map((w, idx) => (
+                                    <span
+                                      key={idx}
+                                      className="px-2.5 py-1 rounded-md bg-[#121C36] border border-[#2F52FF]/40 text-xs font-semibold text-[#E6ECFA]"
+                                    >
+                                      {w}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="text-[11px] text-[#9AA8C7] block mb-1 font-semibold">Question Prompt</label>
+                        <input
+                          type="text"
+                          value={singleText}
+                          onChange={e => setSingleText(e.target.value)}
+                          placeholder={
+                            singleType === 'true-false'
+                              ? 'e.g. A stack follows the Last In, First Out (LIFO) principle.'
+                              : singleType === 'theory-self-check'
+                              ? 'e.g. Explain why a stack is used to evaluate postfix expressions.'
+                              : singleType === 'theory-select-all'
+                              ? 'e.g. Which of the following data structures are linear?'
+                              : singleType === 'theory-best'
+                              ? 'e.g. What is the primary role of a router in OSI layer 3?'
+                              : 'e.g. Which of the following is an input device?'
+                          }
+                          className="w-full px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                        />
+                      </div>
+                    )}
 
                     {/* 1. True / False Selection Buttons */}
                     {singleType === 'true-false' && (
@@ -2380,7 +2675,9 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                                   <span>{q.text}</span>
                                 </h5>
                                 <span className="px-1.5 py-0.2 rounded bg-[#0A1224] border border-[#24315A] text-[9px] font-bold text-[#60A5FA]">
-                                  {q.type === 'theory-best'
+                                  {q.type === 'fill-gaps'
+                                    ? 'Fill in Gaps'
+                                    : q.type === 'theory-best'
                                     ? 'Theory (Pick Best)'
                                     : q.type === 'theory-select-all'
                                     ? 'Select All'
@@ -2398,7 +2695,43 @@ Explanation: Shared clock pulse vs start and stop framing bits.`}
                               </div>
 
                               {/* Options / Statements Rendering */}
-                              {q.type === 'theory-self-check' ? (
+                              {q.type === 'fill-gaps' ? (
+                                <div className="space-y-2 p-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[11px]">
+                                  <div className="flex items-center justify-between text-[10px]">
+                                    <span className="font-bold text-[#FFC700] uppercase">
+                                      {q.sharedWordBank ? 'Shared Word Bank' : 'Per-Gap Options'} • {q.pointsPerGap || 1} pt per gap
+                                    </span>
+                                    <span className="text-[#9AA8C7]">
+                                      {Object.keys(keyItem?.gapAnswers || {}).length || q.gaps?.length || 0} gap(s)
+                                    </span>
+                                  </div>
+
+                                  {q.sharedWordBank && q.wordBank && q.wordBank.length > 0 && (
+                                    <div className="space-y-1">
+                                      <span className="text-[10px] text-[#9AA8C7] block">Word Bank:</span>
+                                      <div className="flex flex-wrap gap-1">
+                                        {q.wordBank.map((w, wIdx) => (
+                                          <span key={wIdx} className="px-1.5 py-0.2 rounded bg-[#121C36] text-[10px] text-[#E6ECFA] border border-[#24315A]">
+                                            {w}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+
+                                  <div className="space-y-1 pt-1 border-t border-[#24315A]/60">
+                                    <span className="text-[10px] text-[#60A5FA] font-bold block">Correct Gap Answers:</span>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+                                      {Object.entries(keyItem?.gapAnswers || {}).map(([gNum, ans]) => (
+                                        <div key={gNum} className="px-2 py-0.5 rounded bg-[#121C36] border border-emerald-500/30 text-emerald-300 flex items-center justify-between text-xs">
+                                          <span className="font-mono text-[10px] text-[#FFC700]">Gap [{gNum}]:</span>
+                                          <span className="font-bold">{ans}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                </div>
+                              ) : q.type === 'theory-self-check' ? (
                                 <div className="p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[11px] text-[#E6ECFA] space-y-0.5">
                                   <span className="text-[10px] font-bold text-[#FFC700] block">Model Answer:</span>
                                   <p className="italic text-[#9AA8C7]">{q.modelAnswer || keyItem?.modelAnswer}</p>

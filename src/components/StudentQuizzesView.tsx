@@ -117,6 +117,11 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const [wasAutoSubmitted, setWasAutoSubmitted] = useState(false);
   const [topicAutoCompletedNotice, setTopicAutoCompletedNotice] = useState<boolean>(false);
 
+  // Fill in the gaps (tap to pick) states
+  const [activeGapNum, setActiveGapNum] = useState<number | null>(null);
+  const [shuffledWordBankMap, setShuffledWordBankMap] = useState<Record<string, Array<{ id: string; word: string }>>>({});
+  const [gapChipIdMap, setGapChipIdMap] = useState<Record<string, Record<string, string>>>({});
+
   // Review screen states: Missed (shown first), Correct, All
   const [reviewKeys, setReviewKeys] = useState<QuizKeyDoc | null>(null);
   const [reviewAttempt, setReviewAttempt] = useState<QuizAttempt | null>(null);
@@ -192,6 +197,29 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setCurrentScreen('intro');
   };
 
+  // Helper to extract ordered gap numbers from a question text or gaps array
+  const getQuestionGapNumbers = (q: QuizQuestion): number[] => {
+    const nums: number[] = [];
+    if (q.text) {
+      const regex = /(?:\[(\d+)\]|\((\d+)\))/g;
+      let match;
+      while ((match = regex.exec(q.text)) !== null) {
+        const n = parseInt(match[1] || match[2], 10);
+        if (!nums.includes(n) && !isNaN(n)) nums.push(n);
+      }
+    }
+    if (q.gaps) {
+      q.gaps.forEach(g => {
+        if (!nums.includes(g.gapNumber)) nums.push(g.gapNumber);
+      });
+    }
+    if (nums.length === 0 && q.wordBank && q.wordBank.length > 0) {
+      for (let i = 1; i <= q.wordBank.length; i++) nums.push(i);
+    }
+    nums.sort((a, b) => a - b);
+    return nums.length > 0 ? nums : [1];
+  };
+
   // Helper to determine if a question has been answered
   const isQuestionAnswered = (q: QuizQuestion, ans: any): boolean => {
     if (ans === undefined || ans === null) return false;
@@ -200,6 +228,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }
     if (q.type === 'theory-self-check') {
       return ans === 'knew' || ans === 'partly' || ans === 'not-yet';
+    }
+    if (q.type === 'fill-gaps') {
+      return Boolean(
+        ans &&
+        typeof ans === 'object' &&
+        !Array.isArray(ans) &&
+        Object.values(ans).some(v => Boolean(v && String(v).trim()))
+      );
     }
     return typeof ans === 'number' && ans >= 0;
   };
@@ -222,12 +258,15 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     const initAnswers: Record<string, any> = {};
     const initFlags: Record<string, boolean> = {};
     const optMap: Record<string, number[]> = {};
+    const gapBankMap: Record<string, Array<{ id: string; word: string }>> = {};
 
     qList.forEach(q => {
       if (q.type === 'theory-select-all') {
         initAnswers[q.id] = [];
       } else if (q.type === 'theory-self-check') {
         initAnswers[q.id] = null;
+      } else if (q.type === 'fill-gaps') {
+        initAnswers[q.id] = {};
       } else {
         initAnswers[q.id] = -1;
       }
@@ -241,9 +280,30 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           optMap[q.id] = q.options.map((_, i) => i);
         }
       }
+
+      // Shared word bank for fill-gaps: all correct answers shuffled as chips
+      if (q.type === 'fill-gaps') {
+        const rawWords: string[] =
+          q.wordBank && q.wordBank.length > 0
+            ? q.wordBank
+            : q.gaps
+            ? q.gaps.map(g => g.options?.[0] || '').filter(Boolean)
+            : [];
+
+        // Build unique chips and shuffle them for the student
+        const chips = rawWords.map((w, idx) => ({
+          id: `${q.id}_c${idx}`,
+          word: w
+        })).sort(() => Math.random() - 0.5);
+
+        gapBankMap[q.id] = chips;
+      }
     });
     setSelectedAnswers(initAnswers);
     setShuffledOptionIndicesMap(optMap);
+    setShuffledWordBankMap(gapBankMap);
+    setGapChipIdMap({});
+    setActiveGapNum(null);
     setRevealedModelAnswers({});
     setFlaggedQuestions(initFlags);
 
@@ -361,6 +421,71 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }));
   };
 
+  // Fill in the gaps: fill gap with chosen word chip
+  const handleFillGap = (gapNum: number, chip: { id: string; word: string }) => {
+    if (!activeQuestions[currentQuestionIndex]) return;
+    const q = activeQuestions[currentQuestionIndex];
+    const qId = q.id;
+    const currentGapAnswers: Record<string, string> = {
+      ...(typeof selectedAnswers[qId] === 'object' && !Array.isArray(selectedAnswers[qId]) ? selectedAnswers[qId] : {})
+    };
+    currentGapAnswers[String(gapNum)] = chip.word;
+
+    const currentChips: Record<string, string> = {
+      ...(gapChipIdMap[qId] || {})
+    };
+    currentChips[String(gapNum)] = chip.id;
+
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [qId]: currentGapAnswers
+    }));
+
+    setGapChipIdMap(prev => ({
+      ...prev,
+      [qId]: currentChips
+    }));
+
+    // Auto-advance active gap to next unfilled gap
+    const gapNums = getQuestionGapNumbers(q);
+    const nextUnfilled = gapNums.find(n => n !== gapNum && !currentGapAnswers[String(n)]);
+    if (nextUnfilled) {
+      setActiveGapNum(nextUnfilled);
+    } else {
+      setActiveGapNum(gapNum);
+    }
+  };
+
+  // Fill in the gaps: clear answer for a gap and free the chip in the word bank
+  const handleClearGap = (gapNum: number) => {
+    if (!activeQuestions[currentQuestionIndex]) return;
+    const q = activeQuestions[currentQuestionIndex];
+    const qId = q.id;
+    const currentGapAnswers: Record<string, string> = {
+      ...(typeof selectedAnswers[qId] === 'object' && !Array.isArray(selectedAnswers[qId]) ? selectedAnswers[qId] : {})
+    };
+    delete currentGapAnswers[String(gapNum)];
+    delete currentGapAnswers[gapNum];
+
+    const currentChips: Record<string, string> = {
+      ...(gapChipIdMap[qId] || {})
+    };
+    delete currentChips[String(gapNum)];
+    delete currentChips[gapNum];
+
+    setSelectedAnswers(prev => ({
+      ...prev,
+      [qId]: currentGapAnswers
+    }));
+
+    setGapChipIdMap(prev => ({
+      ...prev,
+      [qId]: currentChips
+    }));
+
+    setActiveGapNum(gapNum);
+  };
+
   // Toggle mark for review
   const handleToggleFlag = () => {
     if (!activeQuestions[currentQuestionIndex]) return;
@@ -409,7 +534,32 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             let earned = 0;
 
             if (matchingKey) {
-              if (q.type === 'theory-self-check') {
+              if (q.type === 'fill-gaps') {
+                const ptsPerGap = q.pointsPerGap || matchingKey.pointsPerGap || 1;
+                const gapAnswers = matchingKey.gapAnswers || {};
+                const studentGapAnswers: Record<string, string> =
+                  chosen && typeof chosen === 'object' && !Array.isArray(chosen) ? chosen : {};
+
+                const allGapNumbers = new Set<string>();
+                Object.keys(gapAnswers).forEach(k => allGapNumbers.add(String(k)));
+                (q.gaps || []).forEach(g => allGapNumbers.add(String(g.gapNumber)));
+
+                let correctGapsCount = 0;
+                allGapNumbers.forEach(gNum => {
+                  const correctWord = gapAnswers[gNum] || gapAnswers[Number(gNum)];
+                  const studentWord = studentGapAnswers[gNum] || studentGapAnswers[Number(gNum)];
+                  if (
+                    correctWord &&
+                    studentWord &&
+                    String(studentWord).trim().toLowerCase() === String(correctWord).trim().toLowerCase()
+                  ) {
+                    correctGapsCount++;
+                  }
+                });
+
+                // Scoring: each gap is worth ptsPerGap (partial credit by default)
+                earned = correctGapsCount * ptsPerGap;
+              } else if (q.type === 'theory-self-check') {
                 if (chosen === 'knew') {
                   earned = ptsPerQ;
                 } else if (chosen === 'partly') {
@@ -452,7 +602,23 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       }
 
       const score = Number.isInteger(totalEarnedScore) ? totalEarnedScore : Math.round(totalEarnedScore * 10) / 10;
-      const totalPossible = activeQuestions.length * ptsPerQ;
+      
+      // Calculate total possible score based on question types
+      let totalPossible = 0;
+      activeQuestions.forEach(q => {
+        if (q.type === 'fill-gaps') {
+          const matchingKey = keysDocData?.keys?.find(k => k.questionId === q.id);
+          const ptsPerGap = q.pointsPerGap || matchingKey?.pointsPerGap || 1;
+          const gapCount = Math.max(
+            q.gaps?.length || 0,
+            Object.keys(matchingKey?.gapAnswers || {}).length,
+            1
+          );
+          totalPossible += gapCount * ptsPerGap;
+        } else {
+          totalPossible += ptsPerQ;
+        }
+      });
       const bestScore = Math.max(existingAttempt?.bestScore || 0, score);
       const percentage = totalPossible > 0 ? Math.round((totalEarnedScore / totalPossible) * 100) : 0;
       const passRequirement = activeQuiz.passingScore || 70;
@@ -659,7 +825,12 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         ? ['True', 'False']
         : [];
     let correctText = '';
-    if (q.type === 'theory-self-check') {
+    if (q.type === 'fill-gaps') {
+      const answersMap = matchingKey?.gapAnswers || {};
+      correctText = Object.entries(answersMap)
+        .map(([k, v]) => `(${k}) ${v}`)
+        .join(', ');
+    } else if (q.type === 'theory-self-check') {
       correctText = q.modelAnswer || matchingKey?.modelAnswer || 'Model answer';
     } else if (q.type === 'theory-select-all') {
       const correctIndices = matchingKey?.correctOptionIndices || [];
@@ -766,6 +937,23 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const currentQIsFlagged = currentQ ? !!flaggedQuestions[currentQ.id] : false;
   const isCurrentTrueFalse = currentQ?.type === 'true-false';
 
+  // Automatically sync activeGapNum for fill-gaps questions
+  useEffect(() => {
+    if (currentQ?.type === 'fill-gaps') {
+      const nums = getQuestionGapNumbers(currentQ);
+      const chosenMap =
+        selectedAnswers[currentQ.id] &&
+        typeof selectedAnswers[currentQ.id] === 'object' &&
+        !Array.isArray(selectedAnswers[currentQ.id])
+          ? selectedAnswers[currentQ.id]
+          : {};
+      const firstUnfilled = nums.find(n => !chosenMap[String(n)] && !chosenMap[n]);
+      setActiveGapNum(firstUnfilled || nums[0] || 1);
+    } else {
+      setActiveGapNum(null);
+    }
+  }, [currentQuestionIndex, currentQ?.id]);
+
   // Attempts info for intro card
   const existingAttemptForActive = activeQuiz ? attemptsMap[activeQuiz.id] : null;
   const usedAttempts = existingAttemptForActive?.attempts || 0;
@@ -779,7 +967,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     const timeLimitMins = activeQuiz.timeLimit || 0;
     const passScore = activeQuiz.passingScore || 70;
     const ptsPerQ = activeQuiz.pointsPerQuestion || 1;
-    const totalPoints = activeQuiz.questionCount * ptsPerQ;
+    const totalPoints = activeQuiz.questions?.reduce((acc, q) => {
+      if (q.type === 'fill-gaps') {
+        const gapCount = Math.max(q.gaps?.length || 0, 1);
+        return acc + gapCount * (q.pointsPerGap || 1);
+      }
+      return acc + (activeQuiz.pointsPerQuestion || 1);
+    }, 0) || (activeQuiz.questionCount * ptsPerQ);
 
     return (
       <div className="space-y-4 max-w-xl mx-auto">
@@ -1042,6 +1236,11 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                   Self-Check
                 </span>
               )}
+              {currentQ.type === 'fill-gaps' && (
+                <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
+                  Fill in the Gaps (Tap to pick)
+                </span>
+              )}
             </div>
 
             {/* Mark for Review Button */}
@@ -1058,13 +1257,275 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             </button>
           </div>
 
-          {/* Question Text */}
-          <div className="text-sm sm:text-base font-bold text-[#E6ECFA] leading-relaxed">
-            {currentQ.text}
-          </div>
+          {/* Question Text (for standard questions) */}
+          {currentQ.type !== 'fill-gaps' && (
+            <div className="text-sm sm:text-base font-bold text-[#E6ECFA] leading-relaxed">
+              {currentQ.text}
+            </div>
+          )}
 
-          {/* 1. Theory (Self-Check): Read, Tap 'Show model answer', then Rate (locked once tapped) */}
-          {currentQ.type === 'theory-self-check' ? (
+          {/* 0. Fill in the Gaps (Tap to Pick) - Interactive Passage with Gaps and Options Panel */}
+          {currentQ.type === 'fill-gaps' ? (
+            <div className="space-y-4 pt-1">
+              {(() => {
+                const gapNums = getQuestionGapNumbers(currentQ);
+                const studentChosenMap: Record<string, string> =
+                  (currentQAnswer && typeof currentQAnswer === 'object' && !Array.isArray(currentQAnswer))
+                    ? currentQAnswer
+                    : {};
+                const currentActive = activeGapNum ?? (gapNums[0] || 1);
+                const filledCount = gapNums.filter(n => Boolean(studentChosenMap[String(n)] || studentChosenMap[n])).length;
+                const totalGaps = gapNums.length;
+                const fillPercentage = totalGaps > 0 ? Math.round((filledCount / totalGaps) * 100) : 0;
+                const tokens = (currentQ.text || '').split(/(\[\d+\])/g);
+
+                return (
+                  <>
+                    {/* Passage with numbered gaps as small tappable boxes */}
+                    <div className="p-4 sm:p-5 rounded-2xl bg-[#0A1224] border border-[#24315A] text-sm sm:text-base leading-loose text-[#E6ECFA]">
+                      {tokens.map((token, tIdx) => {
+                        const match = token.match(/^\[(\d+)\]$/);
+                        if (match) {
+                          const gapNum = parseInt(match[1], 10);
+                          const isSelected = gapNum === currentActive;
+                          const chosenWord = studentChosenMap[String(gapNum)] || studentChosenMap[gapNum] || '';
+
+                          return (
+                            <button
+                              key={tIdx}
+                              type="button"
+                              onClick={() => {
+                                if (currentQ.sharedWordBank && selectedBankWord) {
+                                  // Tapped a word first, then tapped this gap -> fill it!
+                                  handleFillGap(gapNum, selectedBankWord);
+                                } else {
+                                  setActiveGapNum(gapNum);
+                                }
+                              }}
+                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 mx-1 my-1 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer border shadow-sm ${
+                                isSelected
+                                  ? 'ring-2 ring-[#FFC700] ring-offset-2 ring-offset-[#0A1224] bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.35)]'
+                                  : chosenWord
+                                  ? 'bg-[#121C36] text-[#60A5FA] border-[#2F52FF] hover:border-[#60A5FA]'
+                                  : 'bg-[#121C36]/80 text-[#9AA8C7] border-[#24315A] hover:border-[#FFC700]'
+                              }`}
+                            >
+                              <span className="text-[10px] sm:text-xs font-mono opacity-80">({gapNum})</span>
+                              <span className={chosenWord ? 'text-[#E6ECFA] font-extrabold' : 'text-[#60A5FA] tracking-widest'}>
+                                {chosenWord || '____'}
+                              </span>
+                            </button>
+                          );
+                        }
+                        return <span key={tIdx}>{token}</span>;
+                      })}
+                    </div>
+
+                    {/* Progress Bar & Counter Directly Under Passage */}
+                    <div className="p-3.5 rounded-2xl bg-[#0A1224] border border-[#24315A] space-y-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-[#9AA8C7] font-semibold">
+                          <strong className="text-[#FFC700]">{filledCount} of {totalGaps} gaps filled</strong>
+                        </span>
+                        <span className="font-mono text-xs font-bold text-[#60A5FA]">
+                          {fillPercentage}%
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#121C36] h-2.5 rounded-full overflow-hidden border border-[#24315A]">
+                        <div
+                          className="h-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-300"
+                          style={{ width: `${fillPercentage}%` }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Options Panel Directly Under Passage */}
+                    <div className="p-4 rounded-2xl bg-[#0A1224] border border-[#24315A] space-y-3">
+                      {currentQ.sharedWordBank ? (
+                        /* SHARED WORD BANK */
+                        <div className="space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24315A]/80 pb-2">
+                            <div className="space-y-0.5">
+                              <span className="text-xs font-bold text-[#FFC700] flex items-center gap-1.5">
+                                <span>Shared Word Bank</span>
+                              </span>
+                              <span className="text-[11px] text-[#9AA8C7] block">
+                                {selectedBankWord
+                                  ? `Selected: "${selectedBankWord}". Now tap any gap above to place it!`
+                                  : `Gap (${currentActive}) selected. Tap a word below to place it, or tap any word first.`}
+                              </span>
+                            </div>
+
+                            {(studentChosenMap[String(currentActive)] || studentChosenMap[currentActive]) && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearGap(currentActive)}
+                                className="px-2.5 py-1 rounded-lg bg-[#121C36] hover:bg-rose-950/60 border border-[#24315A] hover:border-rose-500/60 text-rose-400 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <X className="w-3 h-3" />
+                                <span>Clear Gap ({currentActive})</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Word Bank Chips Grid */}
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {(
+                              shuffledWordBankMap[currentQ.id] ||
+                              currentQ.wordBank ||
+                              []
+                            ).map((word, wIdx) => {
+                              const isWordSelected = selectedBankWord === word;
+                              const placedInGaps = gapNums.filter(
+                                n =>
+                                  studentChosenMap[String(n)] === word ||
+                                  studentChosenMap[n] === word
+                              );
+
+                              return (
+                                <button
+                                  key={wIdx}
+                                  type="button"
+                                  onClick={() => {
+                                    if (currentActive) {
+                                      handleFillGap(currentActive, word);
+                                    } else {
+                                      setSelectedBankWord(word === selectedBankWord ? null : word);
+                                    }
+                                  }}
+                                  className={`px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
+                                    isWordSelected
+                                      ? 'ring-2 ring-[#FFC700] bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700] shadow-[0_0_12px_rgba(255,199,0,0.3)]'
+                                      : placedInGaps.length > 0
+                                      ? 'bg-[#121C36] border-[#2F52FF] text-[#E6ECFA] hover:border-[#60A5FA]'
+                                      : 'bg-[#121C36] border-[#24315A] text-[#E6ECFA] hover:border-[#2F52FF]'
+                                  }`}
+                                >
+                                  <span>{word}</span>
+                                  {placedInGaps.length > 0 && (
+                                    <span className="px-1.5 py-0.2 rounded bg-[#0A1224] text-[#60A5FA] text-[10px] font-mono border border-[#24315A]">
+                                      in ({placedInGaps.join(',')})
+                                    </span>
+                                  )}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        /* PER-GAP OPTIONS (NO LETTERS A, B, C, D) */
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between border-b border-[#24315A]/80 pb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="w-6 h-6 rounded-lg bg-[#2F52FF] text-white font-mono text-xs font-bold flex items-center justify-center">
+                                {currentActive}
+                              </span>
+                              <span className="text-xs font-bold text-[#E6ECFA]">
+                                Options for Gap ({currentActive}):
+                              </span>
+                            </div>
+
+                            {(studentChosenMap[String(currentActive)] || studentChosenMap[currentActive]) && (
+                              <button
+                                type="button"
+                                onClick={() => handleClearGap(currentActive)}
+                                className="px-2.5 py-1 rounded-lg bg-[#121C36] hover:bg-rose-950/60 border border-[#24315A] hover:border-rose-500/60 text-rose-400 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                              >
+                                <X className="w-3 h-3" />
+                                <span>Clear Gap ({currentActive})</span>
+                              </button>
+                            )}
+                          </div>
+
+                          {/* Gap Number Tabs */}
+                          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
+                            {gapNums.map(n => {
+                              const isFilled = Boolean(studentChosenMap[String(n)] || studentChosenMap[n]);
+                              const isCurrent = n === currentActive;
+                              return (
+                                <button
+                                  key={n}
+                                  type="button"
+                                  onClick={() => setActiveGapNum(n)}
+                                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold shrink-0 transition-all cursor-pointer border ${
+                                    isCurrent
+                                      ? 'bg-[#FFC700] text-[#0A1224] border-[#FFC700]'
+                                      : isFilled
+                                      ? 'bg-[#2F52FF]/20 text-[#60A5FA] border-[#2F52FF]/60'
+                                      : 'bg-[#121C36] text-[#9AA8C7] border-[#24315A]'
+                                  }`}
+                                >
+                                  ({n}){isFilled ? ' •' : ''}
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Full-width tappable chips with NO letters A, B, C, D */}
+                          <div className="space-y-2 pt-1">
+                            {(() => {
+                              const targetGap = currentQ.gaps?.find(g => g.gapNumber === currentActive);
+                              const optionsForThisGap =
+                                shuffledGapOptionsMap[currentQ.id]?.[currentActive] ||
+                                targetGap?.options ||
+                                [];
+                              const currentChosenVal =
+                                studentChosenMap[String(currentActive)] ||
+                                studentChosenMap[currentActive] ||
+                                '';
+
+                              if (optionsForThisGap.length === 0) {
+                                return (
+                                  <p className="text-xs text-[#9AA8C7] italic py-2">
+                                    No options found for gap ({currentActive}). Tap another gap above.
+                                  </p>
+                                );
+                              }
+
+                              return optionsForThisGap.map((opt, oIdx) => {
+                                const isChosen = currentChosenVal === opt;
+
+                                return (
+                                  <button
+                                    key={oIdx}
+                                    type="button"
+                                    onClick={() => handleFillGap(currentActive, opt)}
+                                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                                      isChosen
+                                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
+                                        : 'bg-[#121C36] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
+                                    }`}
+                                  >
+                                    <span
+                                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                                        isChosen
+                                          ? 'border-white bg-[#2F52FF]'
+                                          : 'border-[#24315A] bg-[#0A1224]'
+                                      }`}
+                                    >
+                                      {isChosen && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                    </span>
+                                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
+                                      {opt}
+                                    </span>
+                                    {isChosen && (
+                                      <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold shrink-0">
+                                        Selected
+                                      </span>
+                                    )}
+                                  </button>
+                                );
+                              });
+                            })()}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()}
+            </div>
+          ) : currentQ.type === 'theory-self-check' ? (
             <div className="space-y-3 pt-1">
               {!revealedModelAnswers[currentQ.id] ? (
                 <div className="p-4 rounded-xl bg-[#0A1224] border border-[#24315A] text-center space-y-2.5">
@@ -1409,7 +1870,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       const earned = reviewAttempt.questionScores?.[q.id];
       let isFullyCorrect = false;
 
-      if (earned !== undefined) {
+      if (q.type === 'fill-gaps') {
+        const ptsPerGap = q.pointsPerGap || matchingKey?.pointsPerGap || 1;
+        const totalGapsCount = Math.max(
+          q.gaps?.length || 0,
+          Object.keys(matchingKey?.gapAnswers || {}).length,
+          1
+        );
+        const maxPossibleForQ = totalGapsCount * ptsPerGap;
+        isFullyCorrect = earned !== undefined && earned >= maxPossibleForQ;
+      } else if (earned !== undefined) {
         isFullyCorrect = earned >= ptsPerQ;
       } else {
         if (q.type === 'theory-self-check') {
@@ -1712,13 +2182,24 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 const isTheoryBest = q.type === 'theory-best';
                 const isSelectAll = q.type === 'theory-select-all';
                 const isSelfCheck = q.type === 'theory-self-check';
+                const isFillGaps = q.type === 'fill-gaps';
+
+                const maxPtsForQ = isFillGaps
+                  ? Math.max(q.gaps?.length || 0, Object.keys(matchingKey?.gapAnswers || {}).length, 1) * (q.pointsPerGap || matchingKey?.pointsPerGap || 1)
+                  : ptsPerQ;
 
                 const chosen = reviewAttempt.answers[q.id];
-                const isFullyCorrect = earned >= ptsPerQ;
-                const isPartial = earned > 0 && earned < ptsPerQ;
+                const isFullyCorrect = earned >= maxPtsForQ;
+                const isPartial = earned > 0 && earned < maxPtsForQ;
 
                 let isUnanswered = false;
-                if (isSelectAll) {
+                if (isFillGaps) {
+                  isUnanswered =
+                    !chosen ||
+                    typeof chosen !== 'object' ||
+                    Array.isArray(chosen) ||
+                    Object.values(chosen).filter(v => Boolean(v && String(v).trim())).length === 0;
+                } else if (isSelectAll) {
                   isUnanswered = !Array.isArray(chosen) || chosen.length === 0;
                 } else if (isSelfCheck) {
                   isUnanswered = !chosen;
@@ -1754,7 +2235,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                         </span>
 
                         <span className="px-2 py-0.5 rounded bg-[#0A1224] text-[#60A5FA] border border-[#24315A] text-[10px] font-bold">
-                          {isTheoryBest
+                          {isFillGaps
+                            ? 'Fill in the Gaps'
+                            : isTheoryBest
                             ? 'Theory (Best Answer)'
                             : isSelectAll
                             ? 'Theory (Select All)'
@@ -1767,19 +2250,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
                         {isFullyCorrect ? (
                           <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-bold text-[10px] flex items-center gap-1 border border-emerald-500/30">
-                            <Check className="w-3 h-3" /> Correct [{earned}/{ptsPerQ} pts]
+                            <Check className="w-3 h-3" /> Correct [{earned}/{maxPtsForQ} pts]
                           </span>
                         ) : isPartial ? (
                           <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold text-[10px] flex items-center gap-1 border border-amber-500/40">
-                            Partial Credit [{earned}/{ptsPerQ} pts]
+                            Partial Credit [{earned}/{maxPtsForQ} pts]
                           </span>
                         ) : isUnanswered ? (
                           <span className="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 font-bold text-[10px] flex items-center gap-1 border border-amber-500/30">
-                            Unanswered [0/{ptsPerQ} pts]
+                            Unanswered [0/{maxPtsForQ} pts]
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-rose-400 font-bold text-[10px] flex items-center gap-1 border border-rose-500/30">
-                            <X className="w-3 h-3" /> Incorrect [0/{ptsPerQ} pts]
+                            <X className="w-3 h-3" /> Incorrect [0/{maxPtsForQ} pts]
                           </span>
                         )}
                       </div>
@@ -1802,10 +2285,99 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                       </button>
                     </div>
 
-                    {/* Question Prompt Text */}
-                    <p className="text-xs sm:text-sm font-bold text-[#E6ECFA] leading-snug">
-                      {q.text}
-                    </p>
+                    {/* Question Prompt Text (for non-gap questions) */}
+                    {!isFillGaps && (
+                      <p className="text-xs sm:text-sm font-bold text-[#E6ECFA] leading-snug">
+                        {q.text}
+                      </p>
+                    )}
+
+                    {/* 0. FILL IN THE GAPS (REVIEW PASSAGE WITH EMBEDDED COLOR-CODED PILLS) */}
+                    {isFillGaps && (() => {
+                      const gapAnswers = matchingKey?.gapAnswers || {};
+                      const studentAnswers: Record<string, string> =
+                        chosen && typeof chosen === 'object' && !Array.isArray(chosen) ? chosen : {};
+                      const ptsPerGap = q.pointsPerGap || matchingKey?.pointsPerGap || 1;
+                      const passage = q.text || '';
+                      const tokens = passage.split(/(\[\d+\])/g);
+                      const gapNums = getQuestionGapNumbers(q);
+
+                      let correctCount = 0;
+                      gapNums.forEach(n => {
+                        const sAns = studentAnswers[String(n)] || studentAnswers[n];
+                        const cAns = gapAnswers[String(n)] || gapAnswers[n];
+                        if (sAns && cAns && String(sAns).trim().toLowerCase() === String(cAns).trim().toLowerCase()) {
+                          correctCount++;
+                        }
+                      });
+
+                      return (
+                        <div className="space-y-3 pt-1">
+                          {/* Full passage with every gap filled in, green for correct and red for wrong with correct answer beside it */}
+                          <div className="p-4 sm:p-5 rounded-2xl bg-[#0A1224] border border-[#24315A] text-sm sm:text-base leading-loose text-[#E6ECFA]">
+                            {tokens.map((token, tIdx) => {
+                              const match = token.match(/^\[(\d+)\]$/);
+                              if (match) {
+                                const gapNum = parseInt(match[1], 10);
+                                const studentWord = studentAnswers[String(gapNum)] || studentAnswers[gapNum];
+                                const correctWord = gapAnswers[String(gapNum)] || gapAnswers[gapNum] || '—';
+                                const isGapCorrect =
+                                  studentWord &&
+                                  correctWord &&
+                                  String(studentWord).trim().toLowerCase() === String(correctWord).trim().toLowerCase();
+
+                                if (isGapCorrect) {
+                                  return (
+                                    <span
+                                      key={tIdx}
+                                      className="inline-flex items-center gap-1.5 px-3 py-1 mx-1 my-1 rounded-xl bg-emerald-950/80 border border-emerald-500/80 text-emerald-300 font-bold text-xs sm:text-sm shadow-sm"
+                                    >
+                                      <span className="text-[10px] sm:text-xs font-mono text-emerald-400/80">({gapNum})</span>
+                                      <Check className="w-3.5 h-3.5 text-emerald-400 stroke-[3]" />
+                                      <span>{studentWord}</span>
+                                    </span>
+                                  );
+                                }
+
+                                return (
+                                  <span
+                                    key={tIdx}
+                                    className="inline-flex items-center flex-wrap gap-1.5 px-3 py-1 mx-1 my-1 rounded-xl bg-rose-950/80 border border-rose-500/80 text-rose-300 font-bold text-xs sm:text-sm shadow-sm"
+                                  >
+                                    <span className="text-[10px] sm:text-xs font-mono text-rose-400/80">({gapNum})</span>
+                                    {studentWord ? (
+                                      <>
+                                        <X className="w-3.5 h-3.5 text-rose-400 stroke-[3]" />
+                                        <span className="line-through text-rose-300/80">{studentWord}</span>
+                                        <span className="text-[#9AA8C7] font-semibold text-xs mx-0.5">Ans:</span>
+                                        <span className="text-emerald-400 font-extrabold">{correctWord}</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <span className="italic text-rose-300/80">(blank)</span>
+                                        <span className="text-[#9AA8C7] font-semibold text-xs mx-0.5">Ans:</span>
+                                        <span className="text-emerald-400 font-extrabold">{correctWord}</span>
+                                      </>
+                                    )}
+                                  </span>
+                                );
+                              }
+                              return <span key={tIdx}>{token}</span>;
+                            })}
+                          </div>
+
+                          {/* Gap Score Breakdown Summary */}
+                          <div className="flex items-center justify-between px-3.5 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs">
+                            <span className="text-[#9AA8C7]">
+                              Gap Breakdown: <strong className="text-[#FFC700]">{correctCount} of {gapNums.length}</strong> gaps correct
+                            </span>
+                            <span className="font-mono text-emerald-400 font-bold">
+                              {earned} / {gapNums.length * ptsPerGap} pts ({ptsPerGap} pt/gap)
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* 1. THEORY (PICK THE BEST ANSWER) - NO LETTERS A-D */}
                     {isTheoryBest && (() => {
@@ -1989,7 +2561,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     })()}
 
                     {/* 4. MULTIPLE CHOICE & TRUE/FALSE - COMPARISON CARDS */}
-                    {!isTheoryBest && !isSelectAll && !isSelfCheck && (() => {
+                    {!isFillGaps && !isTheoryBest && !isSelectAll && !isSelfCheck && (() => {
                       const correctIdx = matchingKey?.correctOptionIndex ?? -1;
                       const chosenIdx = typeof chosen === 'number' ? chosen : -1;
                       const chosenOptionText =

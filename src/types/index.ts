@@ -359,7 +359,13 @@ export type QuizQuestionType =
   | 'true-false'
   | 'theory-best'
   | 'theory-select-all'
-  | 'theory-self-check';
+  | 'theory-self-check'
+  | 'fill-gaps';
+
+export interface GapItem {
+  gapNumber: number; // e.g. 1, 2, 3...
+  options?: string[]; // Per-gap option chips (NO letters A, B, C, D)
+}
 
 export interface QuizQuestion {
   id: string;
@@ -367,6 +373,11 @@ export interface QuizQuestion {
   type?: QuizQuestionType;
   options: string[]; // Options for MC, True/False, Theory (best answer), Theory (select all)
   modelAnswer?: string; // Model answer for Theory (self-check)
+  // Fill in the gaps (tap to pick)
+  gaps?: GapItem[];
+  sharedWordBank?: boolean; // True when questions use shared word bank
+  wordBank?: string[]; // Word chips for shared bank
+  pointsPerGap?: number; // Points per gap (default 1)
 }
 
 export interface QuizKeyItem {
@@ -376,6 +387,9 @@ export interface QuizKeyItem {
   modelAnswer?: string; // Model answer for Theory (self-check)
   explanation: string;
   whyNotNotes?: Record<string, string>; // e.g. { 'A': '...', 'B': '...' }
+  // Fill in the gaps:
+  gapAnswers?: Record<string, string>; // gapNumber as string or number -> correct word/phrase
+  pointsPerGap?: number;
 }
 
 export interface QuizItem {
@@ -454,10 +468,15 @@ export interface MockExamQuestionReview {
   text: string;
   options: string[];
   type?: QuizQuestionType;
-  studentAnswer: any; // number | number[] | string | null
+  studentAnswer: any; // number | number[] | string | Record<string, string> | null
   correctOptionIndex?: number;
   correctOptionIndices?: number[];
   modelAnswer?: string;
+  gaps?: GapItem[];
+  sharedWordBank?: boolean;
+  wordBank?: string[];
+  gapAnswers?: Record<string, string>;
+  pointsPerGap?: number;
   isCorrect: boolean;
   explanation?: string;
   whyNotNotes?: Record<string, string>;

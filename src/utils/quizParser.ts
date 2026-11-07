@@ -51,20 +51,27 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     const lines = block.split('\n');
 
     let questionText = '';
-    let questionType: 'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check' = 'multiple-choice';
+    let questionType: 'multiple-choice' | 'true-false' | 'theory-best' | 'theory-select-all' | 'theory-self-check' | 'fill-gaps' = 'multiple-choice';
     const parsedOptions: { text: string; isCorrect: boolean; letter?: string }[] = [];
     let answerLetter = '';
     const modelAnswerLines: string[] = [];
     const explanationLines: string[] = [];
     const whyNotNotes: Record<string, string> = {};
 
-    let currentSection: 'question' | 'options' | 'modelAnswer' | 'explanation' | 'whyNot' = 'question';
+    // Fill in the gaps (tap to pick) data structures
+    const gapsMap: Record<number, { options: string[]; correctOption: string }> = {};
+    let sharedWordBank = false;
+    const wordBankWords: string[] = [];
+    const sharedAnswersMap: Record<number, string> = {};
+    let pointsPerGap = 1;
+
+    let currentSection: 'question' | 'options' | 'modelAnswer' | 'explanation' | 'whyNot' | 'gaps' | 'bank' = 'question';
     let currentWhyNotTarget = '';
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const trimmed = line.trim();
-      if (!trimmed && currentSection !== 'explanation' && currentSection !== 'modelAnswer') {
+      if (!trimmed && currentSection !== 'explanation' && currentSection !== 'modelAnswer' && currentSection !== 'bank') {
         continue;
       }
 
@@ -72,19 +79,155 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       const typeMatch = trimmed.match(/^(?:Type|Question\s*Type)\s*[:=\-]\s*(.*)$/i);
       if (typeMatch) {
         const typeVal = typeMatch[1].trim().toLowerCase();
-        if (typeVal.includes('select') || typeVal.includes('all that apply')) {
+        if (typeVal.includes('bank') || typeVal.includes('gap') || typeVal.includes('fill')) {
+          questionType = 'fill-gaps';
+          sharedWordBank = true;
+          currentSection = 'gaps';
+        } else if (typeVal.includes('select') || typeVal.includes('all that apply')) {
           questionType = 'theory-select-all';
+          currentSection = 'options';
         } else if (typeVal.includes('self') || typeVal.includes('check')) {
           questionType = 'theory-self-check';
+          currentSection = 'options';
         } else if (typeVal.includes('theory') || typeVal.includes('best')) {
           questionType = 'theory-best';
+          currentSection = 'options';
         } else if (typeVal.includes('true') || typeVal.includes('tf') || typeVal.includes('false')) {
           questionType = 'true-false';
+          currentSection = 'options';
         } else {
           questionType = 'multiple-choice';
+          currentSection = 'options';
         }
-        currentSection = 'options';
         continue;
+      }
+
+      // Check for Points per gap or Points line
+      const pointsMatch = trimmed.match(/^(?:Points(?:\s*per\s*gap)?|Pts)\s*[:=\-]\s*(\d+)$/i);
+      if (pointsMatch) {
+        const parsedPts = parseInt(pointsMatch[1], 10);
+        if (!isNaN(parsedPts) && parsedPts >= 1) {
+          pointsPerGap = parsedPts;
+        }
+        continue;
+      }
+
+      // Check for Answers line in Word Bank mode: e.g. Answers: 1. modem | 2. internet | 3. purposes...
+      const answersMatch = trimmed.match(/^(?:Answers|Answer|Keys|Key)\s*[:=\-]\s*(.*)$/i);
+      const isBankAnswersLine = answersMatch && (
+        questionType === 'fill-gaps' ||
+        sharedWordBank ||
+        answersMatch[1].includes('|') ||
+        answersMatch[1].includes(';') ||
+        answersMatch[1].includes('=') ||
+        /\b\d+\s*[\.\=\:\-]\s*\S+/.test(answersMatch[1])
+      );
+
+      if (isBankAnswersLine) {
+        questionType = 'fill-gaps';
+        sharedWordBank = true;
+        currentSection = 'answers';
+        const rawAns = answersMatch[1].trim();
+        if (rawAns) {
+          // Parse pairs e.g. 1. modem | 2. internet or 1=modem; 2=internet
+          const pairRegex = /(?:(?:Gap\s*)?(\d+)\s*[\.\=\:\-]\s*([^|;\n]+))/gi;
+          let pm: RegExpExecArray | null;
+          let matchFound = false;
+          while ((pm = pairRegex.exec(rawAns)) !== null) {
+            const gNum = parseInt(pm[1], 10);
+            const word = pm[2].trim().replace(/\.$/, '');
+            if (word) {
+              sharedAnswersMap[gNum] = word;
+              matchFound = true;
+            }
+          }
+          if (!matchFound && (rawAns.includes('|') || rawAns.includes(';') || rawAns.includes(','))) {
+            const parts = rawAns.split(/[|;]/).map(p => p.trim()).filter(Boolean);
+            parts.forEach((p, pIdx) => {
+              const cleaned = p.replace(/^(?:(?:Gap\s*)?\d+[\.\=\:\-]\s*)/i, '').trim().replace(/\.$/, '');
+              if (cleaned) {
+                sharedAnswersMap[pIdx + 1] = cleaned;
+              }
+            });
+          }
+        }
+        continue;
+      }
+
+      // If we are currently reading continuation lines of Answers:
+      if (currentSection === 'answers') {
+        if (/^(?:Explanation|Explain|Reason|Why\s+not|Type|Question\s*Type|Q\d*)\s*[:=\-]/i.test(trimmed)) {
+          // Fall through to other section handlers
+        } else {
+          const pairRegex = /(?:(?:Gap\s*)?(\d+)\s*[\.\=\:\-]\s*([^|;\n]+))/gi;
+          let pm: RegExpExecArray | null;
+          let matchFound = false;
+          while ((pm = pairRegex.exec(trimmed)) !== null) {
+            const gNum = parseInt(pm[1], 10);
+            const word = pm[2].trim().replace(/\.$/, '');
+            if (word) {
+              sharedAnswersMap[gNum] = word;
+              matchFound = true;
+            }
+          }
+          if (!matchFound && (trimmed.includes('|') || trimmed.includes(';'))) {
+            const parts = trimmed.split(/[|;]/).map(p => p.trim()).filter(Boolean);
+            const existingCount = Object.keys(sharedAnswersMap).length;
+            parts.forEach((p, pIdx) => {
+              const cleaned = p.replace(/^(?:(?:Gap\s*)?\d+[\.\=\:\-]\s*)/i, '').trim().replace(/\.$/, '');
+              if (cleaned) {
+                sharedAnswersMap[existingCount + pIdx + 1] = cleaned;
+              }
+            });
+          }
+          continue;
+        }
+      }
+
+      // Check for legacy Gap X: *option | option2 | option3
+      const gapMatch = trimmed.match(/^(?:Gap|Blank|Gap\s*#)\s*(\d+)\s*[:=\-]\s*(.+)$/i);
+      if (gapMatch) {
+        questionType = 'fill-gaps';
+        currentSection = 'gaps';
+        const gapNum = parseInt(gapMatch[1], 10);
+        const rawOpts = gapMatch[2].split('|').map(o => o.trim()).filter(Boolean);
+        let correctOpt = '';
+        const cleanOpts: string[] = [];
+        rawOpts.forEach(opt => {
+          if (opt.startsWith('*') || opt.endsWith('*')) {
+            const stripped = opt.replace(/^\*+|\*+$/g, '').trim();
+            correctOpt = stripped;
+            cleanOpts.push(stripped);
+          } else {
+            cleanOpts.push(opt);
+          }
+        });
+        gapsMap[gapNum] = { options: cleanOpts, correctOption: correctOpt };
+        continue;
+      }
+
+      // Check for legacy Bank: word1, word2, word3
+      const bankMatch = trimmed.match(/^(?:Bank|Word\s*Bank|Shared\s*Bank|Shared\s*Word\s*Bank)\s*[:=\-]\s*(.*)$/i);
+      if (bankMatch) {
+        questionType = 'fill-gaps';
+        sharedWordBank = true;
+        currentSection = 'bank';
+        if (bankMatch[1].trim()) {
+          const words = bankMatch[1].split(/[|,;]/).map(w => w.trim()).filter(Boolean);
+          wordBankWords.push(...words);
+        }
+        continue;
+      }
+
+      // If in legacy bank section and reading more words
+      if (currentSection === 'bank') {
+        if (/^(?:Answers|Answer|Explanation|Explain|Reason|Q\d*)\s*[:=\-]/i.test(trimmed)) {
+          // Fall through
+        } else {
+          const words = trimmed.split(/[|,;]/).map(w => w.trim()).filter(Boolean);
+          wordBankWords.push(...words);
+          continue;
+        }
       }
 
       // Check if line is Model Answer line (for self-check)
@@ -100,7 +243,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         continue;
       }
 
-      // Check if line is Answer line
+      // Check if line is standard Answer line (for MC or TF)
       const ansMatch = trimmed.match(/^(?:Answer|Ans|Correct|Correct\s*Answer)\s*[:=\-]\s*(.+)$/i);
       if (ansMatch) {
         const rawAns = ansMatch[1].trim();
@@ -170,25 +313,32 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         continue;
       }
 
-      // Check for standalone option line: e.g. "A) option text" or "A. option text"
-      const singleOptionMatch = trimmed.match(/^([A-Fa-f])[\)\.\:]\s*(.*)$/);
-      if (singleOptionMatch && !trimmed.includes(') ') && !trimmed.includes('. ')) {
+      // Check for standalone option line: e.g. "A) option text", "*A) option text", or "A) *option text"
+      // Ensure it does not have a second option on the same line (which would be inline options)
+      const hasMultipleOptionsOnLine = /\s+[A-Fa-f][\)\.\:]\s+/.test(trimmed);
+      const singleOptionMatch = !hasMultipleOptionsOnLine ? trimmed.match(/^(\*)?\s*([A-Fa-f])[\)\.\:]\s*(\*)?\s*(.*)$/) : null;
+      if (singleOptionMatch) {
         currentSection = 'options';
+        const isStar = Boolean(singleOptionMatch[1] || singleOptionMatch[3] || singleOptionMatch[4].startsWith('*'));
+        const cleanOptText = singleOptionMatch[4].replace(/^\*\s*/, '').trim();
         parsedOptions.push({
-          letter: singleOptionMatch[1].toUpperCase(),
-          text: singleOptionMatch[2].trim(),
-          isCorrect: false
+          letter: singleOptionMatch[2].toUpperCase(),
+          text: cleanOptText,
+          isCorrect: isStar
         });
         continue;
       }
 
-      // Check for inline options e.g. "A) option  B) option  C) option"
+      // Check for inline options e.g. "A) option  B) option  *C) option"
       const inlineMatches: { letter: string; text: string; isCorrect: boolean }[] = [];
       let m: RegExpExecArray | null;
-      const re = /([A-Fa-f])[\)\.\:]\s*(.*?)(?=\s+[A-Fa-f][\)\.\:]|$)/g;
+      const re = /(\*)?\s*([A-Fa-f])[\)\.\:]\s*(\*)?\s*(.*?)(?=\s+(?:\*)?\s*[A-Fa-f][\)\.\:]|$)/g;
       while ((m = re.exec(trimmed)) !== null) {
-        if (m[2].trim()) {
-          inlineMatches.push({ letter: m[1].toUpperCase(), text: m[2].trim(), isCorrect: false });
+        const optBody = (m[4] || '').trim();
+        if (optBody) {
+          const isStar = Boolean(m[1] || m[3] || optBody.startsWith('*'));
+          const cleanText = optBody.replace(/^\*\s*/, '').trim();
+          inlineMatches.push({ letter: m[2].toUpperCase(), text: cleanText, isCorrect: isStar });
         }
       }
 
@@ -223,6 +373,122 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     }
 
     const qId = 'q_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7) + '_' + blockNum;
+
+    // 0. Handle Fill in the Gaps (Tap to pick) questions
+    if (questionType === 'fill-gaps') {
+      // Find all gaps mentioned in question text [1], [2], etc.
+      const detectedGaps: number[] = [];
+      const gapTokenRegex = /(?:\[(\d+)\]|\((\d+)\))/g;
+      let mToken: RegExpExecArray | null;
+      while ((mToken = gapTokenRegex.exec(questionText)) !== null) {
+        const num = parseInt(mToken[1] || mToken[2], 10);
+        if (!isNaN(num) && !detectedGaps.includes(num)) {
+          detectedGaps.push(num);
+        }
+      }
+      detectedGaps.sort((a, b) => a - b);
+
+      const allGapNumbers = Array.from(new Set([
+        ...detectedGaps,
+        ...Object.keys(gapsMap).map(Number),
+        ...Object.keys(sharedAnswersMap).map(Number)
+      ])).sort((a, b) => a - b);
+
+      if (allGapNumbers.length === 0) {
+        errors.push(`Question #${blockNum} ("${questionText.slice(0, 30)}..."): Fill in the gaps requires numbered gaps in the passage, e.g. [1], [2], [3].`);
+        return;
+      }
+
+      if (allGapNumbers.length > 40) {
+        errors.push(`Question #${blockNum}: Has ${allGapNumbers.length} gaps (maximum supported is 40 gaps per question).`);
+        return;
+      }
+
+      const gapsList: { gapNumber: number; options: string[] }[] = [];
+      const gapAnswersMap: Record<string, string> = {};
+
+      if (sharedWordBank || Object.keys(sharedAnswersMap).length > 0 || Object.keys(gapsMap).length === 0) {
+        // ONE Shared Word Bank mode (ALL answers in gap order, no extra wrong options)
+        const allAnswersInGapOrder: string[] = [];
+        for (const gNum of allGapNumbers) {
+          const ans = sharedAnswersMap[gNum] || gapsMap[gNum]?.correctOption;
+          if (!ans || !ans.trim()) {
+            errors.push(`Question #${blockNum}: Gap [${gNum}] answer is missing under 'Answers: ...'.`);
+            return;
+          }
+          const cleanAns = ans.trim();
+          gapAnswersMap[String(gNum)] = cleanAns;
+          allAnswersInGapOrder.push(cleanAns);
+        }
+
+        if (allAnswersInGapOrder.length === 0) {
+          errors.push(`Question #${blockNum}: No answers found for gaps.`);
+          return;
+        }
+
+        items.push({
+          question: {
+            id: qId,
+            text: questionText.trim(),
+            type: 'fill-gaps',
+            options: [],
+            sharedWordBank: true,
+            wordBank: allAnswersInGapOrder,
+            pointsPerGap
+          },
+          key: {
+            questionId: qId,
+            explanation: fullExplanation.trim(),
+            gapAnswers: gapAnswersMap,
+            pointsPerGap,
+            whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+          }
+        });
+        return;
+      } else {
+        // Per-gap options mode: Gap 1: *modem | router | switch | hub
+        for (const gNum of allGapNumbers) {
+          const gapInfo = gapsMap[gNum];
+          if (!gapInfo) {
+            errors.push(`Question #${blockNum}: Gap ${gNum} options missing. Add 'Gap ${gNum}: *correct | wrong1 | wrong2'.`);
+            return;
+          }
+          if (gapInfo.options.length < 2) {
+            errors.push(`Question #${blockNum}: Gap ${gNum} requires at least 2 options.`);
+            return;
+          }
+          if (!gapInfo.correctOption) {
+            errors.push(`Question #${blockNum}: Gap ${gNum} has no correct option marked with * (e.g. Gap ${gNum}: *${gapInfo.options[0]} | ...).`);
+            return;
+          }
+          gapsList.push({
+            gapNumber: gNum,
+            options: gapInfo.options
+          });
+          gapAnswersMap[String(gNum)] = gapInfo.correctOption;
+        }
+
+        items.push({
+          question: {
+            id: qId,
+            text: questionText.trim(),
+            type: 'fill-gaps',
+            options: [],
+            gaps: gapsList,
+            sharedWordBank: false,
+            pointsPerGap
+          },
+          key: {
+            questionId: qId,
+            explanation: fullExplanation.trim(),
+            gapAnswers: gapAnswersMap,
+            pointsPerGap,
+            whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+          }
+        });
+        return;
+      }
+    }
 
     // 1. Handle Self-Check Theory questions
     if (questionType === 'theory-self-check') {
