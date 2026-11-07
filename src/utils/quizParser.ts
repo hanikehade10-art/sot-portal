@@ -65,7 +65,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
     const sharedAnswersMap: Record<number, string> = {};
     let pointsPerGap = 1;
 
-    let currentSection: 'question' | 'options' | 'modelAnswer' | 'explanation' | 'whyNot' | 'gaps' | 'bank' = 'question';
+    let currentSection: 'question' | 'options' | 'modelAnswer' | 'explanation' | 'whyNot' | 'gaps' | 'bank' | 'answers' = 'question';
     let currentWhyNotTarget = '';
 
     for (let i = 0; i < lines.length; i++) {
@@ -123,33 +123,46 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         /\b\d+\s*[\.\=\:\-]\s*\S+/.test(answersMatch[1])
       );
 
+      const parseBankAnswersSegment = (textToParse: string) => {
+        const segments = textToParse.split(/[|;]/).map(p => p.trim()).filter(Boolean);
+        segments.forEach(seg => {
+          const m = seg.match(/^(?:(?:Gap|Blank)\s*)?(\d+)\s*[\.\=\:\-]\s*(.+)$/i);
+          if (m) {
+            const gNum = parseInt(m[1], 10);
+            const word = m[2].trim().replace(/\.$/, '');
+            if (word) {
+              sharedAnswersMap[gNum] = word;
+            }
+          } else {
+            const pairRegex = /(?:(?:Gap|Blank)\s*)?(\d+)\s*[\.\=\:\-]\s*([^0-9\n|;]+)/gi;
+            let pm: RegExpExecArray | null;
+            let matchFound = false;
+            while ((pm = pairRegex.exec(seg)) !== null) {
+              const gNum = parseInt(pm[1], 10);
+              const word = pm[2].trim().replace(/\.$/, '');
+              if (word) {
+                sharedAnswersMap[gNum] = word;
+                matchFound = true;
+              }
+            }
+            if (!matchFound) {
+              const existingKeys = Object.keys(sharedAnswersMap).map(Number);
+              const nextNum = existingKeys.length > 0 ? Math.max(...existingKeys) + 1 : 1;
+              const word = seg.trim().replace(/\.$/, '');
+              if (word) {
+                sharedAnswersMap[nextNum] = word;
+              }
+            }
+          }
+        });
+      };
+
       if (isBankAnswersLine) {
         questionType = 'fill-gaps';
         sharedWordBank = true;
         currentSection = 'answers';
-        const rawAns = answersMatch[1].trim();
-        if (rawAns) {
-          // Parse pairs e.g. 1. modem | 2. internet or 1=modem; 2=internet
-          const pairRegex = /(?:(?:Gap\s*)?(\d+)\s*[\.\=\:\-]\s*([^|;\n]+))/gi;
-          let pm: RegExpExecArray | null;
-          let matchFound = false;
-          while ((pm = pairRegex.exec(rawAns)) !== null) {
-            const gNum = parseInt(pm[1], 10);
-            const word = pm[2].trim().replace(/\.$/, '');
-            if (word) {
-              sharedAnswersMap[gNum] = word;
-              matchFound = true;
-            }
-          }
-          if (!matchFound && (rawAns.includes('|') || rawAns.includes(';') || rawAns.includes(','))) {
-            const parts = rawAns.split(/[|;]/).map(p => p.trim()).filter(Boolean);
-            parts.forEach((p, pIdx) => {
-              const cleaned = p.replace(/^(?:(?:Gap\s*)?\d+[\.\=\:\-]\s*)/i, '').trim().replace(/\.$/, '');
-              if (cleaned) {
-                sharedAnswersMap[pIdx + 1] = cleaned;
-              }
-            });
-          }
+        if (answersMatch[1].trim()) {
+          parseBankAnswersSegment(answersMatch[1].trim());
         }
         continue;
       }
@@ -159,27 +172,7 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         if (/^(?:Explanation|Explain|Reason|Why\s+not|Type|Question\s*Type|Q\d*)\s*[:=\-]/i.test(trimmed)) {
           // Fall through to other section handlers
         } else {
-          const pairRegex = /(?:(?:Gap\s*)?(\d+)\s*[\.\=\:\-]\s*([^|;\n]+))/gi;
-          let pm: RegExpExecArray | null;
-          let matchFound = false;
-          while ((pm = pairRegex.exec(trimmed)) !== null) {
-            const gNum = parseInt(pm[1], 10);
-            const word = pm[2].trim().replace(/\.$/, '');
-            if (word) {
-              sharedAnswersMap[gNum] = word;
-              matchFound = true;
-            }
-          }
-          if (!matchFound && (trimmed.includes('|') || trimmed.includes(';'))) {
-            const parts = trimmed.split(/[|;]/).map(p => p.trim()).filter(Boolean);
-            const existingCount = Object.keys(sharedAnswersMap).length;
-            parts.forEach((p, pIdx) => {
-              const cleaned = p.replace(/^(?:(?:Gap\s*)?\d+[\.\=\:\-]\s*)/i, '').trim().replace(/\.$/, '');
-              if (cleaned) {
-                sharedAnswersMap[existingCount + pIdx + 1] = cleaned;
-              }
-            });
-          }
+          parseBankAnswersSegment(trimmed);
           continue;
         }
       }
@@ -314,9 +307,8 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       }
 
       // Check for standalone option line: e.g. "A) option text", "*A) option text", or "A) *option text"
-      // Ensure it does not have a second option on the same line (which would be inline options)
-      const hasMultipleOptionsOnLine = /\s+[A-Fa-f][\)\.\:]\s+/.test(trimmed);
-      const singleOptionMatch = !hasMultipleOptionsOnLine ? trimmed.match(/^(\*)?\s*([A-Fa-f])[\)\.\:]\s*(\*)?\s*(.*)$/) : null;
+      const hasMultipleOptionsOnLine = /(?:^|\s+)[A-Fa-f][\)\.\:]\s+.+\s+[A-Fa-f][\)\.\:]\s+/.test(trimmed);
+      const singleOptionMatch = !hasMultipleOptionsOnLine ? trimmed.match(/^(\*)?\s*([A-Fa-f])[\)\.\:]\s+(\*)?\s*(.*)$/) : null;
       if (singleOptionMatch) {
         currentSection = 'options';
         const isStar = Boolean(singleOptionMatch[1] || singleOptionMatch[3] || singleOptionMatch[4].startsWith('*'));
@@ -330,22 +322,24 @@ export function parseBulkQuizText(rawText: string): ParseResult {
       }
 
       // Check for inline options e.g. "A) option  B) option  *C) option"
-      const inlineMatches: { letter: string; text: string; isCorrect: boolean }[] = [];
-      let m: RegExpExecArray | null;
-      const re = /(\*)?\s*([A-Fa-f])[\)\.\:]\s*(\*)?\s*(.*?)(?=\s+(?:\*)?\s*[A-Fa-f][\)\.\:]|$)/g;
-      while ((m = re.exec(trimmed)) !== null) {
-        const optBody = (m[4] || '').trim();
-        if (optBody) {
-          const isStar = Boolean(m[1] || m[3] || optBody.startsWith('*'));
-          const cleanText = optBody.replace(/^\*\s*/, '').trim();
-          inlineMatches.push({ letter: m[2].toUpperCase(), text: cleanText, isCorrect: isStar });
+      if (hasMultipleOptionsOnLine) {
+        const inlineMatches: { letter: string; text: string; isCorrect: boolean }[] = [];
+        let m: RegExpExecArray | null;
+        const re = /(?:^|\s+)(\*)?\s*([A-Fa-f])[\)\.\:]\s+(.*?)(?=\s+(?:\*)?\s*[A-Fa-f][\)\.\:]\s+|$)/g;
+        while ((m = re.exec(trimmed)) !== null) {
+          const optBody = (m[3] || '').trim();
+          if (optBody) {
+            const isStar = Boolean(m[1] || optBody.startsWith('*'));
+            const cleanText = optBody.replace(/^\*\s*/, '').trim();
+            inlineMatches.push({ letter: m[2].toUpperCase(), text: cleanText, isCorrect: isStar });
+          }
         }
-      }
 
-      if (inlineMatches.length > 0) {
-        currentSection = 'options';
-        inlineMatches.forEach(opt => parsedOptions.push(opt));
-        continue;
+        if (inlineMatches.length >= 2) {
+          currentSection = 'options';
+          inlineMatches.forEach(opt => parsedOptions.push(opt));
+          continue;
+        }
       }
 
       // If in options section and not recognized as a new header, append to last option (for multiline options)
@@ -390,7 +384,6 @@ export function parseBulkQuizText(rawText: string): ParseResult {
 
       const allGapNumbers = Array.from(new Set([
         ...detectedGaps,
-        ...Object.keys(gapsMap).map(Number),
         ...Object.keys(sharedAnswersMap).map(Number)
       ])).sort((a, b) => a - b);
 
@@ -404,90 +397,47 @@ export function parseBulkQuizText(rawText: string): ParseResult {
         return;
       }
 
-      const gapsList: { gapNumber: number; options: string[] }[] = [];
       const gapAnswersMap: Record<string, string> = {};
+      const allAnswersInGapOrder: string[] = [];
 
-      if (sharedWordBank || Object.keys(sharedAnswersMap).length > 0 || Object.keys(gapsMap).length === 0) {
-        // ONE Shared Word Bank mode (ALL answers in gap order, no extra wrong options)
-        const allAnswersInGapOrder: string[] = [];
-        for (const gNum of allGapNumbers) {
-          const ans = sharedAnswersMap[gNum] || gapsMap[gNum]?.correctOption;
-          if (!ans || !ans.trim()) {
-            errors.push(`Question #${blockNum}: Gap [${gNum}] answer is missing under 'Answers: ...'.`);
-            return;
-          }
-          const cleanAns = ans.trim();
-          gapAnswersMap[String(gNum)] = cleanAns;
-          allAnswersInGapOrder.push(cleanAns);
-        }
-
-        if (allAnswersInGapOrder.length === 0) {
-          errors.push(`Question #${blockNum}: No answers found for gaps.`);
+      for (const gNum of allGapNumbers) {
+        const ans = sharedAnswersMap[gNum];
+        if (!ans || !ans.trim()) {
+          errors.push(`Question #${blockNum}: Gap [${gNum}] answer is missing under 'Answers: ...'.`);
           return;
         }
+        const cleanAns = ans.trim();
+        gapAnswersMap[String(gNum)] = cleanAns;
+        allAnswersInGapOrder.push(cleanAns);
+      }
 
-        items.push({
-          question: {
-            id: qId,
-            text: questionText.trim(),
-            type: 'fill-gaps',
-            options: [],
-            sharedWordBank: true,
-            wordBank: allAnswersInGapOrder,
-            pointsPerGap
-          },
-          key: {
-            questionId: qId,
-            explanation: fullExplanation.trim(),
-            gapAnswers: gapAnswersMap,
-            pointsPerGap,
-            whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
-          }
-        });
-        return;
-      } else {
-        // Per-gap options mode: Gap 1: *modem | router | switch | hub
-        for (const gNum of allGapNumbers) {
-          const gapInfo = gapsMap[gNum];
-          if (!gapInfo) {
-            errors.push(`Question #${blockNum}: Gap ${gNum} options missing. Add 'Gap ${gNum}: *correct | wrong1 | wrong2'.`);
-            return;
-          }
-          if (gapInfo.options.length < 2) {
-            errors.push(`Question #${blockNum}: Gap ${gNum} requires at least 2 options.`);
-            return;
-          }
-          if (!gapInfo.correctOption) {
-            errors.push(`Question #${blockNum}: Gap ${gNum} has no correct option marked with * (e.g. Gap ${gNum}: *${gapInfo.options[0]} | ...).`);
-            return;
-          }
-          gapsList.push({
-            gapNumber: gNum,
-            options: gapInfo.options
-          });
-          gapAnswersMap[String(gNum)] = gapInfo.correctOption;
-        }
-
-        items.push({
-          question: {
-            id: qId,
-            text: questionText.trim(),
-            type: 'fill-gaps',
-            options: [],
-            gaps: gapsList,
-            sharedWordBank: false,
-            pointsPerGap
-          },
-          key: {
-            questionId: qId,
-            explanation: fullExplanation.trim(),
-            gapAnswers: gapAnswersMap,
-            pointsPerGap,
-            whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
-          }
-        });
+      if (allAnswersInGapOrder.length === 0) {
+        errors.push(`Question #${blockNum}: No answers found for gaps under 'Answers: ...'.`);
         return;
       }
+
+      // Normalize passage so any (1), (2) gap notation becomes [1], [2]
+      const normalizedPassage = questionText.replace(/\((\d+)\)/g, '[$1]').trim();
+
+      items.push({
+        question: {
+          id: qId,
+          text: normalizedPassage,
+          type: 'fill-gaps',
+          options: [],
+          sharedWordBank: true,
+          wordBank: allAnswersInGapOrder, // ALL answers in gap order (e.g. 20 answers)
+          pointsPerGap: 1 // Scoring: each gap is worth 1 point
+        },
+        key: {
+          questionId: qId,
+          explanation: fullExplanation.trim(),
+          gapAnswers: gapAnswersMap,
+          pointsPerGap: 1,
+          whyNotNotes: Object.keys(whyNotNotes).length > 0 ? whyNotNotes : undefined
+        }
+      });
+      return;
     }
 
     // 1. Handle Self-Check Theory questions

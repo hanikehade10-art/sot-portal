@@ -2699,7 +2699,7 @@ Explanation: Feedback is the return information confirming message delivery.`}
                                 <div className="space-y-2 p-2.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[11px]">
                                   <div className="flex items-center justify-between text-[10px]">
                                     <span className="font-bold text-[#FFC700] uppercase">
-                                      {q.sharedWordBank ? 'Shared Word Bank' : 'Per-Gap Options'} • {q.pointsPerGap || 1} pt per gap
+                                      Shared Word Bank • 1 pt per gap
                                     </span>
                                     <span className="text-[#9AA8C7]">
                                       {Object.keys(keyItem?.gapAnswers || {}).length || q.gaps?.length || 0} gap(s)

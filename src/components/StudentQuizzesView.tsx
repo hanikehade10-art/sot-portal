@@ -119,6 +119,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Fill in the gaps (tap to pick) states
   const [activeGapNum, setActiveGapNum] = useState<number | null>(null);
+  const [selectedBankWord, setSelectedBankWord] = useState<string | null>(null);
   const [shuffledWordBankMap, setShuffledWordBankMap] = useState<Record<string, Array<{ id: string; word: string }>>>({});
   const [gapChipIdMap, setGapChipIdMap] = useState<Record<string, Record<string, string>>>({});
 
@@ -304,6 +305,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setShuffledWordBankMap(gapBankMap);
     setGapChipIdMap({});
     setActiveGapNum(null);
+    setSelectedBankWord(null);
     setRevealedModelAnswers({});
     setFlaggedQuestions(initFlags);
 
@@ -422,19 +424,22 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   };
 
   // Fill in the gaps: fill gap with chosen word chip
-  const handleFillGap = (gapNum: number, chip: { id: string; word: string }) => {
+  const handleFillGap = (gapNum: number, chipOrWord: { id: string; word: string } | string) => {
     if (!activeQuestions[currentQuestionIndex]) return;
     const q = activeQuestions[currentQuestionIndex];
     const qId = q.id;
+    const chipWord = typeof chipOrWord === 'string' ? chipOrWord : chipOrWord.word;
+    const chipId = typeof chipOrWord === 'string' ? `${qId}_g${gapNum}_${chipWord}` : chipOrWord.id;
+
     const currentGapAnswers: Record<string, string> = {
       ...(typeof selectedAnswers[qId] === 'object' && !Array.isArray(selectedAnswers[qId]) ? selectedAnswers[qId] : {})
     };
-    currentGapAnswers[String(gapNum)] = chip.word;
+    currentGapAnswers[String(gapNum)] = chipWord;
 
     const currentChips: Record<string, string> = {
       ...(gapChipIdMap[qId] || {})
     };
-    currentChips[String(gapNum)] = chip.id;
+    currentChips[String(gapNum)] = chipId;
 
     setSelectedAnswers(prev => ({
       ...prev,
@@ -1277,7 +1282,8 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 const filledCount = gapNums.filter(n => Boolean(studentChosenMap[String(n)] || studentChosenMap[n])).length;
                 const totalGaps = gapNums.length;
                 const fillPercentage = totalGaps > 0 ? Math.round((filledCount / totalGaps) * 100) : 0;
-                const tokens = (currentQ.text || '').split(/(\[\d+\])/g);
+                const cleanPassage = (currentQ.text || '').replace(/\((\d+)\)/g, '[$1]');
+                const tokens = cleanPassage.split(/(\[\d+\])/g);
 
                 return (
                   <>
@@ -1295,9 +1301,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                               key={tIdx}
                               type="button"
                               onClick={() => {
-                                if (currentQ.sharedWordBank && selectedBankWord) {
-                                  // Tapped a word first, then tapped this gap -> fill it!
-                                  handleFillGap(gapNum, selectedBankWord);
+                                if (chosenWord) {
+                                  // Tapping a filled gap clears it and frees the word!
+                                  handleClearGap(gapNum);
                                 } else {
                                   setActiveGapNum(gapNum);
                                 }
@@ -1306,14 +1312,18 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                                 isSelected
                                   ? 'ring-2 ring-[#FFC700] ring-offset-2 ring-offset-[#0A1224] bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.35)]'
                                   : chosenWord
-                                  ? 'bg-[#121C36] text-[#60A5FA] border-[#2F52FF] hover:border-[#60A5FA]'
+                                  ? 'bg-[#121C36] text-[#60A5FA] border-[#2F52FF] hover:border-rose-400 hover:text-rose-300'
                                   : 'bg-[#121C36]/80 text-[#9AA8C7] border-[#24315A] hover:border-[#FFC700]'
                               }`}
+                              title={chosenWord ? `Filled with "${chosenWord}". Tap to clear and free this word.` : `Tap to select Gap (${gapNum})`}
                             >
                               <span className="text-[10px] sm:text-xs font-mono opacity-80">({gapNum})</span>
                               <span className={chosenWord ? 'text-[#E6ECFA] font-extrabold' : 'text-[#60A5FA] tracking-widest'}>
                                 {chosenWord || '____'}
                               </span>
+                              {chosenWord && (
+                                <span className="text-[10px] text-rose-400/80 hover:text-rose-300 font-bold ml-0.5">✕</span>
+                              )}
                             </button>
                           );
                         }
@@ -1331,7 +1341,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                           {fillPercentage}%
                         </span>
                       </div>
-                      <div className="w-full bg-[#121C36] h-2.5 rounded-full overflow-hidden border border-[#24315A]">
+                      <div className="w-full bg-[#121C36] h-2 rounded-full overflow-hidden border border-[#24315A]">
                         <div
                           className="h-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-300"
                           style={{ width: `${fillPercentage}%` }}
@@ -1339,187 +1349,73 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                       </div>
                     </div>
 
-                    {/* Options Panel Directly Under Passage */}
+                    {/* Horizontal Shared Word Bank Panel Directly Under Passage */}
                     <div className="p-4 rounded-2xl bg-[#0A1224] border border-[#24315A] space-y-3">
-                      {currentQ.sharedWordBank ? (
-                        /* SHARED WORD BANK */
-                        <div className="space-y-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24315A]/80 pb-2">
-                            <div className="space-y-0.5">
-                              <span className="text-xs font-bold text-[#FFC700] flex items-center gap-1.5">
-                                <span>Shared Word Bank</span>
-                              </span>
-                              <span className="text-[11px] text-[#9AA8C7] block">
-                                {selectedBankWord
-                                  ? `Selected: "${selectedBankWord}". Now tap any gap above to place it!`
-                                  : `Gap (${currentActive}) selected. Tap a word below to place it, or tap any word first.`}
-                              </span>
-                            </div>
-
-                            {(studentChosenMap[String(currentActive)] || studentChosenMap[currentActive]) && (
-                              <button
-                                type="button"
-                                onClick={() => handleClearGap(currentActive)}
-                                className="px-2.5 py-1 rounded-lg bg-[#121C36] hover:bg-rose-950/60 border border-[#24315A] hover:border-rose-500/60 text-rose-400 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
-                              >
-                                <X className="w-3 h-3" />
-                                <span>Clear Gap ({currentActive})</span>
-                              </button>
-                            )}
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24315A]/80 pb-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-[#FFC700]">Word Bank</span>
+                            <span className="text-[11px] font-mono text-[#9AA8C7]">
+                              ({totalGaps - filledCount} remaining)
+                            </span>
                           </div>
-
-                          {/* Word Bank Chips Grid */}
-                          <div className="flex flex-wrap gap-2 pt-1">
-                            {(
-                              shuffledWordBankMap[currentQ.id] ||
-                              currentQ.wordBank ||
-                              []
-                            ).map((word, wIdx) => {
-                              const isWordSelected = selectedBankWord === word;
-                              const placedInGaps = gapNums.filter(
-                                n =>
-                                  studentChosenMap[String(n)] === word ||
-                                  studentChosenMap[n] === word
-                              );
-
-                              return (
-                                <button
-                                  key={wIdx}
-                                  type="button"
-                                  onClick={() => {
-                                    if (currentActive) {
-                                      handleFillGap(currentActive, word);
-                                    } else {
-                                      setSelectedBankWord(word === selectedBankWord ? null : word);
-                                    }
-                                  }}
-                                  className={`px-3 py-2 rounded-xl text-xs sm:text-sm font-bold border transition-all cursor-pointer flex items-center gap-1.5 ${
-                                    isWordSelected
-                                      ? 'ring-2 ring-[#FFC700] bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700] shadow-[0_0_12px_rgba(255,199,0,0.3)]'
-                                      : placedInGaps.length > 0
-                                      ? 'bg-[#121C36] border-[#2F52FF] text-[#E6ECFA] hover:border-[#60A5FA]'
-                                      : 'bg-[#121C36] border-[#24315A] text-[#E6ECFA] hover:border-[#2F52FF]'
-                                  }`}
-                                >
-                                  <span>{word}</span>
-                                  {placedInGaps.length > 0 && (
-                                    <span className="px-1.5 py-0.2 rounded bg-[#0A1224] text-[#60A5FA] text-[10px] font-mono border border-[#24315A]">
-                                      in ({placedInGaps.join(',')})
-                                    </span>
-                                  )}
-                                </button>
-                              );
-                            })}
-                          </div>
+                          <span className="text-[11px] text-[#9AA8C7] block">
+                            {filledCount === totalGaps
+                              ? 'All gaps filled! Tap any filled gap above to clear it and change answers before submitting.'
+                              : `Gap (${currentActive}) selected. Tap an available word below to place it.`}
+                          </span>
                         </div>
-                      ) : (
-                        /* PER-GAP OPTIONS (NO LETTERS A, B, C, D) */
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between border-b border-[#24315A]/80 pb-2">
-                            <div className="flex items-center gap-2">
-                              <span className="w-6 h-6 rounded-lg bg-[#2F52FF] text-white font-mono text-xs font-bold flex items-center justify-center">
-                                {currentActive}
-                              </span>
-                              <span className="text-xs font-bold text-[#E6ECFA]">
-                                Options for Gap ({currentActive}):
-                              </span>
-                            </div>
 
-                            {(studentChosenMap[String(currentActive)] || studentChosenMap[currentActive]) && (
+                        {(studentChosenMap[String(currentActive)] || studentChosenMap[currentActive]) && (
+                          <button
+                            type="button"
+                            onClick={() => handleClearGap(currentActive)}
+                            className="px-2.5 py-1 rounded-lg bg-[#121C36] hover:bg-rose-950/60 border border-[#24315A] hover:border-rose-500/60 text-rose-400 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                          >
+                            <X className="w-3 h-3" />
+                            <span>Clear Gap ({currentActive})</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Horizontal chips side by side in rows that wrap */}
+                      <div className="flex flex-wrap gap-2 pt-1">
+                        {(() => {
+                          const bankChips: Array<{ id: string; word: string }> =
+                            shuffledWordBankMap[currentQ.id] ||
+                            (currentQ.wordBank || []).map((w, idx) => ({ id: `${currentQ.id}_c${idx}`, word: w }));
+                          const usedChipIds = new Set(Object.values(gapChipIdMap[currentQ.id] || {}));
+
+                          return bankChips.map((chip, wIdx) => {
+                            const isUsed = usedChipIds.has(chip.id);
+
+                            return (
                               <button
+                                key={chip.id || wIdx}
                                 type="button"
-                                onClick={() => handleClearGap(currentActive)}
-                                className="px-2.5 py-1 rounded-lg bg-[#121C36] hover:bg-rose-950/60 border border-[#24315A] hover:border-rose-500/60 text-rose-400 text-[11px] font-bold transition-all cursor-pointer flex items-center gap-1"
+                                disabled={isUsed}
+                                onClick={() => {
+                                  if (!isUsed && currentActive) {
+                                    handleFillGap(currentActive, chip);
+                                  }
+                                }}
+                                className={`inline-flex items-center justify-center px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
+                                  isUsed
+                                    ? 'bg-[#0A1224]/70 text-[#9AA8C7]/30 border-[#24315A]/40 line-through opacity-35 cursor-not-allowed select-none'
+                                    : 'bg-[#121C36] border-[#2F52FF]/60 hover:border-[#FFC700] hover:bg-[#2F52FF]/20 text-[#E6ECFA] cursor-pointer shadow-sm active:scale-95'
+                                }`}
+                                title={
+                                  isUsed
+                                    ? `"${chip.word}" is already placed. Tap the filled gap above to free it.`
+                                    : `Tap to place "${chip.word}" in Gap (${currentActive})`
+                                }
                               >
-                                <X className="w-3 h-3" />
-                                <span>Clear Gap ({currentActive})</span>
+                                <span>{chip.word}</span>
                               </button>
-                            )}
-                          </div>
-
-                          {/* Gap Number Tabs */}
-                          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
-                            {gapNums.map(n => {
-                              const isFilled = Boolean(studentChosenMap[String(n)] || studentChosenMap[n]);
-                              const isCurrent = n === currentActive;
-                              return (
-                                <button
-                                  key={n}
-                                  type="button"
-                                  onClick={() => setActiveGapNum(n)}
-                                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold shrink-0 transition-all cursor-pointer border ${
-                                    isCurrent
-                                      ? 'bg-[#FFC700] text-[#0A1224] border-[#FFC700]'
-                                      : isFilled
-                                      ? 'bg-[#2F52FF]/20 text-[#60A5FA] border-[#2F52FF]/60'
-                                      : 'bg-[#121C36] text-[#9AA8C7] border-[#24315A]'
-                                  }`}
-                                >
-                                  ({n}){isFilled ? ' •' : ''}
-                                </button>
-                              );
-                            })}
-                          </div>
-
-                          {/* Full-width tappable chips with NO letters A, B, C, D */}
-                          <div className="space-y-2 pt-1">
-                            {(() => {
-                              const targetGap = currentQ.gaps?.find(g => g.gapNumber === currentActive);
-                              const optionsForThisGap =
-                                shuffledGapOptionsMap[currentQ.id]?.[currentActive] ||
-                                targetGap?.options ||
-                                [];
-                              const currentChosenVal =
-                                studentChosenMap[String(currentActive)] ||
-                                studentChosenMap[currentActive] ||
-                                '';
-
-                              if (optionsForThisGap.length === 0) {
-                                return (
-                                  <p className="text-xs text-[#9AA8C7] italic py-2">
-                                    No options found for gap ({currentActive}). Tap another gap above.
-                                  </p>
-                                );
-                              }
-
-                              return optionsForThisGap.map((opt, oIdx) => {
-                                const isChosen = currentChosenVal === opt;
-
-                                return (
-                                  <button
-                                    key={oIdx}
-                                    type="button"
-                                    onClick={() => handleFillGap(currentActive, opt)}
-                                    className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
-                                      isChosen
-                                        ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
-                                        : 'bg-[#121C36] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
-                                    }`}
-                                  >
-                                    <span
-                                      className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                                        isChosen
-                                          ? 'border-white bg-[#2F52FF]'
-                                          : 'border-[#24315A] bg-[#0A1224]'
-                                      }`}
-                                    >
-                                      {isChosen && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                                    </span>
-                                    <span className="text-xs sm:text-sm font-semibold leading-relaxed flex-1">
-                                      {opt}
-                                    </span>
-                                    {isChosen && (
-                                      <span className="px-2 py-0.5 rounded-full bg-white/20 text-white text-[10px] font-bold shrink-0">
-                                        Selected
-                                      </span>
-                                    )}
-                                  </button>
-                                );
-                              });
-                            })()}
-                          </div>
-                        </div>
-                      )}
+                            );
+                          });
+                        })()}
+                      </div>
                     </div>
                   </>
                 );
@@ -2297,8 +2193,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                       const gapAnswers = matchingKey?.gapAnswers || {};
                       const studentAnswers: Record<string, string> =
                         chosen && typeof chosen === 'object' && !Array.isArray(chosen) ? chosen : {};
-                      const ptsPerGap = q.pointsPerGap || matchingKey?.pointsPerGap || 1;
-                      const passage = q.text || '';
+                      const passage = (q.text || '').replace(/\((\d+)\)/g, '[$1]');
                       const tokens = passage.split(/(\[\d+\])/g);
                       const gapNums = getQuestionGapNumbers(q);
 
@@ -2372,7 +2267,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                               Gap Breakdown: <strong className="text-[#FFC700]">{correctCount} of {gapNums.length}</strong> gaps correct
                             </span>
                             <span className="font-mono text-emerald-400 font-bold">
-                              {earned} / {gapNums.length * ptsPerGap} pts ({ptsPerGap} pt/gap)
+                              {earned} / {gapNums.length} pts (1 pt/gap)
                             </span>
                           </div>
                         </div>
