@@ -39,6 +39,7 @@ import { StudentQuizzesView } from './StudentQuizzesView';
 import { QuizItem, UserProfile, QuizAttempt } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
 import { getCourseAccent } from '../config/courseAccents';
+import { CourseListSkeleton } from './SkeletonLoader';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -57,6 +58,47 @@ interface StudentResourcesViewProps {
   initialCourseId?: string | null;
   initialTopicId?: string | null;
 }
+
+const AnimatedProgressRing: React.FC<{ percentage: number; strokeColor: string }> = ({ percentage, strokeColor }) => {
+  const [animatedPct, setAnimatedPct] = useState(0);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setAnimatedPct(percentage);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setAnimatedPct(percentage);
+    }, 40);
+    return () => clearTimeout(timer);
+  }, [percentage]);
+
+  return (
+    <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
+      <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+        <path
+          className="text-[#0B1220]"
+          strokeWidth="3.5"
+          stroke="currentColor"
+          fill="none"
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+        />
+        <path
+          className="transition-all duration-300 ease-out"
+          stroke={strokeColor}
+          strokeDasharray={`${animatedPct}, 100`}
+          strokeWidth="3.5"
+          strokeLinecap="round"
+          fill="none"
+          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+        />
+      </svg>
+      <span className="absolute text-xs font-mono font-black text-[#FFFFFF]">
+        {percentage}%
+      </span>
+    </div>
+  );
+};
 
 type MainResourceTab = 'courses' | 'past-questions' | 'bookmarks';
 type CourseDetailTab = 'topics' | 'materials';
@@ -104,6 +146,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
 
   // Real-time synced data from Firestore
   const [courses, setCourses] = useState<CourseItem[]>(initialCourses);
+  const [isLoadingCourses, setIsLoadingCourses] = useState<boolean>(initialCourses.length === 0);
   const [topics, setTopics] = useState<TopicItem[]>([]);
   const [resources, setResources] = useState<ResourceItem[]>(initialResources);
 
@@ -132,8 +175,10 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
         list.push({ id: d.id, ...(d.data() as any) });
       });
       setCourses(list);
+      setIsLoadingCourses(false);
     }, (err) => {
       console.warn('Courses listener notice:', err);
+      setIsLoadingCourses(false);
     });
     return () => unsub();
   }, [department]);
@@ -550,7 +595,9 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 <span>{displayedCourses.length} {displayedCourses.length === 1 ? 'course' : 'courses'}</span>
               </div>
 
-              {displayedCourses.length === 0 ? (
+              {isLoadingCourses ? (
+                <CourseListSkeleton count={4} />
+              ) : displayedCourses.length === 0 ? (
                 <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
                   <BookOpen className="w-8 h-8 text-[#FFC700] mx-auto opacity-70" />
                   <p className="font-heading font-bold text-sm text-[#E6ECFA]">
@@ -564,7 +611,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  {displayedCourses.map(course => {
+                  {displayedCourses.map((course, cIdx) => {
                     const courseAccent = getCourseAccent(course.accentColor);
                     const courseTopicsList = topics.filter(t => t.courseId === course.id);
                     const courseCompletedTopics = courseTopicsList.filter(t => completedTopicsList.includes(t.id));
@@ -577,11 +624,12 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                     return (
                       <div
                         key={course.id}
+                        style={{ animationDelay: `${Math.min(cIdx * 40, 280)}ms` }}
                         onClick={() => {
                           setSelectedCourseId(course.id);
                           setCourseDetailTab('topics');
                         }}
-                        className={`rounded-2xl bg-[#111A2E] border border-[#24315A] ${courseAccent.borderHover} transition-all cursor-pointer group flex flex-col justify-between overflow-hidden shadow-sm hover:shadow-[0_8px_25px_rgba(47,82,255,0.15)] hover:scale-[1.01]`}
+                        className={`rounded-2xl bg-[#111A2E] border border-[#24315A] ${courseAccent.borderHover} transition-all cursor-pointer group flex flex-col justify-between overflow-hidden shadow-sm hover:shadow-[0_8px_25px_rgba(47,82,255,0.15)] hover:scale-[1.01] animate-card-slide`}
                       >
                         {/* Course Card Original Cover */}
                         {course.coverImageUrl ? (
@@ -683,7 +731,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                               </div>
                               <div className="w-full h-1.5 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/50">
                                 <div
-                                  className={`h-full rounded-full bg-gradient-to-r ${courseAccent.progressGradient} transition-all duration-300`}
+                                  className={`h-full rounded-full bg-gradient-to-r ${courseAccent.progressGradient} transition-all duration-300 ease-out`}
                                   style={{ width: `${progressPct}%` }}
                                 />
                               </div>
@@ -730,14 +778,14 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
               // Check if in-place curriculum quiz is open
               if (curriculumQuizState) {
                 return (
-                  <div className="space-y-4">
+                  <div className="space-y-4 animate-page-enter">
                     {/* Back arrow returns to curriculum */}
                     <div className="p-3.5 rounded-2xl bg-[#111A2E] border border-[#24315A] flex items-center justify-between">
                       <button
                         onClick={() => setCurriculumQuizState(null)}
-                        className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:underline cursor-pointer"
+                        className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:text-[#fde047] cursor-pointer group transition-colors"
                       >
-                        <ArrowLeft className="w-4 h-4" />
+                        <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
                         <span>Back to {selectedCourse.code} curriculum</span>
                       </button>
                       <span className="text-[11px] text-[#9FB0C8]">
@@ -772,7 +820,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
               const timeString = totalHours > 0 ? `${totalHours}h ${totalMins}m` : `${totalMins} mins`;
 
               return (
-                <div className="space-y-5">
+                <div className="space-y-5 animate-page-enter">
                   {/* Back Navigation Bar */}
                   <div className="flex items-center justify-between">
                     <button
@@ -781,9 +829,9 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         setSelectedCourseId(null);
                         setCurriculumQuizState(null);
                       }}
-                      className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer"
+                      className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer group"
                     >
-                      <ArrowLeft className="w-4 h-4" />
+                      <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
                       <span>Back to all courses</span>
                     </button>
 
@@ -851,29 +899,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
 
                     {/* Circular Progress Ring */}
                     <div className="flex items-center gap-4 bg-[#16223A] border border-[#24315A] p-3.5 rounded-2xl shrink-0 relative z-10">
-                      <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
-                        <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
-                          <path
-                            className="text-[#0B1220]"
-                            strokeWidth="3.5"
-                            stroke="currentColor"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                          <path
-                            className="transition-all duration-700 ease-out"
-                            stroke={courseAccent.stroke}
-                            strokeDasharray={`${coursePct}, 100`}
-                            strokeWidth="3.5"
-                            strokeLinecap="round"
-                            fill="none"
-                            d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                          />
-                        </svg>
-                        <span className="absolute text-xs font-mono font-black text-[#FFFFFF]">
-                          {coursePct}%
-                        </span>
-                      </div>
+                      <AnimatedProgressRing percentage={coursePct} strokeColor={courseAccent.stroke} />
 
                       <div className="text-left">
                         <span className="text-[10px] uppercase font-bold text-[#9FB0C8] tracking-wider block">

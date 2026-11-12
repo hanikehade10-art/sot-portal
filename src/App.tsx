@@ -151,6 +151,31 @@ function AppContent() {
     }
   }, [authReady, user, profile, isAdmin, currentView]);
 
+  // LOGGED-IN STUDENTS: If already logged in, skip landing page and open Home dashboard straight away
+  useEffect(() => {
+    if (authReady && user && currentView === 'landing') {
+      const path = window.location.pathname;
+      const isPublicDoc = path === '/contact' || path === '/faq' || path === '/privacy' || path === '/terms';
+      if (!isPublicDoc) {
+        if (isAdmin) {
+          const savedChoice = localStorage.getItem('sot_admin_view_choice') as AdminViewMode | null;
+          if (savedChoice === 'admin') {
+            navigateTo('admin');
+          } else if (savedChoice === 'rep') {
+            navigateTo('rep');
+          } else {
+            navigateTo('dashboard');
+          }
+        } else if (profile?.profileComplete || isRep) {
+          navigateTo('dashboard');
+        } else if (profile && !profile.profileComplete) {
+          setAuthModalMode('step2');
+          setAuthModalOpen(true);
+        }
+      }
+    }
+  }, [authReady, user, profile, isAdmin, isRep, currentView]);
+
   // Admin route protection: Require login and strict admin role for /admin
   useEffect(() => {
     if (currentView === 'admin' && authReady) {

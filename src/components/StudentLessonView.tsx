@@ -221,9 +221,9 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
         <div className="p-3.5 rounded-2xl bg-[#111A2E] border border-[#24315A] flex items-center justify-between">
           <button
             onClick={() => setActiveTopicQuizId(null)}
-            className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:underline cursor-pointer"
+            className="inline-flex items-center gap-2 text-xs font-bold text-[#FACC15] hover:text-[#fde047] cursor-pointer group transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>Back to Topic: {topic.title}</span>
           </button>
           <span className="text-[11px] text-[#9FB0C8]">
@@ -253,7 +253,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   }
 
   return (
-    <div className="space-y-6 pb-12">
+    <div className="space-y-6 pb-12 animate-page-enter">
       {/* ========================================================= */}
       {/* 1. BREADCRUMB & BACK NAVIGATION                           */}
       {/* ========================================================= */}
@@ -262,9 +262,9 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
           {/* Back button */}
           <button
             onClick={onBackToCourse}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FACC15] hover:text-[#fde047] transition-colors cursor-pointer group"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>Back to {course.code}</span>
           </button>
 
@@ -385,7 +385,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
           </div>
           <div className="w-full h-2 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/60">
             <div
-              className={`h-full rounded-full bg-gradient-to-r ${theme.progressGradient} transition-all duration-300`}
+              className={`h-full rounded-full bg-gradient-to-r ${theme.progressGradient} transition-all duration-300 ease-out`}
               style={{ width: `${Math.max(progressPercent, 4)}%` }}
             />
           </div>
@@ -741,7 +741,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
             onClick={() => onSelectTopic(prevTopic)}
             className="p-4 rounded-xl bg-[#111A2E] border border-[#24315A] hover:border-teal-500 text-left transition-all cursor-pointer group flex items-center gap-3"
           >
-            <ArrowLeft className="w-4 h-4 text-[#9FB0C8] group-hover:text-white shrink-0 group-hover:-translate-x-0.5 transition-transform" />
+            <ArrowLeft className="w-4 h-4 text-[#9FB0C8] group-hover:text-white shrink-0 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <div className="min-w-0">
               <span className="text-[10px] text-[#9FB0C8] uppercase font-bold block">
                 Previous Topic

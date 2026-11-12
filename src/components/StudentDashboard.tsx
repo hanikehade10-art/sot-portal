@@ -1242,7 +1242,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             onClick={handleGoBack}
             className="flex items-center gap-2 text-[#2F52FF] hover:text-[#5271FF] font-bold text-sm transition-colors cursor-pointer group"
           >
-            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-0.5 transition-transform" />
+            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span className="text-[#E6ECFA] font-bold text-base font-heading">
               {innerTitle || getTabTitle(activeTab)}
             </span>
@@ -1317,6 +1317,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Main Content Area */}
       <main className="flex-1 space-y-4">
+        <div key={activeTab + (isInner ? '-inner' : '')} className="animate-page-enter">
         {/* ======================================================== */}
         {/* VIEW 1: HOME (COMPACT & CLEAN)                           */}
         {/* ======================================================== */}
@@ -1360,7 +1361,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             {/* 1. GREETING CARD */}
-            <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
+            <div className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3 animate-card-slide" style={{ animationDelay: '0ms' }}>
               <div>
                 <h1 className="font-heading font-bold text-lg text-[#E6ECFA] flex items-center gap-1.5">
                   <span>{lagosGreetingData.greeting},</span>
@@ -1420,7 +1421,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             {/* 2. SEARCH BAR ("Search courses, topics, past questions") */}
-            <div className="relative">
+            <div className="relative animate-card-slide" style={{ animationDelay: '30ms' }}>
               <input
                 type="text"
                 value={homeSearchQuery}
@@ -1580,7 +1581,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {/* Featured Mock CBT Banner */}
                 <div
                   onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
-                  className="p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#16254a] to-[#121C36] border border-[#FFC700]/40 hover:border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.12)] flex items-center justify-between gap-3 cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] group"
+                  style={{ animationDelay: '60ms' }}
+                  className="p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#16254a] to-[#121C36] border border-[#FFC700]/40 hover:border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.12)] flex items-center justify-between gap-3 cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] group animate-card-slide"
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-xl bg-[#FFC700]/15 border border-[#FFC700]/40 text-[#FFC700] flex items-center justify-center shrink-0">
@@ -1610,7 +1612,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile: Mock CBT */}
                   <div
                     onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.2)] hover:scale-[1.02] active:scale-[0.98] group relative overflow-hidden"
+                    style={{ animationDelay: '80ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.2)] hover:scale-[1.02] active:scale-[0.98] group relative overflow-hidden animate-card-slide"
                   >
                     <span className="absolute top-2 right-2 px-1.5 py-0.2 rounded-full bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/40 font-extrabold text-[8px] uppercase tracking-wider">
                       Timed
@@ -1629,7 +1632,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 1: Courses */}
                   <div
                     onClick={() => navigateToTab('courses', 'Courses', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '100ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <BookOpen className="w-5 h-5 text-[#2F52FF]" />
@@ -1645,7 +1649,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 2: Past Questions */}
                   <div
                     onClick={() => navigateToTab('past-questions', 'Past Questions', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '120ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
                       <FileText className="w-5 h-5 text-[#FFC700]" />
@@ -1661,7 +1666,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile: Quizzes */}
                   <div
                     onClick={() => navigateToTab('quizzes', 'Quizzes', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '140ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <FileQuestion className="w-5 h-5 text-[#2F52FF]" />
@@ -1677,7 +1683,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 3: Timetable */}
                   <div
                     onClick={() => navigateToTab('timetables', 'Timetable', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '160ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <Calendar className="w-5 h-5 text-[#2F52FF]" />
@@ -1693,7 +1700,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 4: Announcements */}
                   <div
                     onClick={() => navigateToTab('announcements', 'Announcements', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group relative"
+                    style={{ animationDelay: '180ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group relative animate-card-slide"
                   >
                     {unreadAnnouncementsCount > 0 && (
                       <span className="absolute top-2.5 right-2.5 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-extrabold text-[9px]">
@@ -1714,7 +1722,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 5: GPA Calculator */}
                   <div
                     onClick={() => navigateToTab('gpa', 'GPA Calculator', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '200ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <Calculator className="w-5 h-5 text-[#2F52FF]" />
@@ -1730,7 +1739,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 6: Study Planner */}
                   <div
                     onClick={() => navigateToTab('study-planner', 'Study Planner', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '220ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
                       <ListTodo className="w-5 h-5 text-[#FFC700]" />
@@ -1746,7 +1756,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 7: Saved */}
                   <div
                     onClick={() => navigateToTab('bookmarks', 'Saved Items', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '240ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <Bookmark className="w-5 h-5 text-[#2F52FF]" />
@@ -1762,7 +1773,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 8: Communities & Links */}
                   <div
                     onClick={() => navigateToTab('links', 'Communities & Links', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '260ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
                       <Link2 className="w-5 h-5 text-[#FFC700]" />
@@ -1778,7 +1790,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 9: My Messages */}
                   <div
                     onClick={() => navigateToTab('my-messages', 'My Messages', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '270ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <MessageSquare className="w-5 h-5 text-[#2F52FF]" />
@@ -1794,7 +1807,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 10: Ask AI */}
                   <div
                     onClick={() => navigateToTab('ask-ai', 'Ask AI Study Helper', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '280ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
                       <Sparkles className="w-5 h-5 text-[#FFC700]" />
@@ -1810,7 +1824,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 11: Weekly Leaderboard */}
                   <div
                     onClick={() => navigateToTab('leaderboard', 'Department Leaderboard', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '290ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
                       <Trophy className="w-5 h-5 text-[#FFC700]" />
@@ -1826,7 +1841,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   {/* Tile 12: My Badges */}
                   <div
                     onClick={() => navigateToTab('badges', 'My Badges', true)}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group"
+                    style={{ animationDelay: '300ms' }}
+                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
                       <Award className="w-5 h-5 text-[#2F52FF]" />
@@ -2585,6 +2601,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             onRefreshProfile={refreshProfile}
           />
         )}
+        </div>
       </main>
 
       {/* ======================================================== */}

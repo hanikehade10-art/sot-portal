@@ -55,10 +55,10 @@ export const StudentBadgesView: React.FC<StudentBadgesViewProps> = ({
             <button
               type="button"
               onClick={onBackToHome}
-              className="p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-white transition-all cursor-pointer"
+              className="p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-white transition-all cursor-pointer group"
               title="Back to Home"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             </button>
           )}
           <div>

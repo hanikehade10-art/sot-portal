@@ -288,7 +288,7 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
             onClick={onBack}
             className="flex items-center gap-2 text-[#2F52FF] hover:text-[#5271FF] font-semibold text-sm transition-colors cursor-pointer group"
           >
-            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-0.5 transition-transform" />
+            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span className="text-[#E6ECFA] font-bold text-base font-heading">
               Past Questions
             </span>

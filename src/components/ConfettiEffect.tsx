@@ -17,12 +17,18 @@ interface Particle {
 }
 
 export const ConfettiEffect: React.FC<ConfettiEffectProps> = ({
-  durationMs = 3500,
+  durationMs = 2200,
   onComplete
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
+    // Respect prefers-reduced-motion: skip animation immediately
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      if (onComplete) onComplete();
+      return;
+    }
+
     const canvas = canvasRef.current;
     if (!canvas) return;
 

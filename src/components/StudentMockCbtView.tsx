@@ -498,10 +498,10 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
               <button
                 type="button"
                 onClick={onBackToHome}
-                className="p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-white transition-all cursor-pointer"
+                className="p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-white transition-all cursor-pointer group"
                 title="Back to Home"
               >
-                <ArrowLeft className="w-4 h-4" />
+                <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
               </button>
             )}
             <div>
@@ -1154,9 +1154,9 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
           <button
             type="button"
             onClick={() => setCurrentScreen('setup')}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:text-[#fde047] cursor-pointer group transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>Choose Another Course</span>
           </button>
 
@@ -1435,9 +1435,9 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
           <button
             type="button"
             onClick={() => setCurrentScreen('setup')}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:text-[#fde047] cursor-pointer group transition-colors"
           >
-            <ArrowLeft className="w-4 h-4" />
+            <ArrowLeft className="w-4 h-4 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>Back to Mock CBT Setup</span>
           </button>
           <span className="text-xs text-[#9AA8C7]">{pastAttempts.length} Total Exams</span>
