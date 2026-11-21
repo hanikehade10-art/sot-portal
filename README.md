@@ -1,0 +1,39 @@
+# SOT Portal
+
+A student-built academic portal for the School of Technology (SOT), Yaba College of Technology, Lagos, Nigeria.
+
+**Live site:** https://sot-portal-eta.vercel.app
+
+## The problem
+
+Students struggle to find course materials, past questions and announcements in one place, especially newly admitted students. SOT Portal puts them together in a simple app that works on any phone.
+
+## Features
+
+- Sign-up and login with email and password, with department and matric number (or JAMB number for new students)
+- Courses organised by department, level (ND1, ND2, HND1, HND2) and semester
+- Topics with notes, videos and PDF materials
+- Past questions, separated by department, level and semester
+- Quizzes: multiple choice, theory-style and fill-in-the-gap questions, with scores and corrections shown at the end
+- Ask AI: a study helper students can ask questions
+- Announcements and push notifications
+- Bookmarks and study streaks
+- Admin dashboard for managing courses, uploads and announcements
+- Course rep role for uploading materials
+- Mobile-friendly design that can be installed like an app
+
+## Built with
+
+- Google AI Studio, to build and test the app
+- Firebase, for sign-up and login, the database (Firestore) and notifications
+- Vercel, to host and deploy the live site
+- Claude AI, for planning features, writing prompts and study content
+- GitHub, for version control
+
+## Status
+
+Live and used by students. New features are added based on student feedback.
+
+## Author
+
+Designed, directed and launched by Martins Gloria Oluwaferanmi, a student at Yaba College of Technology. I planned the features, built the app with AI tools, tested it with real students, and deployed it.
