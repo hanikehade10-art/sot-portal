@@ -1,3 +1,6 @@
+<img width="1080" height="2022" alt="Screenshot_20261122-180230~2" src="https://github.com/user-attachments/assets/4964fc4f-6c44-44f1-966e-61f40c737f73" />
+<img width="1080" height="2008" alt="Screenshot_20261122-180154~2" src="https://github.com/user-attachments/assets/3fc91eac-d3d3-4bef-a7ab-f780b03f59c6" />
+<img width="1080" height="1998" alt="Screenshot_20261122-180107~2" src="https://github.com/user-attachments/assets/0f47d468-d021-470b-92d2-cbde66b9b31a" />
 ![SOT Portal banner](https://capsule-render.vercel.app/api?type=waving&color=1E3A8A&height=180&section=header&text=SOT%20Portal&fontColor=FACC15&fontSize=55)
 
 ![Live](https://img.shields.io/badge/Live-sot--portal--eta.vercel.app-1E3A8A?style=for-the-badge)
