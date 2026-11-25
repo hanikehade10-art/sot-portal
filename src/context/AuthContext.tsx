@@ -29,7 +29,7 @@ import {
   OperationType,
   testConnection
 } from '../lib/firebase';
-import { UserProfile, SotDepartmentName, UserRole } from '../types';
+import { UserProfile, SotDepartmentName, UserRole, AccessibilitySettings } from '../types';
 import { SITE_CONFIG } from '../config/site';
 import {
   detectDeviceCategory,
@@ -54,6 +54,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   sendPasswordReset: (email: string) => Promise<void>;
   updateStudentProfile: (fullName: string, newPassword?: string) => Promise<void>;
+  updateAccessibilitySettings: (settings: AccessibilitySettings) => Promise<void>;
   refreshProfile: () => Promise<UserProfile | null>;
 }
 
@@ -856,6 +857,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
   };
 
+  // Persist accessibility preferences to Firestore & localStorage
+  const updateAccessibilitySettings = async (settings: AccessibilitySettings): Promise<void> => {
+    const cleanSettings = cleanFirestoreData(settings);
+    const nowIso = new Date().toISOString();
+
+    if (auth.currentUser && user) {
+      try {
+        await updateDoc(doc(db, 'users', user.uid), {
+          accessibilitySettings: cleanSettings,
+          updatedAt: nowIso
+        });
+      } catch (err) {
+        console.warn('Could not sync accessibility settings to Firestore:', err);
+      }
+    }
+
+    setProfile(prev => {
+      if (!prev) return null;
+      const updated: UserProfile = {
+        ...prev,
+        accessibilitySettings: cleanSettings,
+        updatedAt: nowIso
+      };
+      localStorage.setItem('sot_local_profile', JSON.stringify(updated));
+      return updated;
+    });
+  };
+
   const sendPasswordReset = async (email: string): Promise<void> => {
     await sendPasswordResetEmail(auth, email.trim());
   };
@@ -885,6 +914,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         logout,
         sendPasswordReset,
         updateStudentProfile,
+        updateAccessibilitySettings,
         refreshProfile
       }}
     >

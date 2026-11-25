@@ -8,16 +8,17 @@ export const FAQPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigateHo
     <div className="py-16 md:py-24 bg-[#0A1224] text-[#E6ECFA]">
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         <button
+          type="button"
           onClick={onNavigateHome}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+          className="min-h-[44px] inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to Home</span>
         </button>
 
         <div className="space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#FFC700]">
-            <HelpCircle className="w-3.5 h-3.5" />
+            <HelpCircle className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Frequently Asked Questions</span>
           </div>
           <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
@@ -31,9 +32,9 @@ export const FAQPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigateHo
         <div className="space-y-4">
           {FAQS.map((faq, idx) => (
             <div key={idx} className="p-6 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-2">
-              <h3 className="font-display font-bold text-base text-[#E6ECFA]">
+              <h2 className="font-display font-bold text-base text-[#E6ECFA]">
                 {faq.q}
-              </h3>
+              </h2>
               <p className="text-sm text-[#9AA8C7] leading-relaxed">
                 {faq.a}
               </p>
@@ -53,16 +54,17 @@ export const PrivacyPolicyPage: React.FC<{ onNavigateHome: () => void; onNavigat
     <div className="py-16 md:py-24 bg-[#0A1224] text-[#E6ECFA]">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         <button
+          type="button"
           onClick={onNavigateHome}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+          className="min-h-[44px] inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to Home</span>
         </button>
 
         <div className="space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#FFC700]">
-            <Shield className="w-3.5 h-3.5" />
+            <Shield className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Privacy Policy & Data Protection</span>
           </div>
           <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
@@ -85,7 +87,7 @@ export const PrivacyPolicyPage: React.FC<{ onNavigateHome: () => void; onNavigat
 
         <div className="p-6 sm:p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-6 text-sm text-[#9AA8C7] leading-relaxed">
           <div>
-            <h3 className="font-display font-bold text-[#E6ECFA] text-base mb-2">1. Who Can See What</h3>
+            <h2 className="font-display font-bold text-[#E6ECFA] text-base mb-2">1. Who Can See What</h2>
             <div className="space-y-3 pt-1">
               <div className="p-3.5 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-1">
                 <span className="text-xs font-bold text-[#FFC700] block">Portal Administrators</span>
@@ -111,14 +113,14 @@ export const PrivacyPolicyPage: React.FC<{ onNavigateHome: () => void; onNavigat
           </div>
 
           <div>
-            <h3 className="font-display font-bold text-[#E6ECFA] text-base mb-2">2. Data Security & Storage</h3>
+            <h2 className="font-display font-bold text-[#E6ECFA] text-base mb-2">2. Data Security & Storage</h2>
             <p className="text-xs text-[#9AA8C7]">
               Student authentication is managed securely via Firebase Authentication with encrypted token sessions. Data is persisted in Firestore protected by server-side security rules enforcing role-based clearances.
             </p>
           </div>
 
           <div>
-            <h3 className="font-display font-bold text-[#E6ECFA] text-base mb-2">3. How to Request Account Deletion</h3>
+            <h2 className="font-display font-bold text-[#E6ECFA] text-base mb-2">3. How to Request Account Deletion</h2>
             <p className="text-xs text-[#9AA8C7] mb-3">
               You have the right to request full deletion of your account and personal details at any time. To request deletion:
             </p>
@@ -149,16 +151,17 @@ export const TermsPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigate
     <div className="py-16 md:py-24 bg-[#0A1224] text-[#E6ECFA]">
       <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
         <button
+          type="button"
           onClick={onNavigateHome}
-          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+          className="min-h-[44px] inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to Home</span>
         </button>
 
         <div className="space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#FFC700]">
-            <FileText className="w-3.5 h-3.5" />
+            <FileText className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Terms of Service</span>
           </div>
           <h1 className="font-display font-bold text-3xl sm:text-4xl text-[#E6ECFA]">
@@ -167,17 +170,17 @@ export const TermsPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavigate
         </div>
 
         <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5 text-sm text-[#9AA8C7] leading-relaxed">
-          <h3 className="font-bold text-[#E6ECFA] text-base">1. Acceptance of Terms</h3>
+          <h2 className="font-bold text-[#E6ECFA] text-base">1. Acceptance of Terms</h2>
           <p>
             By accessing or registering on the School of Technology Student Portal, you agree to abide by these terms. This portal is a peer-operated utility meant to foster collaboration among students across our six departments.
           </p>
 
-          <h3 className="font-bold text-[#E6ECFA] text-base">2. Accurate Matriculation Number</h3>
+          <h2 className="font-bold text-[#E6ECFA] text-base">2. Accurate Matriculation Number</h2>
           <p>
             Each registered student is required to submit their genuine matriculation number. Registering false or impersonated matric numbers is strictly prohibited and accounts in violation may be disabled by student portal administrators.
           </p>
 
-          <h3 className="font-bold text-[#E6ECFA] text-base">3. Disclaimer</h3>
+          <h2 className="font-bold text-[#E6ECFA] text-base">3. Disclaimer</h2>
           <p>
             This portal is maintained independently by students of the School of Technology. It does not replace official university administrative channels, bursary portals, or official transcripts.
           </p>
@@ -200,10 +203,11 @@ export const NotFoundPage: React.FC<{ onNavigateHome: () => void }> = ({ onNavig
         The page you are looking for does not exist on the SOT Student Portal or may have been moved.
       </p>
       <button
+        type="button"
         onClick={onNavigateHome}
-        className="px-6 py-3 rounded-xl bg-[#FFC700] text-[#0A1224] font-bold text-xs hover:bg-[#ffd233] shadow-[0_0_20px_rgba(255,199,0,0.3)] flex items-center gap-2 cursor-pointer"
+        className="min-h-[48px] px-6 py-3 rounded-xl bg-[#FFC700] text-[#0A1224] font-bold text-xs hover:bg-[#ffd233] shadow-[0_0_20px_rgba(255,199,0,0.3)] flex items-center gap-2 cursor-pointer"
       >
-        <Home className="w-4 h-4" />
+        <Home className="w-4 h-4" aria-hidden="true" />
         <span>Return to SOT Home</span>
       </button>
     </div>

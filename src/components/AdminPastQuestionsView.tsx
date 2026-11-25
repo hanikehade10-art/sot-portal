@@ -74,6 +74,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
   const [formCourseCode, setFormCourseCode] = useState('');
   const [formSession, setFormSession] = useState('');
   const [formUrl, setFormUrl] = useState('');
+  const [formAccessibleText, setFormAccessibleText] = useState('');
   const [notifyStudents, setNotifyStudents] = useState(true);
 
   // Status banners
@@ -161,6 +162,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
     setFormCourseCode('');
     setFormSession(`${new Date().getFullYear() - 1}/${new Date().getFullYear()}`);
     setFormUrl('');
+    setFormAccessibleText('');
     setSaveError(null);
     setShowModal(true);
   };
@@ -174,6 +176,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
     setFormCourseCode(item.courseCode || '');
     setFormSession(item.session || item.year || '');
     setFormUrl(item.url);
+    setFormAccessibleText(item.accessibleText || '');
     setSaveError(null);
     setShowModal(true);
   };
@@ -208,6 +211,7 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
         courseCode: formCourseCode.trim().toUpperCase() || '',
         session: formSession.trim() || '',
         url: formattedUrl,
+        accessibleText: formAccessibleText.trim() || '',
         updatedAt: new Date().toISOString()
       };
 
@@ -828,6 +832,21 @@ export const AdminPastQuestionsView: React.FC<AdminPastQuestionsViewProps> = ({
                 <span className="text-[10px] text-[#9AA8C7]/70 mt-1 block">
                   Google Drive /view links are automatically converted to clean in-app /preview links.
                 </span>
+              </div>
+
+              {/* Accessible Text Version */}
+              <div>
+                <label htmlFor="pqAccessibleTextInput" className="block text-[11px] font-semibold text-[#60A5FA] mb-1">
+                  Accessible Text Version (Optional — for blind &amp; screen-reader students)
+                </label>
+                <textarea
+                  id="pqAccessibleTextInput"
+                  rows={3}
+                  placeholder="Optional plain-text transcript of the questions so visually impaired students can read and listen aloud..."
+                  value={formAccessibleText}
+                  onChange={(e) => setFormAccessibleText(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/50 focus:outline-none focus:border-[#2F52FF]"
+                />
               </div>
 
               {/* Notify Students Checkbox */}

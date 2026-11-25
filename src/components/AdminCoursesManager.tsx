@@ -133,12 +133,14 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     isCourseWide?: boolean;
     title: string;
     url: string;
+    accessibleText: string;
     editingId?: string;
   }>({
     isOpen: false,
     type: 'Note',
     title: '',
-    url: ''
+    url: '',
+    accessibleText: ''
   });
   const [savingResource, setSavingResource] = useState(false);
 
@@ -151,8 +153,10 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
   const [lessonBeforeYouBegin, setLessonBeforeYouBegin] = useState('');
   const [lessonEstimatedMinutes, setLessonEstimatedMinutes] = useState('15');
   const [lessonVideoUrl, setLessonVideoUrl] = useState('');
+  const [lessonVideoAccessibleText, setLessonVideoAccessibleText] = useState('');
   const [lessonNotes, setLessonNotes] = useState('');
   const [lessonNotesPdfUrl, setLessonNotesPdfUrl] = useState('');
+  const [lessonNotesAccessibleText, setLessonNotesAccessibleText] = useState('');
   const [lessonSummary, setLessonSummary] = useState('');
   const [lessonFurtherReading, setLessonFurtherReading] = useState<Array<{ title: string; url: string }>>([]);
   const [lessonOrder, setLessonOrder] = useState<number>(1);
@@ -176,8 +180,10 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
     setLessonBeforeYouBegin(topic.beforeYouBegin || '');
     setLessonEstimatedMinutes(topic.estimatedMinutes ? String(topic.estimatedMinutes) : '15');
     setLessonVideoUrl(topic.videoUrl || '');
+    setLessonVideoAccessibleText(topic.videoAccessibleText || '');
     setLessonNotes(topic.notes || '');
     setLessonNotesPdfUrl(topic.notesPdfUrl || '');
+    setLessonNotesAccessibleText(topic.notesAccessibleText || '');
     setLessonSummary(topic.summary || '');
     setLessonFurtherReading(topic.furtherReading && topic.furtherReading.length > 0 ? [...topic.furtherReading] : []);
     setLessonOrder(topic.order || 1);
@@ -236,8 +242,10 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         whatYoullLearn: lessonWhatYoullLearnText.split('\n').map(l => l.trim()).filter(Boolean),
         beforeYouBegin: lessonBeforeYouBegin.trim() || '',
         videoUrl: lessonVideoUrl.trim() || '',
+        videoAccessibleText: lessonVideoAccessibleText.trim() || '',
         notes: lessonNotes || '',
         notesPdfUrl: lessonNotesPdfUrl.trim() || '',
+        notesAccessibleText: lessonNotesAccessibleText.trim() || '',
         summary: lessonSummary.trim() || '',
         furtherReading: cleanReading.length > 0 ? cleanReading : [],
         order: Number(lessonOrder) || 1,
@@ -760,7 +768,8 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
       topicId,
       isCourseWide,
       title: '',
-      url: ''
+      url: '',
+      accessibleText: ''
     });
   };
 
@@ -783,6 +792,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
         type: resourceModalConfig.type,
         title: resourceModalConfig.title.trim(),
         url: formattedUrl,
+        accessibleText: resourceModalConfig.accessibleText.trim() || '',
         department: currentManagingCourse.department,
         level: currentManagingCourse.level,
         semester: currentManagingCourse.semester,
@@ -797,6 +807,7 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
           title: payload.title,
           url: payload.url,
           type: payload.type,
+          accessibleText: payload.accessibleText,
           updatedAt: nowIso
         }));
         setResources(prev => prev.map(r => r.id === resourceModalConfig.editingId ? { ...r, ...payload, id: r.id } : r));
@@ -1857,6 +1868,20 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                 </p>
               </div>
 
+              <div>
+                <label htmlFor="adminResAccessibleText" className="block text-[11px] font-semibold text-[#60A5FA] mb-1">
+                  Accessible Text Version (Optional — for Read Aloud &amp; Screen Readers)
+                </label>
+                <textarea
+                  id="adminResAccessibleText"
+                  rows={3}
+                  placeholder="Optional plain-text transcript or summary of this PDF/video so blind and visually impaired students can listen aloud..."
+                  value={resourceModalConfig.accessibleText}
+                  onChange={(e) => setResourceModalConfig(prev => ({ ...prev, accessibleText: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                />
+              </div>
+
               {!resourceModalConfig.editingId && (
                 <div className="flex items-center gap-2 pt-1 pb-1">
                   <input
@@ -2066,6 +2091,20 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                       />
                     </div>
                   )}
+
+                  <div className="mt-2.5">
+                    <label htmlFor="lessonVideoAccessibleText" className="block text-[11px] font-semibold text-[#60A5FA] mb-1">
+                      Video Accessible Text / Transcript (Optional — for blind students)
+                    </label>
+                    <textarea
+                      id="lessonVideoAccessibleText"
+                      rows={2}
+                      value={lessonVideoAccessibleText}
+                      onChange={e => setLessonVideoAccessibleText(e.target.value)}
+                      placeholder="Paste key spoken transcript or summary of the video tutorial so students can listen or read with screen readers..."
+                      className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
                 </div>
 
                 {/* Optional Notes PDF Document Link */}
@@ -2089,6 +2128,20 @@ export const AdminCoursesManager: React.FC<AdminCoursesManagerProps> = ({
                   <p className="text-[10px] text-[#9AA8C7] mt-1">
                     When provided, students see an in-app PDF viewer with Zoom, Open and Download buttons alongside or instead of typed notes.
                   </p>
+
+                  <div className="mt-2.5">
+                    <label htmlFor="lessonNotesAccessibleText" className="block text-[11px] font-semibold text-[#60A5FA] mb-1">
+                      PDF Notes Accessible Text Version (Optional — for blind students)
+                    </label>
+                    <textarea
+                      id="lessonNotesAccessibleText"
+                      rows={2}
+                      value={lessonNotesAccessibleText}
+                      onChange={e => setLessonNotesAccessibleText(e.target.value)}
+                      placeholder="Paste readable text version of the PDF handout so screen readers and Listen aloud work seamlessly..."
+                      className="w-full px-3 py-1.5 rounded-lg bg-[#0F1E36] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
                 </div>
               </div>
 

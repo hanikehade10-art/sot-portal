@@ -292,34 +292,42 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0A1224]/85 backdrop-blur-md overflow-y-auto">
       
       {/* Modal Card (NO white backgrounds anywhere) */}
-      <div className="relative w-full max-w-lg bg-[#121C36] border border-[#24315A] rounded-2xl p-6 sm:p-8 shadow-[0_0_60px_rgba(0,0,0,0.8)] my-8">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-modal-title"
+        className="relative w-full max-w-lg bg-[#121C36] border border-[#24315A] rounded-2xl p-6 sm:p-8 shadow-[0_0_60px_rgba(0,0,0,0.8)] my-8"
+      >
         
         {/* Dismiss or Logout */}
         {!isForcedStep2 ? (
           <button
+            type="button"
             onClick={() => { resetForm(); onClose(); }}
-            className="absolute top-5 right-5 p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-colors cursor-pointer"
+            aria-label="Close authentication modal"
+            className="absolute top-4 right-4 min-w-[44px] min-h-[44px] flex items-center justify-center rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-colors cursor-pointer"
           >
-            <X className="w-5 h-5" />
+            <X className="w-5 h-5" aria-hidden="true" />
           </button>
         ) : (
           <button
+            type="button"
             onClick={() => logout()}
-            className="absolute top-5 right-5 flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-rose-400 hover:border-rose-500 transition-colors cursor-pointer"
+            className="absolute top-4 right-4 min-h-[40px] flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-rose-400 hover:border-rose-500 transition-colors cursor-pointer"
             title="Log out and return later"
           >
-            <LogOut className="w-3.5 h-3.5" />
+            <LogOut className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Log out</span>
           </button>
         )}
 
         {/* Header */}
-        <div className="flex items-center gap-3.5 mb-6">
-          <div className="w-12 h-12 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.15)]">
-            <GraduationCap className="w-6 h-6" />
+        <div className="flex items-center gap-3.5 mb-6 pr-12">
+          <div className="w-12 h-12 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.15)] shrink-0">
+            <GraduationCap className="w-6 h-6" aria-hidden="true" />
           </div>
           <div>
-            <h2 className="font-display font-bold text-2xl text-[#E6ECFA]">
+            <h2 id="auth-modal-title" className="font-display font-bold text-2xl text-[#E6ECFA]">
               {mode === 'signup' && 'Student Portal Registration'}
               {mode === 'step2' && 'Student Details (Step 2)'}
               {mode === 'login' && 'Student Portal Login'}
@@ -460,9 +468,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-2.5 p-1 text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute right-2 top-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
 
@@ -498,9 +508,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-2.5 p-1 text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  aria-pressed={showConfirmPassword}
+                  className="absolute right-2 top-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
-                  {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showConfirmPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
             </div>
@@ -755,9 +767,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-2.5 p-1 text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  aria-pressed={showPassword}
+                  className="absolute right-2 top-1.5 min-w-[36px] min-h-[36px] flex items-center justify-center text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPassword ? <EyeOff className="w-4 h-4" aria-hidden="true" /> : <Eye className="w-4 h-4" aria-hidden="true" />}
                 </button>
               </div>
             </div>

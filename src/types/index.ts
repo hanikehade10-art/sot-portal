@@ -56,6 +56,21 @@ export interface StudyPlannerTask {
   createdAt: string;
 }
 
+export type SpeechSpeed = 'slow' | 'normal' | 'fast';
+export type ExtendedQuizTimeMultiplier = 1 | 1.5 | 2;
+
+export interface AccessibilitySettings {
+  accessibilityMode: boolean;
+  voiceAssistantEnabled: boolean;
+  readAloudEnabled: boolean;
+  textScale: number; // 100 to 200 (percentage)
+  highContrast: boolean;
+  reduceMotion: boolean;
+  speechSpeed: SpeechSpeed;
+  speechVoice: string; // SpeechSynthesisVoice.voiceURI or '' for default
+  extendedQuizTime: ExtendedQuizTimeMultiplier;
+}
+
 export interface UserProfile {
   uid: string;
   email: string;
@@ -91,6 +106,7 @@ export interface UserProfile {
     topicTitle?: string;
     updatedAt: string;
   };
+  accessibilitySettings?: AccessibilitySettings;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -210,8 +226,10 @@ export interface TopicItem {
   beforeYouBegin?: string; // Optional prerequisites or instructions
   estimatedMinutes?: number; // Estimated reading/learning time in minutes
   videoUrl?: string; // YouTube or direct video link (embeddable)
+  videoAccessibleText?: string; // Accessible text transcript/version for the video
   notes?: string; // Notes with numbered section headings, bold, bullets, tables, callouts
   notesPdfUrl?: string; // Optional Google Drive link or direct PDF URL for handouts
+  notesAccessibleText?: string; // Accessible text version for the PDF notes
   summary?: string; // Highlighted summary box / key takeaways
   furtherReading?: FurtherReadingItem[]; // List of reference links
   linkedQuizId?: string; // Document ID of linked quiz
@@ -242,6 +260,7 @@ export interface ResourceItem {
   year?: string;
   url: string;
   description?: string;
+  accessibleText?: string; // Optional accessible text version for screen readers & Listen
   pastQuestionId?: string;
   solutionType?: 'text' | 'link';
   content?: string; // For typed solutions

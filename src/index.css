@@ -135,7 +135,7 @@ button:not(:disabled):active,
   transition: transform 100ms ease;
 }
 
-/* Respect Prefers Reduced Motion: Disable all motion effects */
+/* Respect Prefers Reduced Motion or Explicit Reduce Motion Toggle */
 @media (prefers-reduced-motion: reduce) {
   *, ::before, ::after {
     animation-duration: 0.01ms !important;
@@ -145,4 +145,112 @@ button:not(:disabled):active,
     transform: none !important;
   }
 }
+
+html.a11y-reduce-motion *,
+html.a11y-reduce-motion ::before,
+html.a11y-reduce-motion ::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Visible Keyboard & Screen-Reader Focus Outlines (WCAG 2.1 AA) */
+:where(a, button, input, select, textarea, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 3px solid #FFC700;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 5px rgba(10, 18, 36, 0.9);
+}
+
+/* Skip Link Styling */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  z-index: 10000;
+}
+
+.skip-link:focus,
+.skip-link:focus-visible {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  padding: 12px 18px;
+  background: #FFC700;
+  color: #0A1224;
+  font-weight: 800;
+  font-size: 0.9rem;
+  border-radius: 12px;
+  border: 2px solid #0A1224;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+/* Touch Targets >= 48px when Accessibility Mode is Active */
+html.a11y-mode button,
+html.a11y-mode a[role="button"],
+html.a11y-mode [role="button"],
+html.a11y-mode input:not([type="checkbox"]):not([type="radio"]),
+html.a11y-mode select {
+  min-height: 48px;
+}
+
+html.a11y-mode input[type="checkbox"],
+html.a11y-mode input[type="radio"] {
+  min-width: 24px;
+  min-height: 24px;
+}
+
+/* High Contrast Theme (Deep Navy/Black + Crisp White + Bright #FFC700 Borders) */
+html.a11y-high-contrast {
+  --bg-page: #050914;
+  --bg-panel: #0B1328;
+  --border-subtle: #FFC700;
+  --text-main: #FFFFFF;
+  --text-muted: #E2E8F8;
+}
+
+html.a11y-high-contrast body {
+  background-color: #050914;
+  color: #FFFFFF;
+}
+
+html.a11y-high-contrast .bg-\[\#0A1224\],
+html.a11y-high-contrast .bg-\[\#070D1A\],
+html.a11y-high-contrast .bg-\[\#0B1220\] {
+  background-color: #050914;
+}
+
+html.a11y-high-contrast .bg-\[\#121C36\],
+html.a11y-high-contrast .bg-\[\#0F1E36\],
+html.a11y-high-contrast .bg-\[\#111A2E\] {
+  background-color: #0B142C;
+}
+
+html.a11y-high-contrast .text-\[\#9AA8C7\],
+html.a11y-high-contrast .text-\[\#9FB0C8\],
+html.a11y-high-contrast .text-\[\#8B99B8\] {
+  color: #E2E8F8;
+}
+
+html.a11y-high-contrast .border-\[\#24315A\],
+html.a11y-high-contrast .border-\[\#1E2E52\],
+html.a11y-high-contrast .border-\[\#1F2C4C\] {
+  border-color: #7D95D6;
+}
+
+html.a11y-high-contrast :where(button, a, input, select, textarea):focus-visible {
+  outline: 4px solid #FFC700;
+  outline-offset: 3px;
+}
+
+/* Read-Aloud Sentence Highlight */
+.tts-sentence-active {
+  background-color: rgba(255, 199, 0, 0.24);
+  color: #FFFFFF;
+  border-radius: 4px;
+  padding: 1px 4px;
+  box-shadow: 0 0 0 1px rgba(255, 199, 0, 0.65);
+  transition: background-color 150ms ease;
+}
+
 

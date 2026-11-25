@@ -73,10 +73,11 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
         
         {/* Navigation Breadcrumb */}
         <button
+          type="button"
           onClick={onBack}
-          className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-colors cursor-pointer"
+          className="min-h-[44px] inline-flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-[#121C36] border border-[#24315A] text-xs font-semibold text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF] transition-colors cursor-pointer"
         >
-          <ArrowLeft className="w-4 h-4" />
+          <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           <span>Back to All Departments</span>
         </button>
 
@@ -111,11 +112,12 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
 
             <div className="pt-2">
               <button
+                type="button"
                 onClick={() => onJoinDepartment(department.name)}
-                className="px-7 py-3.5 rounded-xl text-sm font-extrabold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] transition-all shadow-[0_0_25px_rgba(255,199,0,0.35)] hover:scale-[1.02] flex items-center gap-2 cursor-pointer"
+                className="min-h-[48px] px-7 py-3.5 rounded-xl text-sm font-extrabold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] transition-all shadow-[0_0_25px_rgba(255,199,0,0.35)] hover:scale-[1.02] flex items-center gap-2 cursor-pointer"
               >
                 <span>Join this Department</span>
-                <ArrowRight className="w-4 h-4 text-[#0A1224]" />
+                <ArrowRight className="w-4 h-4 text-[#0A1224]" aria-hidden="true" />
               </button>
             </div>
           </div>
@@ -125,10 +127,10 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           
           <div className="p-7 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-            <h3 className="font-display font-bold text-lg text-[#E6ECFA] flex items-center gap-2">
-              <BookOpen className="w-4 h-4 text-[#FFC700]" />
+            <h2 className="font-display font-bold text-lg text-[#E6ECFA] flex items-center gap-2">
+              <BookOpen className="w-4 h-4 text-[#FFC700]" aria-hidden="true" />
               <span>Core Programme Highlights</span>
-            </h3>
+            </h2>
             <ul className="space-y-2.5 text-xs text-[#E6ECFA]">
               {department.programFocus.map((item, idx) => (
                 <li key={idx} className="flex items-start gap-2.5 p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
@@ -142,14 +144,14 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
           </div>
 
           <div className="p-7 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4">
-            <h3 className="font-display font-bold text-lg text-[#E6ECFA] flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-[#2F52FF]" />
+            <h2 className="font-display font-bold text-lg text-[#E6ECFA] flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-[#2F52FF]" aria-hidden="true" />
               <span>Vocational Career Pathways</span>
-            </h3>
+            </h2>
             <ul className="space-y-2.5 text-xs text-[#E6ECFA]">
               {department.careerProspects.map((cp, idx) => (
                 <li key={idx} className="flex items-center gap-2.5 p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
-                  <CheckCircle2 className="w-4 h-4 text-[#2F52FF] shrink-0" />
+                  <CheckCircle2 className="w-4 h-4 text-[#2F52FF] shrink-0" aria-hidden="true" />
                   <span>{cp}</span>
                 </li>
               ))}
@@ -163,22 +165,24 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-[#24315A] pb-4">
             <div>
               <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-[#0A1224] border border-[#24315A] text-[11px] font-semibold text-[#FFC700] mb-1">
-                <Layers className="w-3 h-3 text-[#FFC700]" />
+                <Layers className="w-3 h-3 text-[#FFC700]" aria-hidden="true" />
                 <span>Department Syllabus</span>
               </div>
-              <h3 className="font-display font-bold text-xl sm:text-2xl text-[#E6ECFA]">
+              <h2 className="font-display font-bold text-xl sm:text-2xl text-[#E6ECFA]">
                 Department Courses by Academic Level
-              </h3>
+              </h2>
               <p className="text-xs text-[#9AA8C7]">
                 Approved curriculum units for National Diploma (ND) and Higher National Diploma (HND) programmes
               </p>
             </div>
 
             {/* Level Filter Tabs */}
-            <div className="flex flex-wrap items-center gap-1.5 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]">
+            <div className="flex flex-wrap items-center gap-1.5 bg-[#0A1224] p-1 rounded-xl border border-[#24315A]" role="group" aria-label="Filter courses by level">
               <button
+                type="button"
+                aria-pressed={selectedLevel === 'All'}
                 onClick={() => setSelectedLevel('All')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                   selectedLevel === 'All'
                     ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
                     : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
@@ -188,9 +192,11 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
               </button>
               {ACADEMIC_LEVELS.map(lvl => (
                 <button
+                  type="button"
                   key={lvl}
+                  aria-pressed={selectedLevel === lvl}
                   onClick={() => setSelectedLevel(lvl)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                  className={`min-h-[36px] px-3 py-1.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
                     selectedLevel === lvl
                       ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.4)]'
                       : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
@@ -214,9 +220,9 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
                   <div key={lvl} className="space-y-3">
                     <div className="flex items-center gap-2.5">
                       <span className="w-2.5 h-2.5 rounded-full bg-[#FFC700]" />
-                      <h4 className="font-display font-bold text-sm tracking-wide text-[#E6ECFA]">
+                      <h3 className="font-display font-bold text-sm tracking-wide text-[#E6ECFA]">
                         {lvl} Curriculum ({lvlCourses.length} {lvlCourses.length === 1 ? 'course' : 'courses'})
-                      </h4>
+                      </h3>
                     </div>
 
                     {lvlCourses.length === 0 ? (
@@ -245,9 +251,9 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
                             </div>
 
                             <div>
-                              <h5 className="font-semibold text-sm text-[#E6ECFA] group-hover:text-white transition-colors">
+                              <h4 className="font-semibold text-sm text-[#E6ECFA] group-hover:text-white transition-colors">
                                 {course.title}
-                              </h5>
+                              </h4>
                               <p className="text-[11px] text-[#9AA8C7] mt-0.5">
                                 Level: <strong className="text-[#FFC700]">{course.level}</strong>
                               </p>
@@ -264,8 +270,9 @@ export const DepartmentDetailPage: React.FC<DepartmentDetailPageProps> = ({
 
           <div className="pt-2 flex justify-end">
             <button
+              type="button"
               onClick={() => onJoinDepartment(department.name)}
-              className="px-6 py-2.5 rounded-xl text-xs font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.25)]"
+              className="min-h-[48px] px-6 py-2.5 rounded-xl text-xs font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] cursor-pointer shadow-[0_0_15px_rgba(255,199,0,0.25)]"
             >
               Sign up to Enroll in {department.name}
             </button>

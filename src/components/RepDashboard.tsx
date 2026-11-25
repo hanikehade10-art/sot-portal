@@ -124,6 +124,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [uploadCategory, setUploadCategory] = useState<ResourceCategory>('Lecture Note');
   const [uploadUrl, setUploadUrl] = useState('');
   const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadAccessibleText, setUploadAccessibleText] = useState('');
   const [uploadSaving, setUploadSaving] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSuccess, setUploadSuccess] = useState<string | null>(null);
@@ -148,6 +149,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
   const [editUrl, setEditUrl] = useState('');
   const [editCategory, setEditCategory] = useState<ResourceCategory>('Lecture Note');
   const [editDescription, setEditDescription] = useState('');
+  const [editAccessibleText, setEditAccessibleText] = useState('');
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -285,6 +287,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       type: mappedType as any,
       url: formattedUrl,
       description: uploadDescription.trim(),
+      accessibleText: uploadAccessibleText.trim(),
       uploadedBy: user?.uid || '',
       uploadedByEmail: user?.email || '',
       uploadedByRole: 'Course Rep',
@@ -319,6 +322,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       setUploadCourseCode('');
       setUploadUrl('');
       setUploadDescription('');
+      setUploadAccessibleText('');
       setTimeout(() => setUploadSuccess(null), 5000);
     } catch (err: any) {
       console.error('Resource upload failed:', err);
@@ -420,6 +424,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
     setEditUrl(item.url);
     setEditCategory(item.category || 'Lecture Note');
     setEditDescription(item.description || '');
+    setEditAccessibleText(item.accessibleText || '');
     setEditError(null);
   };
 
@@ -440,6 +445,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
         url: editUrl.trim(),
         category: editCategory,
         description: editDescription.trim(),
+        accessibleText: editAccessibleText.trim(),
         updatedAt: new Date().toISOString()
       };
       await updateDoc(doc(db, 'resources', editingResource.id), updatedFields);
@@ -686,7 +692,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
       </aside>
 
       {/* Main Rep Content Area */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-y-auto">
+      <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         
         {/* Slim Top Bar (Desktop) */}
         <div className="hidden md:flex items-center justify-between px-6 py-3 bg-[#0A1224] border-b border-[#1F2C4C] sticky top-0 z-30">
@@ -1075,6 +1081,21 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                       placeholder="Add brief details for students, e.g. 'Covers Modules 1 through 4 for upcoming mid-semester assessment.'"
                       value={uploadDescription}
                       onChange={(e) => setUploadDescription(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
+                    />
+                  </div>
+
+                  {/* Accessible Text Version */}
+                  <div className="space-y-1">
+                    <label htmlFor="repUploadAccessibleText" className="text-[11px] font-bold text-[#60A5FA] uppercase tracking-wider block">
+                      Accessible Text Version (Optional — for blind &amp; screen-reader students)
+                    </label>
+                    <textarea
+                      id="repUploadAccessibleText"
+                      rows={3}
+                      placeholder="Paste plain-text summary, transcript, or key notes from this PDF/video so students can listen aloud..."
+                      value={uploadAccessibleText}
+                      onChange={(e) => setUploadAccessibleText(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none focus:border-[#2F52FF]"
                     />
                   </div>
@@ -1496,7 +1517,7 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
 
         </div>
 
-      </main>
+      </div>
 
       {/* ======================================================== */}
       {/* EDIT MATERIAL MODAL                                      */}
@@ -1579,6 +1600,20 @@ export const RepDashboard: React.FC<RepDashboardProps> = ({
                   rows={2}
                   value={editDescription}
                   onChange={(e) => setEditDescription(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="repEditAccessibleText" className="text-[11px] font-bold text-[#60A5FA] uppercase tracking-wider block">
+                  Accessible Text Version (Optional)
+                </label>
+                <textarea
+                  id="repEditAccessibleText"
+                  rows={3}
+                  placeholder="Optional plain-text transcript or notes summary for Read Aloud..."
+                  value={editAccessibleText}
+                  onChange={(e) => setEditAccessibleText(e.target.value)}
                   className="w-full px-3 py-1.5 rounded-lg bg-[#070D1A] border border-[#1E2E52] text-xs text-[#E6ECFA] focus:outline-none"
                 />
               </div>

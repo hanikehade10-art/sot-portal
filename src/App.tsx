@@ -6,6 +6,11 @@
 import React, { useState, useEffect } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AiChatProvider } from './context/AiChatContext';
+import {
+  AccessibilityProvider,
+  useAccessibility,
+  useRegisterVoiceHandlers
+} from './context/AccessibilityContext';
 import { Navbar } from './components/Navbar';
 import { PublicLanding } from './components/PublicLanding';
 import { Footer } from './components/Footer';
@@ -16,16 +21,22 @@ import { RepDashboard } from './components/RepDashboard';
 import { ContactPage } from './components/ContactPage';
 import { DepartmentDetailPage } from './components/DepartmentDetailPage';
 import { FAQPage, PrivacyPolicyPage, TermsPage, NotFoundPage } from './components/InfoPages';
+import { AccessibilitySettingsModal } from './components/AccessibilitySettingsModal';
+import { VoiceAssistantOverlay } from './components/VoiceAssistantOverlay';
 import { DepartmentItem } from './types';
 import { DEPARTMENTS } from './data/departments';
-import { AlertTriangle, RefreshCw, ShieldAlert, WifiOff, Info } from 'lucide-react';
-import { SITE_CONFIG } from './config/site';
+import { AlertTriangle, RefreshCw, ShieldAlert, Accessibility, CheckCircle2 } from 'lucide-react';
 import { AdminTopBarSwitcher, AdminViewMode } from './components/AdminTopBarSwitcher';
 import { useSiteSettings } from './hooks/useSiteSettings';
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 
 function AppContent() {
   const { user, profile, loading, authReady, isAdmin, isRep, roleReadError, refreshProfile } = useAuth();
+  const {
+    settings: a11ySettings,
+    enableAccessibilityMode,
+    openSettingsModal
+  } = useAccessibility();
   const { settings } = useSiteSettings();
   const isOnline = useOnlineStatus();
 
@@ -236,12 +247,72 @@ function AppContent() {
     navigateTo('department-detail');
   };
 
+  // Root-level voice handlers (overridden when inside StudentDashboard)
+  useRegisterVoiceHandlers('app-root', {
+    goHome: () => {
+      if (user && (profile?.profileComplete || isAdmin)) {
+        navigateTo('dashboard');
+        return 'Opening student home dashboard.';
+      }
+      navigateTo('landing');
+      return 'Opening School of Technology landing page.';
+    },
+    goBack: () => {
+      if (currentView !== 'landing' && currentView !== 'dashboard') {
+        navigateTo(user && (profile?.profileComplete || isAdmin) ? 'dashboard' : 'landing');
+        return 'Going back.';
+      }
+      window.history.back();
+      return 'Going back.';
+    },
+    openCourses: () => {
+      if (!user) {
+        handleOpenLogin();
+        return 'Please sign in to open your courses.';
+      }
+      navigateTo('dashboard');
+      return 'Opening your student portal.';
+    },
+    openQuizzes: () => {
+      if (!user) {
+        handleOpenLogin();
+        return 'Please sign in to open quizzes.';
+      }
+      navigateTo('dashboard');
+      return 'Opening your student portal.';
+    },
+    openPastQuestions: () => {
+      if (!user) {
+        handleOpenLogin();
+        return 'Please sign in to open past questions.';
+      }
+      navigateTo('dashboard');
+      return 'Opening your student portal.';
+    },
+    openTimetable: () => {
+      if (!user) {
+        handleOpenLogin();
+        return 'Please sign in to open timetable.';
+      }
+      navigateTo('dashboard');
+      return 'Opening your student portal.';
+    },
+    openAnnouncements: () => {
+      if (!user) {
+        handleOpenLogin();
+        return 'Please sign in to open announcements.';
+      }
+      navigateTo('dashboard');
+      return 'Opening your student portal.';
+    }
+  });
+
   // Initial loading state
   if (loading && !authReady) {
     return (
-      <div className="min-h-screen bg-[#0A1224] flex flex-col items-center justify-center p-4">
+      <div className="min-h-screen bg-[#0A1224] flex flex-col items-center justify-center p-4" role="status" aria-live="polite">
         <div className="w-12 h-12 rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700] mb-4 shadow-[0_0_20px_rgba(47,82,255,0.2)]">
-          <RefreshCw className="w-6 h-6 animate-spin text-[#FFC700]" />
+          <RefreshCw className="w-6 h-6 animate-spin text-[#FFC700]" aria-hidden="true" />
         </div>
         <p className="text-sm font-semibold text-[#E6ECFA] tracking-wide">
           Loading SOT Student Portal...
@@ -252,6 +323,56 @@ function AppContent() {
 
   return (
     <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col selection:bg-[#2F52FF] selection:text-white">
+      {/* First-focusable Accessibility Strip + Skip to Content (every page) */}
+      <div
+        className="bg-[#070D1A] border-b border-[#1E2E52] px-3 sm:px-6 py-2 flex flex-wrap items-center justify-between gap-2 z-50"
+        role="region"
+        aria-label="Accessibility shortcuts"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          {currentView === 'landing' && (
+            <button
+              type="button"
+              onClick={() => {
+                if (a11ySettings.accessibilityMode) {
+                  openSettingsModal();
+                } else {
+                  enableAccessibilityMode();
+                }
+              }}
+              className="min-h-[48px] px-4 py-2 rounded-xl bg-[#FFC700] hover:bg-[#ffd233] text-[#0A1224] text-xs sm:text-sm font-extrabold flex items-center gap-2 shadow-sm cursor-pointer"
+            >
+              {a11ySettings.accessibilityMode ? (
+                <>
+                  <CheckCircle2 className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Accessibility mode active (Configure)</span>
+                </>
+              ) : (
+                <>
+                  <Accessibility className="w-4 h-4 shrink-0" aria-hidden="true" />
+                  <span>Enable accessibility mode</span>
+                </>
+              )}
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={openSettingsModal}
+            className="min-h-[48px] px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] text-xs font-bold text-[#E6ECFA] hover:text-[#FFC700] flex items-center gap-2 cursor-pointer"
+          >
+            <Accessibility className="w-4 h-4 text-[#FFC700]" aria-hidden="true" />
+            <span>Accessibility options</span>
+          </button>
+
+          <a
+            href="#main-content"
+            className="min-h-[48px] px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] text-xs font-bold text-[#FFC700] inline-flex items-center"
+          >
+            Skip to content
+          </a>
+        </div>
+      </div>
       
       {/* Admin Top Bar View Switcher (Admin Only: Admin | Student view | Rep view) */}
       {isAdmin && (
@@ -357,8 +478,8 @@ function AppContent() {
         />
       )}
 
-      {/* VIEW ROUTING */}
-      <main className="flex-1">
+      {/* VIEW ROUTING (Single Main Landmark) */}
+      <main id="main-content" tabIndex={-1} className="flex-1 outline-none">
         
         {/* 1. STUDENT DASHBOARD (Protected) */}
         {currentView === 'dashboard' && user && (profile?.profileComplete || isAdmin) ? (
@@ -482,6 +603,10 @@ function AppContent() {
         }}
       />
 
+      {/* Accessibility Settings Modal & Floating Voice Assistant */}
+      <AccessibilitySettingsModal />
+      <VoiceAssistantOverlay />
+
     </div>
   );
 }
@@ -489,9 +614,11 @@ function AppContent() {
 export default function App() {
   return (
     <AuthProvider>
-      <AiChatProvider>
-        <AppContent />
-      </AiChatProvider>
+      <AccessibilityProvider>
+        <AiChatProvider>
+          <AppContent />
+        </AiChatProvider>
+      </AccessibilityProvider>
     </AuthProvider>
   );
 }

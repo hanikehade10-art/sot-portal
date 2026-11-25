@@ -63,15 +63,16 @@ export const Footer: React.FC<FooterProps> = ({
 
           {/* Departments Col */}
           <div className="space-y-3">
-            <h4 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
               Departments
-            </h4>
+            </h2>
             <ul className="space-y-2 text-xs">
               {DEPARTMENTS.slice(0, 3).map((d) => (
                 <li key={d.id}>
                   <button
+                    type="button"
                     onClick={() => onDepartmentClick(d.id)}
-                    className="hover:text-[#FFC700] transition-colors text-left cursor-pointer"
+                    className="hover:text-[#FFC700] transition-colors text-left cursor-pointer py-1"
                   >
                     {d.name}
                   </button>
@@ -82,15 +83,16 @@ export const Footer: React.FC<FooterProps> = ({
 
           {/* More Departments */}
           <div className="space-y-3">
-            <h4 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
               Specializations
-            </h4>
+            </h2>
             <ul className="space-y-2 text-xs">
               {DEPARTMENTS.slice(3, 6).map((d) => (
                 <li key={d.id}>
                   <button
+                    type="button"
                     onClick={() => onDepartmentClick(d.id)}
-                    className="hover:text-[#FFC700] transition-colors text-left cursor-pointer"
+                    className="hover:text-[#FFC700] transition-colors text-left cursor-pointer py-1"
                   >
                     {d.name}
                   </button>
@@ -98,8 +100,9 @@ export const Footer: React.FC<FooterProps> = ({
               ))}
               <li className="pt-2">
                 <button
+                  type="button"
                   onClick={openSignUp}
-                  className="text-xs font-semibold text-[#FFC700] hover:underline flex items-center gap-1 cursor-pointer"
+                  className="text-xs font-semibold text-[#FFC700] hover:underline flex items-center gap-1 cursor-pointer py-1"
                 >
                   Student Portal Sign Up &rarr;
                 </button>
@@ -109,29 +112,30 @@ export const Footer: React.FC<FooterProps> = ({
 
           {/* Contact Details from site config */}
           <div className="space-y-3">
-            <h4 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
+            <h2 className="font-display text-sm font-bold uppercase tracking-wider text-[#E6ECFA]">
               Student Representative
-            </h4>
+            </h2>
             <div className="space-y-2.5 text-xs">
               <div className="text-[#E6ECFA] font-semibold">
                 {SITE_CONFIG.contact.representativeName}
               </div>
               <div className="flex items-center gap-2">
-                <Phone className="w-4 h-4 text-[#FFC700] shrink-0" />
+                <Phone className="w-4 h-4 text-[#FFC700] shrink-0" aria-hidden="true" />
                 <a href={`tel:${SITE_CONFIG.contact.phone}`} className="hover:text-[#E6ECFA]">
                   {SITE_CONFIG.contact.phone}
                 </a>
               </div>
               <div className="flex items-center gap-2">
-                <Mail className="w-4 h-4 text-[#FFC700] shrink-0" />
+                <Mail className="w-4 h-4 text-[#FFC700] shrink-0" aria-hidden="true" />
                 <a href={`mailto:${SITE_CONFIG.contact.email}`} className="hover:text-[#E6ECFA]">
                   {SITE_CONFIG.contact.email}
                 </a>
               </div>
               <div className="pt-2">
                 <button
+                  type="button"
                   onClick={onNavigateContact}
-                  className="text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer"
+                  className="text-xs font-semibold text-[#FFC700] hover:underline cursor-pointer py-1"
                 >
                   Contact Desk Form &rarr;
                 </button>
@@ -145,13 +149,13 @@ export const Footer: React.FC<FooterProps> = ({
         <div className="pt-8 flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#9AA8C7]">
           <p>© {new Date().getFullYear()} SOT Student Portal. {SITE_CONFIG.tagline}.</p>
           <div className="flex flex-wrap items-center gap-6">
-            <button onClick={onNavigateFaq} className="hover:text-[#E6ECFA] transition-colors cursor-pointer">
+            <button type="button" onClick={onNavigateFaq} className="hover:text-[#E6ECFA] transition-colors cursor-pointer py-1">
               FAQs
             </button>
-            <button onClick={onNavigatePrivacy} className="hover:text-[#E6ECFA] transition-colors cursor-pointer">
+            <button type="button" onClick={onNavigatePrivacy} className="hover:text-[#E6ECFA] transition-colors cursor-pointer py-1">
               Privacy Policy
             </button>
-            <button onClick={onNavigateTerms} className="hover:text-[#E6ECFA] transition-colors cursor-pointer">
+            <button type="button" onClick={onNavigateTerms} className="hover:text-[#E6ECFA] transition-colors cursor-pointer py-1">
               Terms of Use
             </button>
           </div>

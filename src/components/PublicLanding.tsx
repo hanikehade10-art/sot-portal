@@ -25,6 +25,8 @@ import { SITE_CONFIG } from '../config/site';
 import { useSiteSettings } from '../hooks/useSiteSettings';
 import { WhatsAppChannelButton } from './WhatsAppChannelButton';
 import { WhatsAppIcon } from './WhatsAppIcon';
+import { useAccessibility } from '../context/AccessibilityContext';
+import { ReadAloudBar } from './ReadAloudBar';
 
 interface PublicLandingProps {
   openSignUp: () => void;
@@ -122,17 +124,19 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
   onNavigateFaq
 }) => {
   const { settings } = useSiteSettings();
+  const { settings: a11ySettings } = useAccessibility();
 
   // 1. Accessibility & Performance Detection
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const [systemReducedMotion, setSystemReducedMotion] = useState(false);
   const [isLowEndDevice, setIsLowEndDevice] = useState(false);
+  const prefersReducedMotion = systemReducedMotion || a11ySettings.reduceMotion || a11ySettings.accessibilityMode;
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-      setPrefersReducedMotion(motionQuery.matches);
+      setSystemReducedMotion(motionQuery.matches);
 
-      const handleMotionChange = (e: MediaQueryListEvent) => setPrefersReducedMotion(e.matches);
+      const handleMotionChange = (e: MediaQueryListEvent) => setSystemReducedMotion(e.matches);
       motionQuery.addEventListener('change', handleMotionChange);
 
       // Low-end phone heuristic: 4 CPU cores or fewer
@@ -392,26 +396,36 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
             </div>
 
             {/* Headline slides up and fades in line by line */}
-            <div className="space-y-1 sm:space-y-2">
-              {/* Line 1 */}
-              <h1
-                className={`font-heading font-extrabold text-3xl sm:text-5xl lg:text-6xl tracking-tight text-[#E6ECFA] leading-[1.15] transition-all duration-500 ease-out ${
+            <h1 className="font-heading font-extrabold text-3xl sm:text-5xl lg:text-6xl tracking-tight leading-[1.15] space-y-1 sm:space-y-2">
+              <span
+                className={`block text-[#E6ECFA] transition-all duration-500 ease-out ${
                   heroMounted || prefersReducedMotion ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
                 }`}
                 style={{ transitionDelay: prefersReducedMotion ? '0ms' : '100ms' }}
               >
                 Study smarter at the
-              </h1>
+              </span>
 
-              {/* Line 2 with key phrase in yellow */}
-              <h1
-                className={`font-heading font-extrabold text-3xl sm:text-5xl lg:text-6xl tracking-tight text-[#FFC700] leading-[1.15] transition-all duration-500 ease-out drop-shadow-[0_0_30px_rgba(255,199,0,0.25)] ${
+              <span
+                className={`block text-[#FFC700] transition-all duration-500 ease-out drop-shadow-[0_0_30px_rgba(255,199,0,0.25)] ${
                   heroMounted || prefersReducedMotion ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-6'
                 }`}
                 style={{ transitionDelay: prefersReducedMotion ? '0ms' : '220ms' }}
               >
                 School of Technology.
-              </h1>
+              </span>
+            </h1>
+
+            <div className="flex justify-center pt-1">
+              <ReadAloudBar
+                sourceId="landing-hero"
+                label="Listen to overview"
+                compact
+                blocks={[
+                  'Study smarter at the School of Technology.',
+                  'Access all 6 academic departments, syllabus materials, past questions, timetables, and CBT practice quizzes in one student portal.'
+                ]}
+              />
             </div>
 
             {/* School Description */}
@@ -559,10 +573,12 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
               const isAnimated = deptCardsVisible || prefersReducedMotion;
 
               return (
-                <div
+                <button
+                  type="button"
                   key={dept.id}
                   onClick={() => onSelectDepartment(dept)}
-                  className="group relative p-7 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all duration-300 hover:shadow-[0_0_30px_rgba(47,82,255,0.25)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
+                  aria-label={`${dept.name} (${dept.shortCode}): ${dept.oneLiner}. Explore curriculum`}
+                  className="text-left group relative p-7 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] transition-all duration-300 hover:shadow-[0_0_30px_rgba(47,82,255,0.25)] hover:-translate-y-1 cursor-pointer flex flex-col justify-between"
                   style={{
                     opacity: isAnimated ? 1 : 0,
                     transform: isAnimated ? 'translateY(0)' : 'translateY(24px)',
@@ -574,7 +590,7 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                     willChange: 'transform, opacity, filter'
                   }}
                 >
-                  <div>
+                  <div className="w-full">
                     <div className="flex items-center justify-between mb-5">
                       <div className="w-12 h-12 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:text-white group-hover:bg-[#2F52FF] group-hover:border-[#2F52FF] transition-all duration-300">
                         <DepartmentIcon name={dept.iconName} className="w-6 h-6" />
@@ -593,13 +609,13 @@ export const PublicLanding: React.FC<PublicLandingProps> = ({
                     </p>
                   </div>
 
-                  <div className="pt-4 border-t border-[#24315A]/70 flex items-center justify-between text-xs text-[#9AA8C7]">
+                  <div className="w-full pt-4 border-t border-[#24315A]/70 flex items-center justify-between text-xs text-[#9AA8C7]">
                     <span className="text-[#FFC700] font-medium">{dept.facilityNotice}</span>
                     <span className="inline-flex items-center gap-1 font-bold text-[#FFC700] group-hover:text-[#2F52FF] transition-colors">
                       Explore Curriculum &rarr;
                     </span>
                   </div>
-                </div>
+                </button>
               );
             })}
           </div>

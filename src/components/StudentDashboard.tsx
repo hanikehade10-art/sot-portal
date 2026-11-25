@@ -116,6 +116,10 @@ import {
 } from 'lucide-react';
 import { ShareButton } from './ShareButton';
 import { SITE_CONFIG } from '../config/site';
+import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
+import { AccessibilitySettingsPanel } from './AccessibilitySettingsPanel';
+import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
+import { formatTableForSpeech, normalizeCourseCodeQuery } from '../lib/speechUtils';
 
 interface StudentDashboardProps {
   onNavigateHome: () => void;
@@ -228,6 +232,8 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 }) => {
   const { user, profile, isAdmin, isRep, roleReadError, refreshProfile, logout, updateStudentProfile, upgradeJambToMatric } = useAuth();
   const { settings } = useSiteSettings();
+  const { settings: a11ySettings } = useAccessibility();
+  const skipMotion = a11ySettings.reduceMotion || a11ySettings.accessibilityMode;
 
   // Active navigation state
   const [activeTab, setActiveTab] = useState<TabType>('overview');
@@ -1220,6 +1226,134 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     }
   };
 
+  // Timetable filtered entries and formatted speech blocks
+  const filteredTimetables = useMemo(
+    () =>
+      timetables.filter(
+        (t) =>
+          t.department === studentDept &&
+          t.type === ttTypeTab &&
+          t.level === ttLevelFilter
+      ),
+    [timetables, studentDept, ttTypeTab, ttLevelFilter]
+  );
+
+  const timetableSpeechBlocks = useMemo(() => {
+    if (filteredTimetables.length === 0) {
+      return [`No ${ttTypeTab} timetable posted for ${ttLevelFilter} in ${studentDept}.`];
+    }
+    const header = `${ttTypeTab === 'exam' ? 'Exam' : 'Class'} timetable for ${ttLevelFilter}, ${studentDept}. ${filteredTimetables.length} entries.`;
+    const tableSpeech = formatTableForSpeech(
+      ['Course', 'Day', 'Time', 'Venue'],
+      filteredTimetables.map((t) => [t.courseCode, t.day, `${t.startTime} to ${t.endTime}`, t.venue])
+    );
+    return [header, ...tableSpeech.split('\n').filter(Boolean)];
+  }, [filteredTimetables, ttTypeTab, ttLevelFilter, studentDept]);
+
+  // Dashboard-level voice command registration (defer view-owned handlers when child modules are active)
+  const isDelegatingCourses = activeTab === 'courses';
+  const isDelegatingQuizzes = activeTab === 'quizzes';
+  const isDelegatingPQ = activeTab === 'past-questions';
+
+  useRegisterVoiceHandlers('student-dashboard', {
+    goHome: () => {
+      navigateToBottomTab('overview');
+      return 'Opening Student Home dashboard.';
+    },
+    openCourses: () => {
+      navigateToTab('courses', 'Courses', true);
+      return 'Opening Courses hub.';
+    },
+    openPastQuestions: () => {
+      navigateToTab('past-questions', 'Past Questions', true);
+      return 'Opening Past Questions.';
+    },
+    openTimetable: () => {
+      navigateToTab('timetables', 'Timetable', true);
+      return 'Opening Timetable.';
+    },
+    openAnnouncements: () => {
+      navigateToTab('announcements', 'Announcements', true);
+      return 'Opening Announcements.';
+    },
+    openQuizzes: () => {
+      navigateToTab('quizzes', 'Quizzes', true);
+      return 'Opening Quizzes.';
+    },
+    openCourse: isDelegatingCourses
+      ? undefined
+      : (rawQuery: string) => {
+          const normalized = normalizeCourseCodeQuery(rawQuery);
+          const qLower = rawQuery.toLowerCase().trim();
+          const match = courses.find((c) => {
+            if (c.department !== studentDept) return false;
+            const codeNorm = normalizeCourseCodeQuery(c.code || '');
+            const titleLower = (c.title || '').toLowerCase();
+            return (
+              (normalized && codeNorm === normalized) ||
+              (normalized && codeNorm.includes(normalized)) ||
+              (qLower && titleLower.includes(qLower))
+            );
+          });
+          if (!match) {
+            return `Could not find a course matching ${rawQuery} in ${studentDept}.`;
+          }
+          setResumeTopicId(null);
+          setResumeCourseId(match.id);
+          navigateToTab('courses', `${match.code}: ${match.title}`, true, match.id);
+          return `Opened ${match.code}, ${match.title}.`;
+        },
+    goBack: isDelegatingCourses || isDelegatingQuizzes
+      ? undefined
+      : () => {
+          if (activeTab !== 'overview' || isInner) {
+            handleGoBack();
+            return 'Going back.';
+          }
+          return 'You are already on Home.';
+        },
+    getPageDescription: isDelegatingCourses || isDelegatingQuizzes || isDelegatingPQ
+      ? undefined
+      : () => {
+          if (activeTab === 'overview') {
+            return `${lagosGreetingData.greeting}, ${profile?.fullName?.split(' ')[0] || 'Student'}. ${studentDept}, ${homeLevelFilter}. ${enrolledCourses.length} courses available. Say open courses, open timetable, open announcements, open quizzes, or open past questions.`;
+          }
+          if (activeTab === 'timetables') {
+            return `${ttTypeTab === 'exam' ? 'Exam' : 'Class'} timetable for ${ttLevelFilter}. ${filteredTimetables.length} scheduled sessions. Say read this page to hear the schedule.`;
+          }
+          if (activeTab === 'announcements') {
+            return `Announcements page. ${relevantAnnouncements.length} department bulletins available. Say read this page to listen.`;
+          }
+          if (activeTab === 'profile') {
+            return `Profile and Accessibility settings for ${profile?.fullName || 'Student'}, ${studentDept}, ${profile?.level || 'ND1'}.`;
+          }
+          return `${getTabTitle(activeTab)} page.`;
+        },
+    getPageBlocks: isDelegatingCourses || isDelegatingQuizzes || isDelegatingPQ
+      ? undefined
+      : () => {
+          if (activeTab === 'timetables') {
+            return timetableSpeechBlocks;
+          }
+          if (activeTab === 'announcements') {
+            if (relevantAnnouncements.length === 0) {
+              return ['No announcements currently posted for your department.'];
+            }
+            return relevantAnnouncements.map(
+              (a) => `${a.category}${a.urgent ? ', urgent' : ''}: ${a.title}. ${a.content}`
+            );
+          }
+          if (activeTab === 'overview') {
+            return [
+              `${lagosGreetingData.greeting}, ${profile?.fullName || 'Student'}. Department: ${studentDept}, Level: ${homeLevelFilter}.`,
+              `You have ${enrolledCourses.length} courses in ${homeLevelFilter} ${homeSemesterFilter}, and ${quizzesWaitingCount} quizzes waiting.`,
+              pinnedAnnouncement ? `Pinned notice: ${pinnedAnnouncement.title}. ${pinnedAnnouncement.content}` : ''
+            ].filter(Boolean);
+          }
+          return [`You are viewing ${getTabTitle(activeTab)}.`];
+        }
+  });
+
   return (
     <div className="min-h-screen bg-[#0A1224] text-[#E6ECFA] flex flex-col pb-24 max-w-2xl mx-auto w-full px-3.5 sm:px-5">
       {/* Offline Mode Banner */}
@@ -1240,9 +1374,10 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           <button
             type="button"
             onClick={handleGoBack}
-            className="flex items-center gap-2 text-[#2F52FF] hover:text-[#5271FF] font-bold text-sm transition-colors cursor-pointer group"
+            aria-label={`Back from ${innerTitle || getTabTitle(activeTab)}`}
+            className="flex items-center gap-2 text-[#2F52FF] hover:text-[#5271FF] font-bold text-sm transition-colors cursor-pointer group min-h-[44px]"
           >
-            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
+            <ArrowLeft className="w-5 h-5 text-[#2F52FF] group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" aria-hidden="true" />
             <span className="text-[#E6ECFA] font-bold text-base font-heading">
               {innerTitle || getTabTitle(activeTab)}
             </span>
@@ -1251,11 +1386,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           {/* Quick Notification Bell */}
           <div className="relative">
             <button
+              type="button"
               onClick={() => setShowNotifications(!showNotifications)}
-              title="Notifications"
-              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
+              aria-label={`Notifications${unreadNotificationsCount > 0 ? `, ${unreadNotificationsCount} unread` : ''}`}
+              aria-expanded={showNotifications}
+              className="relative p-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
             >
-              <Bell className="w-4 h-4" />
+              <Bell className="w-4 h-4" aria-hidden="true" />
               {unreadNotificationsCount > 0 && (
                 <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
                   {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
@@ -1277,16 +1414,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
       ) : activeTab !== 'overview' ? (
         /* Root Bottom Tab Header (no back arrow) */
         <header className="sticky top-0 z-30 bg-[#0A1224]/95 backdrop-blur-md border-b border-[#24315A] -mx-3.5 sm:-mx-5 px-3.5 sm:px-5 py-3 flex items-center justify-between mb-4">
-          <h2 className="font-heading font-bold text-lg text-[#E6ECFA]">
+          <h1 className="font-heading font-bold text-lg text-[#E6ECFA]">
             {getTabTitle(activeTab)}
-          </h2>
+          </h1>
           <div className="relative">
             <button
+              type="button"
               onClick={() => setShowNotifications(!showNotifications)}
-              title="Notifications"
-              className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
+              aria-label={`Notifications${unreadNotificationsCount > 0 ? `, ${unreadNotificationsCount} unread` : ''}`}
+              aria-expanded={showNotifications}
+              className="relative p-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
             >
-              <Bell className="w-4 h-4" />
+              <Bell className="w-4 h-4" aria-hidden="true" />
               {unreadNotificationsCount > 0 && (
                 <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
                   {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
@@ -1309,15 +1448,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Toast Notification */}
       {bookmarkToast && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-[#121C36] border border-[#2F52FF] text-xs font-semibold text-[#E6ECFA] shadow-[0_0_20px_rgba(47,82,255,0.4)] flex items-center gap-2">
-          <BookmarkCheck className="w-4 h-4 text-[#FFC700]" />
+        <div role="status" aria-live="polite" className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-[#121C36] border border-[#2F52FF] text-xs font-semibold text-[#E6ECFA] shadow-[0_0_20px_rgba(47,82,255,0.4)] flex items-center gap-2">
+          <BookmarkCheck className="w-4 h-4 text-[#FFC700]" aria-hidden="true" />
           <span>{bookmarkToast}</span>
         </div>
       )}
 
-      {/* Main Content Area */}
-      <main className="flex-1 space-y-4">
-        <div key={activeTab + (isInner ? '-inner' : '')} className="animate-page-enter">
+      {/* Main Content Container (rendered inside global App <main id="main-content">) */}
+      <div className="flex-1 space-y-4">
+        <div key={activeTab + (isInner ? '-inner' : '')} className={skipMotion ? '' : 'animate-page-enter'}>
         {/* ======================================================== */}
         {/* VIEW 1: HOME (COMPACT & CLEAN)                           */}
         {/* ======================================================== */}
@@ -1327,7 +1466,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             <div className="flex items-center justify-between pb-1">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-lg bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700]">
-                  <GraduationCap className="w-4 h-4" />
+                  <GraduationCap className="w-4 h-4" aria-hidden="true" />
                 </div>
                 <span className="font-heading font-bold text-sm text-[#E6ECFA]">
                   SOT Student Desk
@@ -1336,11 +1475,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
               <div className="relative">
                 <button
+                  type="button"
                   onClick={() => setShowNotifications(!showNotifications)}
-                  title="Notifications"
-                  className="relative p-2 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
+                  aria-label={`Notifications${unreadNotificationsCount > 0 ? `, ${unreadNotificationsCount} unread` : ''}`}
+                  aria-expanded={showNotifications}
+                  className="relative p-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-[#9AA8C7] hover:text-[#FFC700] transition-colors cursor-pointer"
                 >
-                  <Bell className="w-4 h-4" />
+                  <Bell className="w-4 h-4" aria-hidden="true" />
                   {unreadNotificationsCount > 0 && (
                     <span className="absolute -top-1 -right-1 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-bold text-[9px] animate-pulse">
                       {unreadNotificationsCount > 99 ? '99+' : unreadNotificationsCount}
@@ -1421,21 +1562,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             </div>
 
             {/* 2. SEARCH BAR ("Search courses, topics, past questions") */}
-            <div className="relative animate-card-slide" style={{ animationDelay: '30ms' }}>
+            <div className={`relative ${skipMotion ? '' : 'animate-card-slide'}`} style={skipMotion ? undefined : { animationDelay: '30ms' }}>
+              <label htmlFor="sot-home-search" className="sr-only">Search courses, topics, past questions</label>
               <input
+                id="sot-home-search"
                 type="text"
                 value={homeSearchQuery}
                 onChange={(e) => setHomeSearchQuery(e.target.value)}
                 placeholder="Search courses, topics, past questions"
-                className="w-full pl-9 pr-8 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF] focus:ring-1 focus:ring-[#2F52FF]/40 shadow-sm"
+                className="w-full min-h-[44px] pl-9 pr-10 py-2.5 rounded-xl bg-[#121C36] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/70 focus:outline-none focus:border-[#2F52FF] focus:ring-1 focus:ring-[#2F52FF]/40 shadow-sm"
               />
-              <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-3" />
+              <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-3.5" aria-hidden="true" />
               {homeSearchQuery && (
                 <button
+                  type="button"
                   onClick={() => setHomeSearchQuery('')}
-                  className="absolute right-3 top-3 text-[#9AA8C7] hover:text-[#E6ECFA]"
+                  aria-label="Clear search query"
+                  className="absolute right-2.5 top-2.5 p-1 text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <X className="w-3.5 h-3.5" aria-hidden="true" />
                 </button>
               )}
             </div>
@@ -1470,20 +1615,21 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           Courses ({homeSearchResults.courses.length})
                         </span>
                         {homeSearchResults.courses.map((c) => (
-                          <div
+                          <button
                             key={c.id}
+                            type="button"
                             onClick={() => {
                               navigateToTab('courses', `${c.code}: ${c.title}`, true, c.id);
                               setHomeSearchQuery('');
                             }}
-                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                            className="w-full text-left p-2.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
                           >
                             <div className="truncate pr-2">
                               <span className="font-bold text-[#FFC700] mr-2">{c.code}</span>
                               <span className="text-[#E6ECFA]">{c.title}</span>
                             </div>
                             <span className="text-[10px] text-[#9AA8C7] shrink-0">{c.units} units</span>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -1495,17 +1641,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           Topics ({homeSearchResults.topics.length})
                         </span>
                         {homeSearchResults.topics.map((t) => (
-                          <div
+                          <button
                             key={t.id}
+                            type="button"
                             onClick={() => {
                               navigateToTab('courses', t.title, true, t.courseId);
                               setHomeSearchQuery('');
                             }}
-                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                            className="w-full text-left p-2.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
                           >
                             <span className="truncate text-[#E6ECFA] font-medium">{t.title}</span>
-                            <span className="text-[10px] text-[#2F52FF] font-semibold shrink-0">Open Topic &rarr;</span>
-                          </div>
+                            <span className="text-[10px] text-[#60A5FA] font-semibold shrink-0">Open Topic &rarr;</span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -1517,8 +1664,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           Past Questions ({homeSearchResults.pastQuestions.length})
                         </span>
                         {homeSearchResults.pastQuestions.map((pq) => (
-                          <div
+                          <button
                             key={pq.id}
+                            type="button"
                             onClick={() => {
                               setQuickPdfViewer({
                                 title: pq.title,
@@ -1526,7 +1674,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                                 courseCode: pq.courseCode
                               });
                             }}
-                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                            className="w-full text-left p-2.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
                           >
                             <div className="truncate pr-2">
                               {pq.courseCode && (
@@ -1537,7 +1685,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                             <span className="text-[10px] px-2 py-0.5 rounded bg-[#2F52FF] text-white font-bold shrink-0">
                               Preview
                             </span>
-                          </div>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -1549,24 +1697,26 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           Materials ({homeSearchResults.materials.length})
                         </span>
                         {homeSearchResults.materials.map((m) => (
-                          <div
+                          <a
                             key={m.id}
-                            onClick={() => {
+                            href={m.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => {
                               if (m.url.toLowerCase().includes('.pdf') || m.url.includes('drive.google.com')) {
+                                e.preventDefault();
                                 setQuickPdfViewer({
                                   title: m.title,
                                   url: formatPdfUrl(m.url),
                                   courseCode: m.courseCode
                                 });
-                              } else {
-                                window.open(m.url, '_blank');
                               }
                             }}
-                            className="p-2 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
+                            className="w-full text-left p-2.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] flex items-center justify-between cursor-pointer transition-colors"
                           >
                             <span className="truncate text-[#E6ECFA] font-medium">{m.title}</span>
                             <span className="text-[10px] text-[#9AA8C7] shrink-0">{m.type || m.category || 'File'}</span>
-                          </div>
+                          </a>
                         ))}
                       </div>
                     )}
@@ -1579,14 +1729,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
             {!homeSearchQuery && (
               <div className="space-y-4">
                 {/* Featured Mock CBT Banner */}
-                <div
+                <button
+                  type="button"
                   onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
-                  style={{ animationDelay: '60ms' }}
-                  className="p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#16254a] to-[#121C36] border border-[#FFC700]/40 hover:border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.12)] flex items-center justify-between gap-3 cursor-pointer transition-all hover:scale-[1.01] active:scale-[0.99] group animate-card-slide"
+                  style={skipMotion ? undefined : { animationDelay: '60ms' }}
+                  className={`w-full text-left p-4 rounded-2xl bg-gradient-to-r from-[#121C36] via-[#16254a] to-[#121C36] border border-[#FFC700]/40 hover:border-[#FFC700] shadow-[0_0_20px_rgba(255,199,0,0.12)] flex items-center justify-between gap-3 cursor-pointer transition-all group ${skipMotion ? '' : 'animate-card-slide hover:scale-[1.01] active:scale-[0.99]'}`}
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="w-11 h-11 rounded-xl bg-[#FFC700]/15 border border-[#FFC700]/40 text-[#FFC700] flex items-center justify-center shrink-0">
-                      <Clock className="w-6 h-6 text-[#FFC700]" />
+                      <Clock className="w-6 h-6 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
@@ -1604,104 +1755,110 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   </div>
                   <div className="hidden xs:flex items-center gap-1 text-xs font-bold text-[#FFC700] shrink-0 group-hover:translate-x-1 transition-transform">
                     <span>Start</span>
-                    <ChevronRight className="w-4 h-4" />
+                    <ChevronRight className="w-4 h-4" aria-hidden="true" />
                   </div>
-                </div>
+                </button>
 
                 <div className="grid grid-cols-2 gap-3">
                   {/* Tile: Mock CBT */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('mock-cbt', 'Mock CBT Exam', true)}
-                    style={{ animationDelay: '80ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.2)] hover:scale-[1.02] active:scale-[0.98] group relative overflow-hidden animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '80ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.2)] group relative overflow-hidden ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <span className="absolute top-2 right-2 px-1.5 py-0.2 rounded-full bg-[#FFC700]/20 text-[#FFC700] border border-[#FFC700]/40 font-extrabold text-[8px] uppercase tracking-wider">
                       Timed
                     </span>
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <Clock className="w-5 h-5 text-[#FFC700]" />
+                      <Clock className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Mock CBT
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Timed exam drill</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Timed exam drill</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 1: Courses */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('courses', 'Courses', true)}
-                    style={{ animationDelay: '100ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '100ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <BookOpen className="w-5 h-5 text-[#2F52FF]" />
+                      <BookOpen className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Courses
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Topics &amp; notes</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Topics &amp; notes</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 2: Past Questions */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('past-questions', 'Past Questions', true)}
-                    style={{ animationDelay: '120ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '120ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <FileText className="w-5 h-5 text-[#FFC700]" />
+                      <FileText className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Past Questions
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Exams &amp; sessions</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Exams &amp; sessions</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile: Quizzes */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('quizzes', 'Quizzes', true)}
-                    style={{ animationDelay: '140ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '140ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <FileQuestion className="w-5 h-5 text-[#2F52FF]" />
+                      <FileQuestion className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Quizzes
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Practice &amp; tests</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Practice &amp; tests</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 3: Timetable */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('timetables', 'Timetable', true)}
-                    style={{ animationDelay: '160ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '160ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <Calendar className="w-5 h-5 text-[#2F52FF]" />
+                      <Calendar className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Timetable
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Classes &amp; exams</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Classes &amp; exams</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 4: Announcements */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('announcements', 'Announcements', true)}
-                    style={{ animationDelay: '180ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group relative animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '180ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group relative ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     {unreadAnnouncementsCount > 0 && (
                       <span className="absolute top-2.5 right-2.5 px-1.5 py-0.2 rounded-full bg-rose-600 text-white font-extrabold text-[9px]">
@@ -1709,173 +1866,183 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       </span>
                     )}
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <Bell className="w-5 h-5 text-[#FFC700]" />
+                      <Bell className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Announcements
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Bulletins &amp; notices</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Bulletins &amp; notices</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 5: GPA Calculator */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('gpa', 'GPA Calculator', true)}
-                    style={{ animationDelay: '200ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '200ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <Calculator className="w-5 h-5 text-[#2F52FF]" />
+                      <Calculator className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         GPA Calculator
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Track your target GPA</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Track your target GPA</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 6: Study Planner */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('study-planner', 'Study Planner', true)}
-                    style={{ animationDelay: '220ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '220ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <ListTodo className="w-5 h-5 text-[#FFC700]" />
+                      <ListTodo className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Study Planner
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">To-dos &amp; assignments</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">To-dos &amp; assignments</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 7: Saved */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('bookmarks', 'Saved Items', true)}
-                    style={{ animationDelay: '240ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '240ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <Bookmark className="w-5 h-5 text-[#2F52FF]" />
+                      <Bookmark className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Saved
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Bookmarks &amp; pins</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Bookmarks &amp; pins</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 8: Communities & Links */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('links', 'Communities & Links', true)}
-                    style={{ animationDelay: '260ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '260ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <Link2 className="w-5 h-5 text-[#FFC700]" />
+                      <Link2 className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Communities &amp; Links
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Groups &amp; resources</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Groups &amp; resources</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 9: My Messages */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('my-messages', 'My Messages', true)}
-                    style={{ animationDelay: '270ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '270ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <MessageSquare className="w-5 h-5 text-[#2F52FF]" />
+                      <MessageSquare className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         My Messages
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Inquiries &amp; replies</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Inquiries &amp; replies</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 10: Ask AI */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('ask-ai', 'Ask AI Study Helper', true)}
-                    style={{ animationDelay: '280ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '280ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <Sparkles className="w-5 h-5 text-[#FFC700]" />
+                      <Sparkles className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Ask AI
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Smart study assistant</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Smart study assistant</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 11: Weekly Leaderboard */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('leaderboard', 'Department Leaderboard', true)}
-                    style={{ animationDelay: '290ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '290ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#FFC700] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(255,199,0,0.15)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] group-hover:border-[#FFC700] transition-colors">
-                      <Trophy className="w-5 h-5 text-[#FFC700]" />
+                      <Trophy className="w-5 h-5 text-[#FFC700]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         Leaderboard
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">Weekly Top 10</p>
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">Weekly Top 10</span>
                     </div>
-                  </div>
+                  </button>
 
                   {/* Tile 12: My Badges */}
-                  <div
+                  <button
+                    type="button"
                     onClick={() => navigateToTab('badges', 'My Badges', true)}
-                    style={{ animationDelay: '300ms' }}
-                    className="p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] hover:scale-[1.02] active:scale-[0.98] group animate-card-slide"
+                    style={skipMotion ? undefined : { animationDelay: '300ms' }}
+                    className={`p-4 rounded-2xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] flex flex-col items-center justify-center text-center gap-2 transition-all cursor-pointer shadow-sm hover:shadow-[0_0_15px_rgba(47,82,255,0.2)] group ${skipMotion ? '' : 'animate-card-slide'}`}
                   >
                     <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#2F52FF] group-hover:border-[#2F52FF] transition-colors">
-                      <Award className="w-5 h-5 text-[#2F52FF]" />
+                      <Award className="w-5 h-5 text-[#2F52FF]" aria-hidden="true" />
                     </div>
                     <div>
-                      <h4 className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white">
+                      <span className="font-heading font-bold text-xs text-[#E6ECFA] group-hover:text-white block">
                         My Badges
-                      </h4>
-                      <p className="text-[10px] text-[#9AA8C7]">
+                      </span>
+                      <span className="text-[10px] text-[#9AA8C7] block">
                         {(profile?.badges || []).length}/4 unlocked
-                      </p>
+                      </span>
                     </div>
-                  </div>
+                  </button>
                 </div>
 
                 {/* 4. PINNED ANNOUNCEMENT ROW (IF ANY) */}
                 {pinnedAnnouncement && (
-                  <div
-                    onClick={() => navigateToTab('announcements', 'Announcements', true)}
-                    className="p-3 rounded-xl bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-between gap-2.5 cursor-pointer hover:border-[#FFC700] transition-colors"
-                  >
-                    <div className="flex items-center gap-2 min-w-0">
-                      <Pin className="w-4 h-4 text-[#FFC700] shrink-0" />
+                  <div className="p-3 rounded-xl bg-[#121C36] border border-[#FFC700]/40 flex items-center justify-between gap-2.5 hover:border-[#FFC700] transition-colors">
+                    <button
+                      type="button"
+                      onClick={() => navigateToTab('announcements', 'Announcements', true)}
+                      aria-label={`Read pinned notice: ${pinnedAnnouncement.title}`}
+                      className="flex-1 text-left flex items-center gap-2 min-w-0 cursor-pointer"
+                    >
+                      <Pin className="w-4 h-4 text-[#FFC700] shrink-0" aria-hidden="true" />
                       <div className="min-w-0">
                         <span className="text-[10px] text-[#FFC700] font-bold uppercase tracking-wider block">
                           Pinned Notice
                         </span>
-                        <p className="text-xs font-semibold text-[#E6ECFA] truncate">
+                        <span className="text-xs font-semibold text-[#E6ECFA] truncate block">
                           {pinnedAnnouncement.title}
-                        </p>
+                        </span>
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    </button>
+                    <div className="flex items-center gap-2 shrink-0">
                       <ShareButton
                         title={pinnedAnnouncement.title}
                         itemType="announcement"
@@ -1883,9 +2050,13 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                         textDetails={pinnedAnnouncement.category}
                         variant="compact"
                       />
-                      <span className="text-[11px] font-bold text-[#2F52FF] hover:underline flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => navigateToTab('announcements', 'Announcements', true)}
+                        className="text-[11px] font-bold text-[#60A5FA] hover:underline flex items-center gap-1 cursor-pointer px-2 py-1"
+                      >
                         Read &rarr;
-                      </span>
+                      </button>
                     </div>
                   </div>
                 )}
@@ -1893,9 +2064,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 {/* 5. "MY COURSES" (FIRST 3 COURSES FOR LEVEL & SEMESTER) */}
                 <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-2.5">
                   <div className="flex items-center justify-between">
-                    <h3 className="font-heading font-bold text-xs text-[#E6ECFA]">
+                    <h2 className="font-heading font-bold text-xs text-[#E6ECFA]">
                       My Courses ({myCoursesPreview.length})
-                    </h3>
+                    </h2>
                     <button
                       type="button"
                       onClick={() => navigateToTab('courses', 'Courses', false)}
@@ -1912,10 +2083,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   ) : (
                     <div className="space-y-1.5">
                       {myCoursesPreview.map((c) => (
-                        <div
+                        <button
                           key={c.id}
+                          type="button"
                           onClick={() => navigateToTab('courses', `${c.code}: ${c.title}`, true, c.id)}
-                          className="p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] flex items-center justify-between gap-2 cursor-pointer transition-colors"
+                          aria-label={`Open course ${c.code}: ${c.title}`}
+                          className="w-full text-left p-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#2F52FF] flex items-center justify-between gap-2 cursor-pointer transition-colors"
                         >
                           <div className="min-w-0 truncate">
                             <span className="font-mono font-bold text-[#FFC700] text-xs mr-2">{c.code}</span>
@@ -1924,7 +2097,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                           <span className="text-[10px] px-2 py-0.5 rounded bg-[#121C36] text-[#9AA8C7] border border-[#24315A] shrink-0 font-medium">
                             {c.units} units
                           </span>
-                        </div>
+                        </button>
                       ))}
                     </div>
                   )}
@@ -2293,7 +2466,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               {/* Privacy Policy & Data Rights (Requirement 1) */}
               <div className="pt-3 border-t border-[#24315A] flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs text-[#9AA8C7]">
-                  <ShieldCheck className="w-4 h-4 text-[#FFC700]" />
+                  <ShieldCheck className="w-4 h-4 text-[#FFC700]" aria-hidden="true" />
                   <span>Privacy Policy &amp; Data Rights</span>
                 </div>
                 <button
@@ -2305,6 +2478,9 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                 </button>
               </div>
             </div>
+
+            {/* Accessibility & Voice Assistant Settings Panel */}
+            <AccessibilitySettingsPanel />
 
             {/* Red Outlined Full-Width Log Out Button */}
             <div className="pt-2">
@@ -2352,11 +2528,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
 
               <div className="flex items-center gap-2">
-                <span className="text-xs text-[#9AA8C7] font-semibold">Level:</span>
+                <label htmlFor="sot-timetable-level" className="text-xs text-[#9AA8C7] font-semibold">Level:</label>
                 <select
+                  id="sot-timetable-level"
                   value={ttLevelFilter}
                   onChange={(e) => setTtLevelFilter(e.target.value)}
-                  className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none"
+                  className="px-2.5 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none"
                 >
                   {ACADEMIC_LEVELS.map((lvl) => (
                     <option key={lvl} value={lvl}>
@@ -2367,47 +2544,47 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
               </div>
             </div>
 
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-[#9AA8C7]">
+                {filteredTimetables.length} scheduled {filteredTimetables.length === 1 ? 'session' : 'sessions'}
+              </span>
+              <ReadAloudBar
+                sourceId="student-timetable"
+                label="Listen to timetable"
+                blocks={timetableSpeechBlocks}
+                showParagraphNav
+                compact
+              />
+            </div>
+
             {/* Timetable Items */}
-            {timetables
-              .filter(
-                (t) =>
-                  t.department === studentDept &&
-                  t.type === ttTypeTab &&
-                  t.level === ttLevelFilter
-              ).length === 0 ? (
+            {filteredTimetables.length === 0 ? (
               <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center space-y-2">
-                <Calendar className="w-8 h-8 text-[#9AA8C7]/50 mx-auto" />
-                <h4 className="text-sm font-bold text-[#E6ECFA]">No timetable posted</h4>
+                <Calendar className="w-8 h-8 text-[#9AA8C7]/50 mx-auto" aria-hidden="true" />
+                <h3 className="text-sm font-bold text-[#E6ECFA]">No timetable posted</h3>
                 <p className="text-xs text-[#9AA8C7]">
                   No {ttTypeTab} timetable currently active for {ttLevelFilter} in {studentDept}.
                 </p>
               </div>
             ) : (
               <div className="space-y-2">
-                {timetables
-                  .filter(
-                    (t) =>
-                      t.department === studentDept &&
-                      t.type === ttTypeTab &&
-                      t.level === ttLevelFilter
-                  )
-                  .map((t) => (
-                    <div
-                      key={t.id}
-                      className="p-3 rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-between gap-3 text-xs"
-                    >
-                      <div>
-                        <span className="font-bold text-[#FFC700] mr-2">{t.courseCode}</span>
-                        <span className="text-[#E6ECFA] font-medium">{t.venue}</span>
-                        <div className="text-[11px] text-[#9AA8C7] mt-0.5">
-                          {t.day} • {t.startTime} - {t.endTime}
-                        </div>
+                {filteredTimetables.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-3 rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-between gap-3 text-xs"
+                  >
+                    <div>
+                      <span className="font-bold text-[#FFC700] mr-2">{t.courseCode}</span>
+                      <span className="text-[#E6ECFA] font-medium">{t.venue}</span>
+                      <div className="text-[11px] text-[#9AA8C7] mt-0.5">
+                        {t.day} • {t.startTime} - {t.endTime}
                       </div>
-                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#60A5FA] border border-[#24315A]">
-                        {t.type}
-                      </span>
                     </div>
-                  ))}
+                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#60A5FA] border border-[#24315A]">
+                      {t.type}
+                    </span>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -2418,21 +2595,49 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
         {/* ======================================================== */}
         {activeTab === 'announcements' && (
           <div className="space-y-3">
+            {relevantAnnouncements.length > 0 && (
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                <span className="text-xs text-[#9AA8C7]">
+                  {relevantAnnouncements.length} {relevantAnnouncements.length === 1 ? 'bulletin' : 'bulletins'}
+                </span>
+                <ReadAloudBar
+                  sourceId="all-announcements"
+                  label="Listen to all"
+                  blocks={relevantAnnouncements.map((a) => `${a.category}${a.urgent ? ', urgent' : ''}: ${a.title}. ${a.content}`)}
+                  showParagraphNav
+                  compact
+                />
+              </div>
+            )}
+
             {relevantAnnouncements.length === 0 ? (
               <div className="p-8 rounded-2xl bg-[#121C36] border border-[#24315A] text-center text-xs text-[#9AA8C7]">
                 No announcements currently posted for your department.
               </div>
             ) : (
               relevantAnnouncements.map((a) => (
-                <div
+                <article
                   key={a.id}
                   className="p-3.5 rounded-xl bg-[#121C36] border border-[#24315A] space-y-2 text-xs"
                 >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
-                      {a.category}
-                    </span>
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5">
+                      <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#0A1224] text-[#FFC700] border border-[#24315A]">
+                        {a.category}
+                      </span>
+                      {a.urgent && (
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950 text-rose-200 border border-rose-500/40">
+                          Urgent
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
+                      <ReadAloudBar
+                        sourceId={`announcement-${a.id}`}
+                        label="Listen"
+                        blocks={[`${a.title}. ${a.content}`]}
+                        compact
+                      />
                       <span className="text-[10px] text-[#9AA8C7]">
                         {a.createdAt ? new Date(a.createdAt).toLocaleDateString() : ''}
                       </span>
@@ -2445,9 +2650,15 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                       />
                     </div>
                   </div>
-                  <h4 className="font-heading font-bold text-sm text-[#E6ECFA]">{a.title}</h4>
-                  <p className="text-xs text-[#9AA8C7] leading-relaxed">{a.content}</p>
-                </div>
+                  <h3 className="font-heading font-bold text-sm text-[#E6ECFA]">{a.title}</h3>
+                  <p className="text-xs text-[#9AA8C7] leading-relaxed">
+                    <SentenceHighlightText
+                      text={a.content}
+                      sourceId={`announcement-${a.id}`}
+                      blockIndex={0}
+                    />
+                  </p>
+                </article>
               ))
             )}
           </div>
@@ -2602,74 +2813,89 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
           />
         )}
         </div>
-      </main>
+      </div>
 
       {/* ======================================================== */}
       {/* BOTTOM TAB BAR (ONLY 5 TABS: Home, Courses, Past Qs,     */}
       {/* Ask AI, Profile)                                         */}
       {/* ======================================================== */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A1224]/95 backdrop-blur-md border-t border-[#24315A] px-2 py-1.5 flex items-center justify-around safe-area-pb">
+      <nav aria-label="Primary student navigation" className="fixed bottom-0 left-0 right-0 z-40 bg-[#0A1224]/95 backdrop-blur-md border-t border-[#24315A] px-2 py-1.5 flex items-center justify-around safe-area-pb">
         {/* 1. Home */}
         <button
+          type="button"
           onClick={() => navigateToBottomTab('overview')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+          aria-label="Home"
+          aria-current={activeTab === 'overview' ? 'page' : undefined}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer min-h-[48px] justify-center ${
             activeTab === 'overview' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'overview' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <LayoutDashboard className="w-5 h-5" />
+            <LayoutDashboard className="w-5 h-5" aria-hidden="true" />
           </div>
           <span className="text-[10px]">Home</span>
         </button>
 
         {/* 2. Courses */}
         <button
+          type="button"
           onClick={() => navigateToBottomTab('courses')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+          aria-label="Courses"
+          aria-current={activeTab === 'courses' ? 'page' : undefined}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer min-h-[48px] justify-center ${
             activeTab === 'courses' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'courses' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <BookOpen className="w-5 h-5" />
+            <BookOpen className="w-5 h-5" aria-hidden="true" />
           </div>
           <span className="text-[10px]">Courses</span>
         </button>
 
         {/* 3. Past Questions */}
         <button
+          type="button"
           onClick={() => navigateToBottomTab('past-questions')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+          aria-label="Past Questions"
+          aria-current={activeTab === 'past-questions' ? 'page' : undefined}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer min-h-[48px] justify-center ${
             activeTab === 'past-questions' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'past-questions' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <FileText className="w-5 h-5" />
+            <FileText className="w-5 h-5" aria-hidden="true" />
           </div>
           <span className="text-[10px]">Past Questions</span>
         </button>
 
         {/* 4. Ask AI */}
         <button
+          type="button"
           onClick={() => navigateToBottomTab('ask-ai')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+          aria-label="Ask AI"
+          aria-current={activeTab === 'ask-ai' ? 'page' : undefined}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer min-h-[48px] justify-center ${
             activeTab === 'ask-ai' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'ask-ai' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <Sparkles className="w-5 h-5" />
+            <Sparkles className="w-5 h-5" aria-hidden="true" />
           </div>
           <span className="text-[10px]">Ask AI</span>
         </button>
 
         {/* 5. Profile */}
         <button
+          type="button"
           onClick={() => navigateToBottomTab('profile')}
-          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer ${
+          aria-label="Profile and Accessibility Settings"
+          aria-current={activeTab === 'profile' ? 'page' : undefined}
+          className={`flex flex-col items-center gap-0.5 py-1 px-3 rounded-xl transition-all cursor-pointer min-h-[48px] justify-center ${
             activeTab === 'profile' ? 'text-[#FFC700] font-bold' : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
           }`}
         >
           <div className={`p-1 rounded-lg ${activeTab === 'profile' ? 'bg-[#2F52FF]/25 text-[#FFC700]' : ''}`}>
-            <User className="w-5 h-5" />
+            <User className="w-5 h-5" aria-hidden="true" />
           </div>
           <span className="text-[10px]">Profile</span>
         </button>
@@ -2720,7 +2946,12 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
 
       {/* Quick PDF Viewer Modal */}
       {quickPdfViewer && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md"
+          role="dialog"
+          aria-modal="true"
+          aria-label={quickPdfViewer.title}
+        >
           <div className="relative w-full max-w-4xl h-[90vh] bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]">
             <div className="p-3.5 bg-[#121C36] border-b border-[#24315A] flex items-center justify-between gap-3">
               <div className="min-w-0">
@@ -2740,7 +2971,7 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5"
                 >
-                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" aria-hidden="true" />
                   <span className="hidden sm:inline">External</span>
                 </a>
                 <a
@@ -2749,14 +2980,16 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
                   rel="noopener noreferrer"
                   className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 shadow-sm"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Download</span>
                 </a>
                 <button
+                  type="button"
                   onClick={() => setQuickPdfViewer(null)}
-                  className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white hover:border-rose-500 cursor-pointer"
+                  aria-label="Close document preview"
+                  className="p-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white hover:border-rose-500 cursor-pointer"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
             </div>

@@ -9,9 +9,15 @@ import { getYouTubeEmbedUrl } from '../data/coursesAndTimetables';
 import { useAuth } from '../context/AuthContext';
 import { logStudentActivity } from '../lib/studentActivity';
 import { getCourseAccent } from '../config/courseAccents';
-import { FormattedLessonNotes } from './FormattedLessonNotes';
+import { FormattedLessonNotes, lessonNotesToSpeechBlocks } from './FormattedLessonNotes';
 import { LessonPdfViewer } from './LessonPdfViewer';
 import { StudentQuizzesView } from './StudentQuizzesView';
+import {
+  useAccessibility,
+  useRegisterVoiceHandlers
+} from '../context/AccessibilityContext';
+import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
+import { markdownToSpeechBlocks, normalizeCourseCodeQuery } from '../lib/speechUtils';
 import {
   ArrowLeft,
   ChevronRight,
@@ -71,6 +77,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   attemptsMap = {}
 }) => {
   const { user, profile } = useAuth();
+  const { speakBlocks, speak } = useAccessibility();
   const loggedTopicRef = useRef<string | null>(null);
 
   // Course accent theme (palette: Teal, Emerald, Indigo, Sky, Amber, Rose)
@@ -212,6 +219,123 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
   const ytEmbedUrl = topic.videoUrl ? getYouTubeEmbedUrl(topic.videoUrl) : null;
   const hasVideo = Boolean(topic.videoUrl && topic.videoUrl.trim());
   const topicBookmarked = isBookmarked('topic', topic.id);
+
+  // Precompute spoken blocks for notes, PDF accessible version, video transcript, and summary
+  const typedNoteSpeechBlocks = useMemo(
+    () => lessonNotesToSpeechBlocks(topic.notes || ''),
+    [topic.notes]
+  );
+  const pdfAccessibleBlocks = useMemo(
+    () => markdownToSpeechBlocks(topic.notesAccessibleText || ''),
+    [topic.notesAccessibleText]
+  );
+  const videoAccessibleBlocks = useMemo(
+    () => markdownToSpeechBlocks(topic.videoAccessibleText || ''),
+    [topic.videoAccessibleText]
+  );
+
+  const activeNotesBlocks = useMemo(() => {
+    if (activeContentTab === 'pdf' && pdfAccessibleBlocks.length > 0) return pdfAccessibleBlocks;
+    if (typedNoteSpeechBlocks.length > 0) return typedNoteSpeechBlocks;
+    if (pdfAccessibleBlocks.length > 0) return pdfAccessibleBlocks;
+    if (videoAccessibleBlocks.length > 0) return videoAccessibleBlocks;
+    return topic.summary ? [topic.summary] : [];
+  }, [activeContentTab, typedNoteSpeechBlocks, pdfAccessibleBlocks, videoAccessibleBlocks, topic.summary]);
+
+  // Register Lesson Voice Commands
+  useRegisterVoiceHandlers('student-lesson-view', {
+    goBack: () => {
+      if (activeTopicQuizId) {
+        setActiveTopicQuizId(null);
+        return `Returned to ${topic.title}.`;
+      }
+      onBackToCourse();
+      return `Returning to ${course.code} syllabus.`;
+    },
+    goToTopic: (num, rawQuery) => {
+      if (num !== null && num >= 1 && num <= sortedTopics.length) {
+        const target = sortedTopics[num - 1];
+        onSelectTopic(target);
+        return `Opening topic ${num}: ${target.title}.`;
+      }
+      const q = normalizeCourseCodeQuery(rawQuery);
+      const byTitle = sortedTopics.find((t) =>
+        normalizeCourseCodeQuery(t.title).includes(q)
+      );
+      if (byTitle) {
+        onSelectTopic(byTitle);
+        return `Opening topic ${byTitle.title}.`;
+      }
+      return `Topic ${rawQuery} was not found. This course has ${sortedTopics.length} topics.`;
+    },
+    nextTopic: () => {
+      if (nextTopic) {
+        onSelectTopic(nextTopic);
+        return `Opening next topic: ${nextTopic.title}.`;
+      }
+      return `You are already on the last topic in ${course.code}.`;
+    },
+    previousTopic: () => {
+      if (prevTopic) {
+        onSelectTopic(prevTopic);
+        return `Opening previous topic: ${prevTopic.title}.`;
+      }
+      return `You are already on the first topic in ${course.code}.`;
+    },
+    listTopics: () => {
+      const listText = sortedTopics
+        .map((t, i) => `Topic ${i + 1}: ${t.title}`)
+        .join('. ');
+      return `${course.code} has ${sortedTopics.length} topics. ${listText}.`;
+    },
+    markTopicComplete: () => {
+      if (topic.requireQuizToComplete && !hasPassedAnyTopicQuiz && !isCompleted) {
+        return 'Passing the topic quiz is required before marking this topic complete. Say start quiz to begin.';
+      }
+      const nextState = !isCompleted;
+      handleToggleCompleteWrapper();
+      return nextState
+        ? `Marked ${topic.title} as complete.`
+        : `Removed completion mark for ${topic.title}.`;
+    },
+    bookmarkThis: () => {
+      const willSave = !topicBookmarked;
+      toggleBookmark({
+        id: topic.id,
+        type: 'topic',
+        title: `${course.code}: ${topic.title}`,
+        code: course.code,
+        department: course.department
+      });
+      return willSave ? `Bookmarked ${topic.title}.` : `Removed bookmark for ${topic.title}.`;
+    },
+    getSummaryText: () => {
+      return topic.summary?.trim() || '';
+    },
+    getNotesBlocks: () => {
+      return activeNotesBlocks;
+    },
+    getPageBlocks: () => {
+      const intro = [
+        `${course.code}: ${topic.title}. Topic ${currentStep} of ${totalTopics}.`,
+        ...(topic.whatYoullLearn?.length
+          ? [`What you will learn: ${topic.whatYoullLearn.join('. ')}`]
+          : []),
+        ...(topic.beforeYouBegin ? [`Before you begin: ${topic.beforeYouBegin}`] : [])
+      ];
+      return [...intro, ...activeNotesBlocks, ...(topic.summary ? [`Topic summary: ${topic.summary}`] : [])];
+    },
+    getPageDescription: () => {
+      return `You are studying ${course.code}, topic ${currentStep} of ${totalTopics}: ${topic.title}. Say read the notes, read the summary, next topic, or start quiz.`;
+    },
+    startQuiz: () => {
+      if (topicQuizzes.length > 0) {
+        setActiveTopicQuizId(topicQuizzes[0].id);
+        return `Opening quiz ${topicQuizzes[0].title}.`;
+      }
+      return 'There is no quiz linked to this topic yet.';
+    }
+  });
 
   // If in-place quiz is active, render StudentQuizzesView right inside this topic flow!
   if (activeTopicQuizId) {
@@ -445,26 +569,36 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
       {/* ========================================================= */}
       {hasVideo && (
         <div className="rounded-2xl bg-[#111A2E] border border-[#24315A] overflow-hidden shadow-sm">
-          <div className="p-3.5 bg-[#0B1220] border-b border-[#24315A] flex items-center justify-between">
+          <div className="p-3.5 bg-[#0B1220] border-b border-[#24315A] flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <div className="w-6 h-6 rounded bg-rose-500/20 text-rose-400 flex items-center justify-center">
-                <Play className="w-3.5 h-3.5 fill-current" />
+                <Play className="w-3.5 h-3.5 fill-current" aria-hidden="true" />
               </div>
               <span className="font-heading font-bold text-xs text-[#E8EEF8]">
                 Video Tutorial &amp; Lecture
               </span>
             </div>
-            {topic.videoUrl && (
-              <a
-                href={topic.videoUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-[#60A5FA] hover:underline flex items-center gap-1"
-              >
-                <span>Open in YouTube</span>
-                <ExternalLink className="w-3 h-3" />
-              </a>
-            )}
+            <div className="flex items-center gap-2">
+              {videoAccessibleBlocks.length > 0 && (
+                <ReadAloudBar
+                  sourceId="lesson-video-transcript"
+                  label="Listen to transcript"
+                  blocks={videoAccessibleBlocks}
+                  compact
+                />
+              )}
+              {topic.videoUrl && (
+                <a
+                  href={topic.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-[#60A5FA] hover:underline flex items-center gap-1"
+                >
+                  <span>Open in YouTube</span>
+                  <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                </a>
+              )}
+            </div>
           </div>
 
           <div className="relative w-full aspect-video bg-black">
@@ -478,7 +612,7 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
               />
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center space-y-2">
-                <Play className="w-8 h-8 text-[#FACC15]" />
+                <Play className="w-8 h-8 text-[#FACC15]" aria-hidden="true" />
                 <a
                   href={topic.videoUrl}
                   target="_blank"
@@ -490,6 +624,25 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
               </div>
             )}
           </div>
+
+          {topic.videoAccessibleText && topic.videoAccessibleText.trim() && (
+            <div className="p-4 border-t border-[#24315A] bg-[#0B1220]/70 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider">
+                  Accessible Text Version (Video Transcript / Description)
+                </span>
+                <ReadAloudBar
+                  sourceId="lesson-video-transcript"
+                  label="Listen"
+                  blocks={videoAccessibleBlocks}
+                  compact
+                />
+              </div>
+              <p className="text-xs sm:text-sm text-[#E8EEF8] leading-relaxed whitespace-pre-wrap">
+                {topic.videoAccessibleText}
+              </p>
+            </div>
+          )}
         </div>
       )}
 
@@ -527,21 +680,56 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
 
         {/* View 4A: Typed Notes */}
         {((activeContentTab === 'notes' && hasNotes) || (!hasPdf && hasNotes) || (!hasNotes && !hasPdf)) && (
-          <div className="p-6 sm:p-8 rounded-2xl bg-[#111A2E] border border-[#24315A] shadow-sm">
+          <div className="p-5 sm:p-8 rounded-2xl bg-[#111A2E] border border-[#24315A] shadow-sm space-y-4">
+            {typedNoteSpeechBlocks.length > 0 && (
+              <div className="pb-3 border-b border-[#24315A] flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-bold text-[#9FB0C8]">
+                  Listen to Study Notes
+                </span>
+                <ReadAloudBar
+                  sourceId="lesson-notes"
+                  label="Listen"
+                  blocks={typedNoteSpeechBlocks}
+                  showParagraphNav
+                />
+              </div>
+            )}
             <FormattedLessonNotes
               notes={topic.notes || ''}
               theme={theme}
               fontSize={fontSize}
+              sourceId="lesson-notes"
+              onListenFromBlock={(blockIdx) => speakBlocks('lesson-notes', typedNoteSpeechBlocks, blockIdx)}
             />
           </div>
         )}
 
-        {/* View 4B: In-App PDF Viewer */}
+        {/* View 4B: In-App PDF Viewer + Accessible Text Version */}
         {((activeContentTab === 'pdf' && hasPdf) || (!hasNotes && hasPdf)) && topic.notesPdfUrl && (
-          <LessonPdfViewer
-            pdfUrl={topic.notesPdfUrl}
-            topicTitle={topic.title}
-          />
+          <div className="space-y-4">
+            {topic.notesAccessibleText && topic.notesAccessibleText.trim() && (
+              <div className="p-5 rounded-2xl bg-[#111A2E] border-2 border-[#FFC700]/50 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#24315A]">
+                  <span className="text-xs font-extrabold uppercase tracking-wider text-[#FFC700]">
+                    Accessible Text Version (PDF Notes)
+                  </span>
+                  <ReadAloudBar
+                    sourceId="lesson-pdf-accessible"
+                    label="Listen to PDF text"
+                    blocks={pdfAccessibleBlocks}
+                    showParagraphNav
+                  />
+                </div>
+                <div className="text-sm text-[#E8EEF8] leading-relaxed whitespace-pre-wrap">
+                  {topic.notesAccessibleText}
+                </div>
+              </div>
+            )}
+            <LessonPdfViewer
+              pdfUrl={topic.notesPdfUrl}
+              topicTitle={topic.title}
+            />
+          </div>
         )}
       </div>
 
@@ -549,15 +737,27 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
       {/* 5. SUMMARY BOX / KEY TAKEAWAYS                            */}
       {/* ========================================================= */}
       {topic.summary && topic.summary.trim() && (
-        <div className="p-5 sm:p-6 rounded-2xl bg-[#16223A] border-2 border-[#FACC15]/60 shadow-[0_0_20px_rgba(250,204,21,0.12)] space-y-2.5 max-w-[760px] mx-auto">
-          <div className="flex items-center gap-2 text-[#FACC15]">
-            <Lightbulb className="w-5 h-5 shrink-0" />
-            <h3 className="font-heading font-extrabold text-sm text-[#FACC15] uppercase tracking-wider">
-              Topic Summary &amp; Key Takeaways
-            </h3>
+        <div className="p-5 sm:p-6 rounded-2xl bg-[#16223A] border-2 border-[#FACC15]/60 shadow-[0_0_20px_rgba(250,204,21,0.12)] space-y-3 max-w-[760px] mx-auto">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 text-[#FACC15]">
+              <Lightbulb className="w-5 h-5 shrink-0" aria-hidden="true" />
+              <h3 className="font-heading font-extrabold text-sm text-[#FACC15] uppercase tracking-wider">
+                Topic Summary &amp; Key Takeaways
+              </h3>
+            </div>
+            <ReadAloudBar
+              sourceId="lesson-summary"
+              label="Listen to summary"
+              blocks={[topic.summary]}
+              compact
+            />
           </div>
           <p className="text-xs sm:text-sm text-[#E8EEF8] leading-relaxed whitespace-pre-wrap pl-1">
-            {topic.summary}
+            <SentenceHighlightText
+              text={topic.summary}
+              sourceId="lesson-summary"
+              blockIndex={0}
+            />
           </p>
         </div>
       )}

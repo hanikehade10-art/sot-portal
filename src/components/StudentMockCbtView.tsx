@@ -54,6 +54,8 @@ import { checkAndAwardBadges } from '../lib/badges';
 import { UserProfile, BadgeItem } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
 import { getCourseAccent } from '../config/courseAccents';
+import { useAccessibility } from '../context/AccessibilityContext';
+import { ReadAloudBar } from './ReadAloudBar';
 
 interface StudentMockCbtViewProps {
   studentDepartment: string;
@@ -117,7 +119,9 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
   // Past Mock Exams History
   const [pastAttempts, setPastAttempts] = useState<MockExamAttempt[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [confirmDeleteAttemptId, setConfirmDeleteAttemptId] = useState<string | null>(null);
 
+  const { settings: a11ySettings } = useAccessibility();
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Department Courses list (filtered by department)
@@ -291,7 +295,8 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
     setSelectedAnswers({});
     setFlaggedQuestions({});
 
-    const totalSecs = timeLimitChoice * 60;
+    const multiplier = a11ySettings.extendedQuizTime || 1;
+    const totalSecs = Math.round(timeLimitChoice * 60 * multiplier);
     setTotalTimeSeconds(totalSecs);
     setTimeLeftSeconds(totalSecs);
     setWasAutoSubmitted(false);
@@ -462,7 +467,6 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
 
   // Delete a past attempt
   const handleDeletePastAttempt = async (attemptId: string) => {
-    if (!window.confirm('Delete this mock exam attempt from your history?')) return;
     try {
       const localKey = `sot_mock_cbt_history_${uid}`;
       const filtered = pastAttempts.filter(a => a.id !== attemptId);
@@ -472,6 +476,8 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
       await deleteDoc(doc(db, 'mockExamAttempts', attemptId)).catch(() => {});
     } catch (err) {
       console.warn('Failed to delete past attempt:', err);
+    } finally {
+      setConfirmDeleteAttemptId(null);
     }
   };
 
@@ -738,13 +744,13 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
             <button
               type="button"
               onClick={handleStartExam}
-              className="w-full py-4 px-6 rounded-2xl bg-[#2F52FF] hover:bg-[#2545df] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-xl transition-all cursor-pointer active:scale-[0.99] group"
+              className="w-full min-h-[52px] py-4 px-6 rounded-2xl bg-[#2F52FF] hover:bg-[#2545df] text-white font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-xl transition-all cursor-pointer active:scale-[0.99] group"
             >
               <span>Start Mock Exam</span>
               <span className="text-xs opacity-90 font-mono">
-                ({Math.min(questionCountChoice, questionsAvailable)} Qs • {timeLimitChoice} Mins)
+                ({Math.min(questionCountChoice, questionsAvailable)} Qs • {Math.round(timeLimitChoice * (a11ySettings.extendedQuizTime || 1))} Mins{(a11ySettings.extendedQuizTime || 1) > 1 ? ` (${a11ySettings.extendedQuizTime}x)` : ''})
               </span>
-              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              <ChevronRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" aria-hidden="true" />
             </button>
           )}
 
@@ -840,29 +846,42 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
             <div className="p-5 sm:p-7 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-5 shadow-lg min-h-[360px] flex flex-col justify-between">
               {/* Question Header */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between gap-2 border-b border-[#24315A]/60 pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#24315A]/60 pb-3">
                   <span className="text-xs font-bold text-[#9AA8C7]">
                     Question {currentQuestionIndex + 1}
                   </span>
 
-                  {/* Flag for Review button */}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setFlaggedQuestions(prev => ({
-                        ...prev,
-                        [currentQ.id]: !prev[currentQ.id]
-                      }));
-                    }}
-                    className={`py-1 px-2.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
-                      isFlagged
-                        ? 'bg-amber-500/20 border-amber-500 text-amber-400'
-                        : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]'
-                    }`}
-                  >
-                    <Flag className={`w-3.5 h-3.5 ${isFlagged ? 'fill-amber-400 text-amber-400' : ''}`} />
-                    <span>{isFlagged ? 'Flagged' : 'Flag for review'}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <ReadAloudBar
+                      sourceId={`mock-cbt-q-${currentQ.id}`}
+                      label="Listen"
+                      blocks={[
+                        `Question ${currentQuestionIndex + 1} of ${totalQuestions}. ${currentQ.text}`,
+                        ...(currentQ.options || []).map((o, i) => `Option ${String.fromCharCode(65 + i)}: ${o}`),
+                      ]}
+                      compact
+                    />
+
+                    {/* Flag for Review button */}
+                    <button
+                      type="button"
+                      aria-pressed={isFlagged}
+                      onClick={() => {
+                        setFlaggedQuestions(prev => ({
+                          ...prev,
+                          [currentQ.id]: !prev[currentQ.id]
+                        }));
+                      }}
+                      className={`min-h-[36px] py-1 px-2.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                        isFlagged
+                          ? 'bg-amber-500/20 border-amber-500 text-amber-400'
+                          : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA]'
+                      }`}
+                    >
+                      <Flag className={`w-3.5 h-3.5 ${isFlagged ? 'fill-amber-400 text-amber-400' : ''}`} aria-hidden="true" />
+                      <span>{isFlagged ? 'Flagged' : 'Flag for review'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Question Text */}
@@ -1046,13 +1065,18 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
         {/* SUBMIT CONFIRMATION MODAL */}
         {showSubmitConfirmModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in">
-            <div className="w-full max-w-md p-6 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-4 shadow-2xl">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="mock-submit-title"
+              className="w-full max-w-md p-6 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-4 shadow-2xl"
+            >
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 text-emerald-400 flex items-center justify-center shrink-0">
-                  <Send className="w-5 h-5" />
+                  <Send className="w-5 h-5" aria-hidden="true" />
                 </div>
                 <div>
-                  <h3 className="font-heading font-bold text-base text-[#E6ECFA]">
+                  <h3 id="mock-submit-title" className="font-heading font-bold text-base text-[#E6ECFA]">
                     Submit Mock CBT Exam?
                   </h3>
                   <p className="text-xs text-[#9AA8C7]">
@@ -1137,7 +1161,7 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
     return (
       <div className="space-y-6 max-w-4xl mx-auto pb-16">
         {/* Celebration Confetti when passing (>=50%) */}
-        {showConfetti && (
+        {showConfetti && !a11ySettings.reduceMotion && (
           <ConfettiEffect onComplete={() => setShowConfetti(false)} />
         )}
 
@@ -1526,11 +1550,12 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
 
                         <button
                           type="button"
-                          onClick={() => handleDeletePastAttempt(attempt.id)}
-                          className="p-1.5 rounded-lg bg-[#121C36] hover:bg-rose-900/40 text-[#9AA8C7] hover:text-rose-400 border border-[#24315A] transition-colors cursor-pointer"
+                          onClick={() => setConfirmDeleteAttemptId(attempt.id)}
+                          aria-label={`Delete mock exam attempt for ${attempt.courseCode}`}
+                          className="min-w-[40px] min-h-[40px] flex items-center justify-center p-1.5 rounded-lg bg-[#121C36] hover:bg-rose-900/40 text-[#9AA8C7] hover:text-rose-400 border border-[#24315A] transition-colors cursor-pointer"
                           title="Delete attempt"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
                         </button>
                       </div>
                     </div>
@@ -1540,6 +1565,40 @@ export const StudentMockCbtView: React.FC<StudentMockCbtViewProps> = ({
             </div>
           )}
         </div>
+
+        {confirmDeleteAttemptId && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-mock-attempt-title"
+              className="w-full max-w-sm p-5 rounded-2xl bg-[#121C36] border-2 border-[#24315A] space-y-4 shadow-2xl"
+            >
+              <h3 id="delete-mock-attempt-title" className="font-heading font-bold text-base text-[#E6ECFA]">
+                Delete Mock Exam Record?
+              </h3>
+              <p className="text-xs text-[#9AA8C7] leading-relaxed">
+                This will permanently remove this mock CBT exam attempt from your history.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#24315A]">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteAttemptId(null)}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#E6ECFA] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeletePastAttempt(confirmDeleteAttemptId)}
+                  className="min-h-[44px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer"
+                >
+                  Delete Record
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

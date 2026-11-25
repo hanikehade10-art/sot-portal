@@ -40,6 +40,9 @@ import { QuizItem, UserProfile, QuizAttempt } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
 import { getCourseAccent } from '../config/courseAccents';
 import { CourseListSkeleton } from './SkeletonLoader';
+import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
+import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
+import { normalizeCourseCodeQuery } from '../lib/speechUtils';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -59,11 +62,11 @@ interface StudentResourcesViewProps {
   initialTopicId?: string | null;
 }
 
-const AnimatedProgressRing: React.FC<{ percentage: number; strokeColor: string }> = ({ percentage, strokeColor }) => {
+const AnimatedProgressRing: React.FC<{ percentage: number; strokeColor: string; reduceMotion?: boolean }> = ({ percentage, strokeColor, reduceMotion }) => {
   const [animatedPct, setAnimatedPct] = useState(0);
 
   useEffect(() => {
-    if (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    if (reduceMotion || (typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches)) {
       setAnimatedPct(percentage);
       return;
     }
@@ -71,11 +74,11 @@ const AnimatedProgressRing: React.FC<{ percentage: number; strokeColor: string }
       setAnimatedPct(percentage);
     }, 40);
     return () => clearTimeout(timer);
-  }, [percentage]);
+  }, [percentage, reduceMotion]);
 
   return (
-    <div className="relative w-14 h-14 flex items-center justify-center shrink-0">
-      <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36">
+    <div className="relative w-14 h-14 flex items-center justify-center shrink-0" aria-label={`${percentage} percent complete`}>
+      <svg className="w-14 h-14 -rotate-90" viewBox="0 0 36 36" aria-hidden="true">
         <path
           className="text-[#0B1220]"
           strokeWidth="3.5"
@@ -156,7 +159,12 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
     url: string;
     courseCode?: string;
     type?: string;
+    accessibleText?: string;
   } | null>(null);
+  const [showViewerAccessibleText, setShowViewerAccessibleText] = useState(false);
+
+  const { settings: a11ySettings } = useAccessibility();
+  const skipMotion = a11ySettings.reduceMotion || a11ySettings.accessibilityMode;
 
   // Sync userLevel when it updates
   useEffect(() => {
@@ -400,6 +408,100 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
     return courseResources.filter(r => r.topicId === topicId);
   };
 
+  // Register contextual voice handlers for courses, topics, and curriculum listing
+  const isNestedLessonOrQuiz = Boolean((selectedCourse && selectedLessonTopic) || curriculumQuizState);
+  useRegisterVoiceHandlers('student-resources', {
+    openCourse: (rawQuery: string) => {
+      const normalized = normalizeCourseCodeQuery(rawQuery);
+      const qLower = rawQuery.toLowerCase().trim();
+      const match = courses.find((c) => {
+        const codeNorm = normalizeCourseCodeQuery(c.code || '');
+        const titleLower = (c.title || '').toLowerCase();
+        return (
+          (normalized && codeNorm === normalized) ||
+          (normalized && codeNorm.includes(normalized)) ||
+          (qLower && titleLower.includes(qLower))
+        );
+      });
+      if (!match) {
+        return `Could not find a course matching ${rawQuery}.`;
+      }
+      if (match.level) setSelectedLevel(normalizeCourseLevel(match.level));
+      if (match.semester) setSelectedSemester(normalizeCourseSemester(match.semester));
+      setSelectedLessonTopic(null);
+      setCurriculumQuizState(null);
+      setActiveTab('courses');
+      setSelectedCourseId(match.id);
+      setCourseDetailTab('topics');
+      return `Opened ${match.code}, ${match.title}.`;
+    },
+    goToTopic: isNestedLessonOrQuiz
+      ? undefined
+      : (topicNumber: number | null, rawQuery: string) => {
+          if (!selectedCourse) {
+            return 'Open a course first, for example say open course COM 124.';
+          }
+          if (courseTopics.length === 0) {
+            return `There are no topics yet in ${selectedCourse.code}.`;
+          }
+          let target: TopicItem | undefined;
+          if (topicNumber && topicNumber >= 1 && topicNumber <= courseTopics.length) {
+            target = courseTopics[topicNumber - 1];
+          } else if (rawQuery) {
+            const qLower = rawQuery.toLowerCase();
+            target = courseTopics.find((t) => t.title.toLowerCase().includes(qLower));
+          }
+          if (!target) {
+            return `Could not find that topic in ${selectedCourse.code}. There are ${courseTopics.length} topics.`;
+          }
+          handleOpenLesson(target, selectedCourse);
+          return `Opening topic: ${target.title}.`;
+        },
+    listTopics: isNestedLessonOrQuiz
+      ? undefined
+      : () => {
+          if (!selectedCourse) {
+            if (displayedCourses.length === 0) {
+              return `No courses shown for ${selectedLevel} ${selectedSemester}.`;
+            }
+            const names = displayedCourses.map((c) => `${c.code} ${c.title}`).join('. ');
+            return `Available courses for ${selectedLevel} ${selectedSemester}: ${names}.`;
+          }
+          if (courseTopics.length === 0) {
+            return `${selectedCourse.code} has no syllabus topics yet.`;
+          }
+          const topicList = courseTopics.map((t, idx) => `Topic ${idx + 1}: ${t.title}`).join('. ');
+          return `${selectedCourse.code} has ${courseTopics.length} topics. ${topicList}.`;
+        },
+    goBack: isNestedLessonOrQuiz
+      ? undefined
+      : () => {
+          if (selectedCourse) {
+            setSelectedCourseId(null);
+            return 'Returned to courses list.';
+          }
+        },
+    getPageDescription: isNestedLessonOrQuiz
+      ? undefined
+      : () => {
+          if (selectedCourse) {
+            return `${selectedCourse.code}, ${selectedCourse.title}. ${courseTopics.length} syllabus topics available. Say what topics are there, or go to topic one.`;
+          }
+          return `Courses hub for ${department}, ${selectedLevel} ${selectedSemester}. ${displayedCourses.length} courses shown. Say open course followed by a course code.`;
+        },
+    getPageBlocks: isNestedLessonOrQuiz
+      ? undefined
+      : () => {
+          if (selectedCourse) {
+            return [
+              `${selectedCourse.code}: ${selectedCourse.title}. ${selectedCourse.about || ''}`,
+              ...courseTopics.map((t, idx) => `Topic ${idx + 1}: ${t.title}`)
+            ].filter(Boolean);
+          }
+          return displayedCourses.map((c) => `${c.code}: ${c.title}, ${c.units || 3} units.`);
+        }
+  });
+
   // -------------------------------------------------------------
   // RENDER
   // -------------------------------------------------------------
@@ -465,18 +567,22 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
 
         {/* Search Bar */}
         <div className="relative">
-          <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-1/2 -translate-y-1/2" />
+          <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-1/2 -translate-y-1/2" aria-hidden="true" />
+          <label htmlFor="sot-courses-search" className="sr-only">Search courses, topics, past questions and notes</label>
           <input
+            id="sot-courses-search"
             type="text"
             placeholder="Search courses, topics, past questions and notes..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full pl-9 pr-8 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#62759F] focus:outline-none focus:border-[#2F52FF] transition-all"
+            className="w-full min-h-[44px] pl-9 pr-10 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/70 focus:outline-none focus:border-[#2F52FF] transition-all"
           />
           {searchQuery && (
             <button
+              type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-[#9AA8C7] hover:text-white"
+              aria-label="Clear course search"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 min-w-[36px] min-h-[36px] flex items-center justify-center text-sm text-[#9AA8C7] hover:text-white cursor-pointer"
             >
               &times;
             </button>
@@ -622,96 +728,84 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                     const bookmarked = isBookmarked('course', course.id);
 
                     return (
-                      <div
+                      <article
                         key={course.id}
-                        style={{ animationDelay: `${Math.min(cIdx * 40, 280)}ms` }}
-                        onClick={() => {
-                          setSelectedCourseId(course.id);
-                          setCourseDetailTab('topics');
-                        }}
-                        className={`rounded-2xl bg-[#111A2E] border border-[#24315A] ${courseAccent.borderHover} transition-all cursor-pointer group flex flex-col justify-between overflow-hidden shadow-sm hover:shadow-[0_8px_25px_rgba(47,82,255,0.15)] hover:scale-[1.01] animate-card-slide`}
+                        style={skipMotion ? undefined : { animationDelay: `${Math.min(cIdx * 40, 280)}ms` }}
+                        className={`relative rounded-2xl bg-[#111A2E] border border-[#24315A] ${courseAccent.borderHover} transition-all group flex flex-col justify-between overflow-hidden shadow-sm hover:shadow-[0_8px_25px_rgba(47,82,255,0.15)] ${skipMotion ? '' : 'animate-card-slide'}`}
                       >
-                        {/* Course Card Original Cover */}
-                        {course.coverImageUrl ? (
-                          <div
-                            className="relative h-28 w-full bg-cover bg-center overflow-hidden border-b border-[#24315A]/60"
-                            style={{ backgroundImage: `url(${course.coverImageUrl})` }}
+                        {/* Top-right units & bookmark actions (sibling to main course button) */}
+                        <div className="absolute top-2.5 right-3 z-20 flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded bg-[#0B1220]/85 text-[#E8EEF8] border border-[#24315A] text-[10px] font-bold">
+                            {course.units || 3} Units
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => toggleBookmark({
+                              id: course.id,
+                              type: 'course',
+                              title: `${course.code}: ${course.title}`,
+                              code: course.code,
+                              department: course.department
+                            })}
+                            aria-label={bookmarked ? `Remove bookmark for ${course.code}` : `Bookmark ${course.code}`}
+                            aria-pressed={bookmarked}
+                            className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
+                              bookmarked
+                                ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
+                                : 'bg-[#0B1220]/85 text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
+                            }`}
                           >
-                            <div className="absolute inset-0 bg-gradient-to-t from-[#111A2E] via-[#111A2E]/60 to-transparent" />
-                            <div className="absolute top-2.5 left-3 right-3 flex items-center justify-between">
-                              <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black shadow-sm`}>
-                                {course.code}
-                              </span>
-                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                <span className="px-2 py-0.5 rounded bg-[#0B1220]/80 text-[#E8EEF8] border border-[#24315A] text-[10px] font-bold">
-                                  {course.units || 3} Units
+                            {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" aria-hidden="true" /> : <Bookmark className="w-3.5 h-3.5" aria-hidden="true" />}
+                          </button>
+                        </div>
+
+                        {/* Course Card Cover */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCourseId(course.id);
+                            setCourseDetailTab('topics');
+                          }}
+                          aria-label={`Open course ${course.code}: ${course.title}`}
+                          className="w-full text-left cursor-pointer focus:outline-none"
+                        >
+                          {course.coverImageUrl ? (
+                            <div
+                              className="relative h-28 w-full bg-cover bg-center overflow-hidden border-b border-[#24315A]/60"
+                              style={{ backgroundImage: `url(${course.coverImageUrl})` }}
+                            >
+                              <div className="absolute inset-0 bg-gradient-to-t from-[#111A2E] via-[#111A2E]/60 to-transparent" />
+                              <div className="absolute top-2.5 left-3 flex items-center">
+                                <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black shadow-sm`}>
+                                  {course.code}
                                 </span>
-                                <button
-                                  onClick={() => toggleBookmark({
-                                    id: course.id,
-                                    type: 'course',
-                                    title: `${course.code}: ${course.title}`,
-                                    code: course.code,
-                                    department: course.department
-                                  })}
-                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
-                                    bookmarked
-                                      ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
-                                      : 'bg-[#0B1220]/80 text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
-                                  }`}
-                                  title={bookmarked ? 'Remove bookmark' : 'Bookmark this course'}
-                                >
-                                  {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                                </button>
                               </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className={`relative h-28 w-full bg-gradient-to-br ${courseAccent.coverGradient} p-3.5 flex flex-col justify-between border-b border-[#24315A]/60 overflow-hidden`}>
-                            <div className="flex items-center justify-between relative z-10">
-                              <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black`}>
-                                {course.code}
-                              </span>
-                              <div className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
-                                <span className="px-2 py-0.5 rounded bg-[#0B1220]/70 text-[#E8EEF8] border border-[#24315A] text-[10px] font-bold">
-                                  {course.units || 3} Units
+                          ) : (
+                            <div className={`relative h-28 w-full bg-gradient-to-br ${courseAccent.coverGradient} p-3.5 flex flex-col justify-between border-b border-[#24315A]/60 overflow-hidden`}>
+                              <div className="flex items-center justify-between relative z-10">
+                                <span className={`px-2.5 py-0.5 rounded-md ${courseAccent.badgeBg} ${courseAccent.badgeText} border ${courseAccent.badgeBorder} text-xs font-mono font-black`}>
+                                  {course.code}
                                 </span>
-                                <button
-                                  onClick={() => toggleBookmark({
-                                    id: course.id,
-                                    type: 'course',
-                                    title: `${course.code}: ${course.title}`,
-                                    code: course.code,
-                                    department: course.department
-                                  })}
-                                  className={`p-1 rounded-lg border transition-all cursor-pointer ${
-                                    bookmarked
-                                      ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
-                                      : 'bg-[#0B1220]/70 text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
-                                  }`}
-                                  title={bookmarked ? 'Remove bookmark' : 'Bookmark this course'}
-                                >
-                                  {bookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
-                                </button>
+                              </div>
+                              <div className="flex items-end justify-between relative z-10">
+                                <div className={`w-8 h-8 rounded-xl ${courseAccent.iconBg} border ${courseAccent.badgeBorder} flex items-center justify-center`}>
+                                  <BookOpen className="w-4 h-4" aria-hidden="true" />
+                                </div>
+                                <span className="font-mono text-2xl font-black text-white/10 select-none tracking-widest" aria-hidden="true">
+                                  {course.code}
+                                </span>
                               </div>
                             </div>
-                            <div className="flex items-end justify-between relative z-10">
-                              <div className={`w-8 h-8 rounded-xl ${courseAccent.iconBg} border ${courseAccent.badgeBorder} flex items-center justify-center`}>
-                                <BookOpen className="w-4 h-4" />
-                              </div>
-                              <span className="font-mono text-2xl font-black text-white/10 select-none tracking-widest">
-                                {course.code}
-                              </span>
-                            </div>
-                          </div>
-                        )}
+                          )}
+                        </button>
 
                         {/* Card Body */}
                         <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
                           <div className="space-y-1.5">
                             <div className="flex items-center justify-between text-[11px] text-[#9FB0C8]">
                               <span className="flex items-center gap-1 font-medium text-[#60A5FA]">
-                                <Layers className="w-3.5 h-3.5 text-[#2F52FF]" />
+                                <Layers className="w-3.5 h-3.5 text-[#2F52FF]" aria-hidden="true" />
                                 <span>{courseTopicsList.length} {courseTopicsList.length === 1 ? 'topic' : 'topics'}</span>
                               </span>
                               <span>{courseCompletedTopics.length} of {courseTopicsList.length} complete</span>
@@ -729,7 +823,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                 <span className="text-[#9FB0C8]">Progress</span>
                                 <span className={`font-bold ${courseAccent.accentText}`}>{progressPct}%</span>
                               </div>
-                              <div className="w-full h-1.5 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/50">
+                              <div className="w-full h-1.5 rounded-full bg-[#0B1220] overflow-hidden border border-[#24315A]/50" role="progressbar" aria-valuenow={progressPct} aria-valuemin={0} aria-valuemax={100} aria-label={`${course.code} progress`}>
                                 <div
                                   className={`h-full rounded-full bg-gradient-to-r ${courseAccent.progressGradient} transition-all duration-300 ease-out`}
                                   style={{ width: `${progressPct}%` }}
@@ -743,15 +837,20 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                               </span>
                               <button
                                 type="button"
-                                className={`px-3 py-1.5 rounded-xl ${courseAccent.buttonBg} text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all`}
+                                onClick={() => {
+                                  setSelectedCourseId(course.id);
+                                  setCourseDetailTab('topics');
+                                }}
+                                aria-label={`${isStarted ? 'Continue' : 'Start learning'} ${course.code}: ${course.title}`}
+                                className={`px-3 py-1.5 rounded-xl ${courseAccent.buttonBg} text-white text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all cursor-pointer`}
                               >
                                 <span>{isStarted ? 'Continue' : 'Start learning'}</span>
-                                <ChevronRight className="w-3.5 h-3.5" />
+                                <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
                               </button>
                             </div>
                           </div>
                         </div>
-                      </div>
+                      </article>
                     );
                   })}
                 </div>
@@ -899,7 +998,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
 
                     {/* Circular Progress Ring */}
                     <div className="flex items-center gap-4 bg-[#16223A] border border-[#24315A] p-3.5 rounded-2xl shrink-0 relative z-10">
-                      <AnimatedProgressRing percentage={coursePct} strokeColor={courseAccent.stroke} />
+                      <AnimatedProgressRing percentage={coursePct} strokeColor={courseAccent.stroke} reduceMotion={skipMotion} />
 
                       <div className="text-left">
                         <span className="text-[10px] uppercase font-bold text-[#9FB0C8] tracking-wider block">
@@ -986,11 +1085,13 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                 }`}
                               >
                                 {/* Topic Card Header */}
-                                <div
-                                  onClick={() => handleOpenLesson(topic, selectedCourse)}
-                                  className="p-4 sm:p-5 flex items-center justify-between gap-4 cursor-pointer"
-                                >
-                                  <div className="flex items-center gap-3.5 min-w-0">
+                                <div className="p-4 sm:p-5 flex items-center justify-between gap-4">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleOpenLesson(topic, selectedCourse)}
+                                    aria-label={`Open topic ${idx + 1}: ${topic.title}${isTopicDone ? ', completed' : ''}`}
+                                    className="flex-1 text-left flex items-center gap-3.5 min-w-0 cursor-pointer focus:outline-none"
+                                  >
                                     {/* Number / Completed Tick */}
                                     <div
                                       className={`w-8 h-8 rounded-xl font-mono font-black text-xs flex items-center justify-center shrink-0 border transition-colors ${
@@ -998,6 +1099,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                           ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400'
                                           : 'bg-[#111A2E] border-[#24315A] text-[#9FB0C8]'
                                       }`}
+                                      aria-hidden="true"
                                     >
                                       {isTopicDone ? '✓' : idx + 1}
                                     </div>
@@ -1015,7 +1117,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                       </div>
                                       <div className="flex items-center gap-2.5 mt-1 text-xs text-[#9FB0C8] flex-wrap">
                                         <span className="flex items-center gap-1">
-                                          <Clock className="w-3 h-3 text-[#FACC15]" />
+                                          <Clock className="w-3 h-3 text-[#FACC15]" aria-hidden="true" />
                                           <span>{topic.estimatedMinutes || 15} mins read</span>
                                         </span>
                                         {isTopicDone && (
@@ -1034,15 +1136,17 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                         )}
                                       </div>
                                     </div>
-                                  </div>
+                                  </button>
 
-                                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center gap-2 shrink-0">
                                     <button
+                                      type="button"
                                       onClick={() => toggleTopicExpand(topic.id)}
-                                      className="p-1.5 text-[#9FB0C8] hover:text-[#E8EEF8] cursor-pointer"
-                                      title="Toggle details"
+                                      aria-expanded={isExpanded}
+                                      aria-label={isExpanded ? `Collapse details for ${topic.title}` : `Expand details for ${topic.title}`}
+                                      className="p-2 text-[#9FB0C8] hover:text-[#E8EEF8] cursor-pointer rounded-lg border border-transparent hover:border-[#24315A]"
                                     >
-                                      {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                                      {isExpanded ? <ChevronDown className="w-4 h-4" aria-hidden="true" /> : <ChevronRight className="w-4 h-4" aria-hidden="true" />}
                                     </button>
                                   </div>
                                 </div>
@@ -1057,7 +1161,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                           onClick={() => handleOpenLesson(topic, selectedCourse)}
                                           className={`w-full py-2.5 px-4 rounded-xl ${courseAccent.buttonBg} text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer`}
                                         >
-                                          <BookOpen className="w-4 h-4 text-[#FACC15]" />
+                                          <BookOpen className="w-4 h-4 text-[#FACC15]" aria-hidden="true" />
                                           <span>Study content</span>
                                         </button>
 
@@ -1071,7 +1175,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                             })}
                                             className="w-full py-2.5 px-4 rounded-xl bg-[#FACC15] hover:bg-[#ffd233] text-[#0A1224] font-black text-xs sm:text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
                                           >
-                                            <FileQuestion className="w-4 h-4 text-[#0A1224]" />
+                                            <FileQuestion className="w-4 h-4 text-[#0A1224]" aria-hidden="true" />
                                             <span>Quiz ({topicLinkedQuiz.questionCount || topicLinkedQuiz.questions?.length || 0} Qs)</span>
                                           </button>
                                         )}
@@ -1088,36 +1192,50 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                               return (
                                                 <div
                                                   key={item.id}
-                                                  className="p-2.5 rounded-xl bg-[#0B1220] border border-[#24315A] flex items-center justify-between gap-2 text-xs"
+                                                  className="p-2.5 rounded-xl bg-[#0B1220] border border-[#24315A] space-y-2 text-xs"
                                                 >
-                                                  <div className="flex items-center gap-2 min-w-0">
-                                                    <FileText className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-                                                    <span className="text-[#E8EEF8] truncate">{item.title}</span>
-                                                  </div>
-                                                  <div className="flex items-center gap-2 shrink-0">
-                                                    {isPdf && (
-                                                      <button
-                                                        type="button"
-                                                        onClick={() => setViewerItem({
-                                                          title: item.title,
-                                                          url: item.url,
-                                                          courseCode: selectedCourse.code,
-                                                          type: item.type || 'Lecture Note'
-                                                        })}
-                                                        className="px-2 py-0.5 rounded bg-teal-600 hover:bg-teal-500 text-white text-[11px] font-semibold cursor-pointer"
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                      <FileText className="w-3.5 h-3.5 text-teal-400 shrink-0" aria-hidden="true" />
+                                                      <span className="text-[#E8EEF8] truncate">{item.title}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                                                      {item.accessibleText && (
+                                                        <ReadAloudBar
+                                                          sourceId={`topic-handout-${item.id}`}
+                                                          label="Listen"
+                                                          blocks={[item.title, item.accessibleText]}
+                                                          compact
+                                                        />
+                                                      )}
+                                                      {(isPdf || item.accessibleText) && (
+                                                        <button
+                                                          type="button"
+                                                          onClick={() => {
+                                                            setShowViewerAccessibleText(!isPdf && Boolean(item.accessibleText));
+                                                            setViewerItem({
+                                                              title: item.title,
+                                                              url: item.url,
+                                                              courseCode: selectedCourse.code,
+                                                              type: item.type || 'Lecture Note',
+                                                              accessibleText: item.accessibleText
+                                                            });
+                                                          }}
+                                                          className="px-2.5 py-1 rounded bg-teal-600 hover:bg-teal-500 text-white text-[11px] font-semibold cursor-pointer"
+                                                        >
+                                                          {isPdf ? 'Preview' : 'Read Text'}
+                                                        </button>
+                                                      )}
+                                                      <a
+                                                        href={item.url}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="text-[#60A5FA] hover:underline text-[11px] flex items-center gap-1"
                                                       >
-                                                        Preview
-                                                      </button>
-                                                    )}
-                                                    <a
-                                                      href={item.url}
-                                                      target="_blank"
-                                                      rel="noreferrer"
-                                                      className="text-[#60A5FA] hover:underline text-[11px] flex items-center gap-1"
-                                                    >
-                                                      <span>Open</span>
-                                                      <ExternalLink className="w-3 h-3" />
-                                                    </a>
+                                                        <span>Open</span>
+                                                        <ExternalLink className="w-3 h-3" aria-hidden="true" />
+                                                      </a>
+                                                    </div>
                                                   </div>
                                                 </div>
                                               );
@@ -1279,8 +1397,18 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                   </div>
                                 </div>
 
-                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                                <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
+                                  {mat.accessibleText && (
+                                    <ReadAloudBar
+                                      sourceId={`course-mat-${mat.id}`}
+                                      label="Listen"
+                                      blocks={[mat.title, mat.accessibleText]}
+                                      compact
+                                    />
+                                  )}
+
                                   <button
+                                    type="button"
                                     onClick={() => toggleBookmark({
                                       id: mat.id,
                                       type: 'material',
@@ -1288,28 +1416,34 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                       code: selectedCourse.code,
                                       link: mat.url
                                     })}
+                                    aria-label={isMatBookmarked ? `Remove bookmark for ${mat.title}` : `Bookmark ${mat.title}`}
+                                    aria-pressed={isMatBookmarked}
                                     className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                                       isMatBookmarked
                                         ? 'bg-[#FACC15]/20 text-[#FACC15] border-[#FACC15]/50'
                                         : 'bg-[#111A2E] text-[#9FB0C8] border-[#24315A] hover:text-[#FACC15]'
                                     }`}
-                                    title={isMatBookmarked ? 'Remove bookmark' : 'Bookmark material'}
                                   >
-                                    {isMatBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                                    {isMatBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" aria-hidden="true" /> : <Bookmark className="w-3.5 h-3.5" aria-hidden="true" />}
                                   </button>
 
-                                  {isPdf && (
+                                  {(isPdf || mat.accessibleText) && (
                                     <button
-                                      onClick={() => setViewerItem({
-                                        title: mat.title,
-                                        url: mat.url,
-                                        courseCode: selectedCourse.code,
-                                        type: mat.type || 'Course Material'
-                                      })}
+                                      type="button"
+                                      onClick={() => {
+                                        setShowViewerAccessibleText(!isPdf && Boolean(mat.accessibleText));
+                                        setViewerItem({
+                                          title: mat.title,
+                                          url: mat.url,
+                                          courseCode: selectedCourse.code,
+                                          type: mat.type || 'Course Material',
+                                          accessibleText: mat.accessibleText
+                                        });
+                                      }}
                                       className="px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                                     >
-                                      <Eye className="w-3.5 h-3.5" />
-                                      <span>Preview</span>
+                                      <Eye className="w-3.5 h-3.5" aria-hidden="true" />
+                                      <span>{isPdf ? 'Preview' : 'Read Text'}</span>
                                     </button>
                                   )}
 
@@ -1320,7 +1454,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                     className="px-3 py-1.5 rounded-lg bg-[#111A2E] border border-[#24315A] text-[#E8EEF8] hover:text-white text-xs font-semibold flex items-center gap-1"
                                   >
                                     <span>Open</span>
-                                    <ExternalLink className="w-3.5 h-3.5 text-[#9FB0C8]" />
+                                    <ExternalLink className="w-3.5 h-3.5 text-[#9FB0C8]" aria-hidden="true" />
                                   </a>
 
                                   {isPdf && (
@@ -1329,10 +1463,10 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                                       target="_blank"
                                       rel="noreferrer"
                                       download
+                                      aria-label={`Download ${mat.title} PDF`}
                                       className="p-1.5 rounded-lg bg-[#111A2E] border border-[#24315A] text-[#FACC15] hover:bg-[#FACC15]/10"
-                                      title="Download PDF"
                                     >
-                                      <Download className="w-3.5 h-3.5" />
+                                      <Download className="w-3.5 h-3.5" aria-hidden="true" />
                                     </a>
                                   )}
                                 </div>
@@ -1410,8 +1544,18 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                    <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto flex-wrap">
+                      {pq.accessibleText && (
+                        <ReadAloudBar
+                          sourceId={`dept-pq-${pq.id}`}
+                          label="Listen"
+                          blocks={[`${pq.courseCode || ''} ${pq.title}`, pq.accessibleText]}
+                          compact
+                        />
+                      )}
+
                       <button
+                        type="button"
                         onClick={() => toggleBookmark({
                           id: pq.id,
                           type: 'material',
@@ -1419,17 +1563,19 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                           code: pq.courseCode,
                           link: pq.url
                         })}
+                        aria-label={isPqBookmarked ? `Remove bookmark for ${pq.title}` : `Bookmark ${pq.title}`}
+                        aria-pressed={isPqBookmarked}
                         className={`p-1.5 rounded-lg border transition-all cursor-pointer ${
                           isPqBookmarked
                             ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/50'
                             : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
                         }`}
-                        title={isPqBookmarked ? 'Remove bookmark' : 'Bookmark past question'}
                       >
-                        {isPqBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" /> : <Bookmark className="w-3.5 h-3.5" />}
+                        {isPqBookmarked ? <BookmarkCheck className="w-3.5 h-3.5" aria-hidden="true" /> : <Bookmark className="w-3.5 h-3.5" aria-hidden="true" />}
                       </button>
 
                       <button
+                        type="button"
                         onClick={() => {
                           if (studentProfile?.uid) {
                             logStudentActivity({
@@ -1441,16 +1587,18 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                               title: `${pq.courseCode ? pq.courseCode + ' ' : ''}${pq.title}`
                             });
                           }
+                          setShowViewerAccessibleText(Boolean(pq.accessibleText && a11ySettings.accessibilityMode));
                           setViewerItem({
                             title: pq.title,
                             url: pq.url,
                             courseCode: pq.courseCode,
-                            type: 'Past Question'
+                            type: 'Past Question',
+                            accessibleText: pq.accessibleText
                           });
                         }}
                         className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
                       >
-                        <Eye className="w-3.5 h-3.5" />
+                        <Eye className="w-3.5 h-3.5" aria-hidden="true" />
                         <span>Preview</span>
                       </button>
 
@@ -1473,7 +1621,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         className="px-3 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] hover:text-white text-xs font-semibold flex items-center gap-1"
                       >
                         <span>Open</span>
-                        <ExternalLink className="w-3.5 h-3.5 text-[#9AA8C7]" />
+                        <ExternalLink className="w-3.5 h-3.5 text-[#9AA8C7]" aria-hidden="true" />
                       </a>
 
                       <a
@@ -1481,6 +1629,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                         target="_blank"
                         rel="noreferrer"
                         download
+                        aria-label={`Download ${pq.title} PDF`}
                         onClick={() => {
                           if (studentProfile?.uid) {
                             logStudentActivity({
@@ -1494,9 +1643,8 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                           }
                         }}
                         className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#FFC700] hover:bg-[#FFC700]/10"
-                        title="Download PDF"
                       >
-                        <Download className="w-3.5 h-3.5" />
+                        <Download className="w-3.5 h-3.5" aria-hidden="true" />
                       </a>
                     </div>
                   </div>
@@ -1620,16 +1768,21 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
       )}
 
       {/* ========================================================= */}
-      {/* IN-APP PDF VIEWER MODAL                                   */}
+      {/* IN-APP PDF & ACCESSIBLE TEXT VIEWER MODAL                 */}
       {/* ========================================================= */}
       {viewerItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-sm">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label={viewerItem.title}
+        >
           <div className="w-full max-w-4xl h-[88vh] rounded-2xl bg-[#0F1E36] border border-[#1E2E52] flex flex-col shadow-2xl overflow-hidden">
             {/* Header */}
-            <div className="flex items-center justify-between p-3.5 bg-[#070D1A] border-b border-[#1E2E52]">
+            <div className="flex flex-wrap items-center justify-between gap-2 p-3.5 bg-[#070D1A] border-b border-[#1E2E52]">
               <div className="flex items-center gap-2.5 min-w-0">
                 <div className="w-7 h-7 rounded-lg bg-[#FFC700]/20 text-[#FFC700] flex items-center justify-center shrink-0">
-                  <FileText className="w-4 h-4" />
+                  <FileText className="w-4 h-4" aria-hidden="true" />
                 </div>
                 <div className="min-w-0">
                   <h3 className="font-heading font-bold text-xs sm:text-sm text-[#E6ECFA] truncate">
@@ -1643,14 +1796,29 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {viewerItem.accessibleText && (
+                  <button
+                    type="button"
+                    onClick={() => setShowViewerAccessibleText(!showViewerAccessibleText)}
+                    aria-pressed={showViewerAccessibleText}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer ${
+                      showViewerAccessibleText
+                        ? 'bg-[#FFC700] text-[#0A1224] border-[#FFC700]'
+                        : 'bg-[#121C36] text-[#FFC700] border-[#24315A] hover:border-[#FFC700]'
+                    }`}
+                  >
+                    {showViewerAccessibleText ? 'Show PDF View' : 'Accessible Text'}
+                  </button>
+                )}
+
                 <a
                   href={viewerItem.url}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="px-2.5 py-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#E6ECFA] text-xs font-semibold hover:text-white flex items-center gap-1"
                 >
-                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" aria-hidden="true" />
                   <span className="hidden sm:inline">Open in New Tab</span>
                 </a>
 
@@ -1661,27 +1829,82 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
                   download
                   className="px-2.5 py-1.5 rounded-lg bg-[#FFC700] text-[#0A1224] text-xs font-bold hover:bg-[#ffd233] flex items-center gap-1 shadow-sm"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
                   <span className="hidden sm:inline">Download</span>
                 </a>
 
                 <button
-                  onClick={() => setViewerItem(null)}
-                  className="p-1.5 rounded-lg text-[#9AA8C7] hover:text-white hover:bg-[#1E2E52] cursor-pointer"
+                  type="button"
+                  onClick={() => {
+                    setViewerItem(null);
+                    setShowViewerAccessibleText(false);
+                  }}
+                  aria-label="Close document viewer"
+                  className="p-2 rounded-lg text-[#9AA8C7] hover:text-white hover:bg-[#1E2E52] cursor-pointer"
                 >
-                  <X className="w-5 h-5" />
+                  <X className="w-5 h-5" aria-hidden="true" />
                 </button>
               </div>
             </div>
 
-            {/* Embedded Iframe */}
-            <div className="flex-1 bg-[#0A1224] relative">
-              <iframe
-                src={formatPdfUrl(viewerItem.url)}
-                title={viewerItem.title}
-                className="w-full h-full border-0"
-              />
-            </div>
+            {/* Body: Accessible Text Mode or Embedded PDF */}
+            {viewerItem.accessibleText && showViewerAccessibleText ? (
+              <div className="flex-1 bg-[#0A1224] p-5 overflow-y-auto space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#24315A]">
+                  <span className="text-xs font-bold uppercase tracking-wider text-[#FFC700]">
+                    Accessible Text Version
+                  </span>
+                  <ReadAloudBar
+                    sourceId="viewer-accessible-text"
+                    label="Listen"
+                    blocks={viewerItem.accessibleText.split(/\n{2,}/).filter((b) => b.trim().length > 0)}
+                    showParagraphNav
+                  />
+                </div>
+                <div className="space-y-3 text-sm text-[#E6ECFA] leading-relaxed">
+                  {viewerItem.accessibleText
+                    .split(/\n{2,}/)
+                    .filter((b) => b.trim().length > 0)
+                    .map((para, pIdx) => (
+                      <p key={pIdx} className="whitespace-pre-wrap">
+                        <SentenceHighlightText
+                          text={para}
+                          sourceId="viewer-accessible-text"
+                          blockIndex={pIdx}
+                        />
+                      </p>
+                    ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 bg-[#0A1224] relative flex flex-col">
+                {viewerItem.accessibleText && (
+                  <div className="p-2.5 bg-[#121C36] border-b border-[#24315A] flex items-center justify-between gap-2 text-xs">
+                    <span className="text-[#9AA8C7]">An accessible screen-reader &amp; read-aloud version is available.</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <ReadAloudBar
+                        sourceId="viewer-accessible-text"
+                        label="Listen"
+                        blocks={viewerItem.accessibleText.split(/\n{2,}/).filter((b) => b.trim().length > 0)}
+                        compact
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowViewerAccessibleText(true)}
+                        className="px-2.5 py-1 rounded-lg bg-[#2F52FF] text-white font-bold cursor-pointer"
+                      >
+                        Read Text
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <iframe
+                  src={formatPdfUrl(viewerItem.url)}
+                  title={viewerItem.title}
+                  className="w-full flex-1 border-0"
+                />
+              </div>
+            )}
           </div>
         </div>
       )}

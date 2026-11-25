@@ -2026,7 +2026,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
         )}
 
         {/* Tab Workspace Content */}
-        <main className="flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto space-y-5">
+        <div className="flex-1 p-4 sm:p-5 lg:p-6 overflow-y-auto space-y-5">
 
           {/* ======================================================== */}
           {/* TAB 1: OVERVIEW                                          */}
@@ -3214,7 +3214,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
             </div>
           )}
 
-        </main>
+        </div>
       </div>
 
       {/* ======================================================== */}

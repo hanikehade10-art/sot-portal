@@ -46,6 +46,9 @@ import { checkAndAwardBadges } from '../lib/badges';
 import { recordWeeklyQuizPoints } from '../utils/leaderboard';
 import { BookmarkItem, UserProfile, BadgeItem } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
+import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
+import { ReadAloudBar } from './ReadAloudBar';
+import { cleanMarkdownForSpeech } from '../lib/speechUtils';
 
 interface StudentQuizzesViewProps {
   studentDepartment: string;
@@ -131,6 +134,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Timer interval reference
   const timerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Accessibility & speech helpers
+  const { settings: a11ySettings, speak } = useAccessibility();
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showQuitModal, setShowQuitModal] = useState(false);
+  const lastSpokenCountdownMinuteRef = useRef<number | null>(null);
+  const lastAutoReadKeyRef = useRef<string>('');
+  const latestQuizReviewSpeechRef = useRef<string>('');
 
   // Fetch quizzes and student's attempts
   const fetchData = async () => {
@@ -309,13 +320,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     setRevealedModelAnswers({});
     setFlaggedQuestions(initFlags);
 
-    // Setup timer
-    const minutes = (activeQuiz.timeLimit && Number(activeQuiz.timeLimit) > 0)
+    // Setup timer (with extended quiz time multiplier when enabled)
+    const baseMinutes = (activeQuiz.timeLimit && Number(activeQuiz.timeLimit) > 0)
       ? Math.min(180, Math.max(1, Math.round(Number(activeQuiz.timeLimit))))
       : 0;
+    const multiplier = a11ySettings.extendedQuizTime || 1;
+    const finalMinutes = baseMinutes > 0 ? Math.round(baseMinutes * multiplier) : 0;
 
-    if (minutes > 0) {
-      setTimeLeft(minutes * 60);
+    lastSpokenCountdownMinuteRef.current = finalMinutes > 0 ? finalMinutes : null;
+    lastAutoReadKeyRef.current = '';
+    setSubmitError(null);
+
+    if (finalMinutes > 0) {
+      setTimeLeft(finalMinutes * 60);
       setTimerRunning(true);
     } else {
       setTimeLeft(null);
@@ -323,6 +340,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     }
 
     setShowSubmitModal(false);
+    setShowQuitModal(false);
     setCurrentScreen('taking');
 
     logStudentActivity({
@@ -363,13 +381,29 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
     };
   }, [timerRunning]);
 
-  // Clean trigger for auto-submit when countdown timer reaches zero
+  // Clean trigger for auto-submit & spoken countdown alerts
   useEffect(() => {
-    if (timerRunning && timeLeft !== null && timeLeft <= 0) {
+    if (!timerRunning || timeLeft === null) return;
+    if (timeLeft <= 0) {
       setTimerRunning(false);
       handleSubmitQuiz(true);
+      return;
     }
-  }, [timeLeft, timerRunning]);
+    if (
+      (a11ySettings.accessibilityMode || a11ySettings.voiceAssistantEnabled) &&
+      timeLeft > 0 &&
+      timeLeft % 60 === 0
+    ) {
+      const minsLeft = Math.floor(timeLeft / 60);
+      if (lastSpokenCountdownMinuteRef.current !== minsLeft) {
+        lastSpokenCountdownMinuteRef.current = minsLeft;
+        // Always announce 60-second alert and periodic minute milestones
+        if (minsLeft === 1 || minsLeft === 5 || minsLeft === 10 || minsLeft <= 3) {
+          speak(`${minsLeft} ${minsLeft === 1 ? 'minute' : 'minutes'} remaining.`);
+        }
+      }
+    }
+  }, [timeLeft, timerRunning, a11ySettings.accessibilityMode, a11ySettings.voiceAssistantEnabled]);
 
   // Format Timer String
   const formatTime = (totalSeconds: number): string => {
@@ -723,10 +757,18 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       setReviewKeys(keysDocData);
       setReviewTab('all');
       setShowSubmitModal(false);
+      setSubmitError(null);
       setCurrentScreen('review');
+
+      if (a11ySettings.accessibilityMode) {
+        const resultLabel = passed ? 'Passed' : 'Not passed';
+        speak(
+          `Quiz submitted. ${resultLabel}. You scored ${score} out of ${totalPossible}, ${percentage} percent. Use listen controls or say read this page to hear explanations.`
+        );
+      }
     } catch (err: any) {
       console.error('Submit quiz failed:', err);
-      alert(`Could not submit quiz: ${err?.message || err}`);
+      setSubmitError(`Could not submit quiz: ${err?.message || err}`);
     } finally {
       setSubmitting(false);
     }
@@ -900,15 +942,18 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Quit taking confirmation
   const handleQuitQuiz = () => {
-    if (confirm('Quit quiz? Your answers for this attempt will not be saved.')) {
-      if (timerRef.current) clearInterval(timerRef.current);
-      setTimerRunning(false);
-      if (onBackToTopic && activeQuiz?.topicId) {
-        onBackToTopic();
-      } else {
-        setActiveQuiz(null);
-        setCurrentScreen('list');
-      }
+    setShowQuitModal(true);
+  };
+
+  const confirmQuitQuiz = () => {
+    setShowQuitModal(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setTimerRunning(false);
+    if (onBackToTopic && activeQuiz?.topicId) {
+      onBackToTopic();
+    } else {
+      setActiveQuiz(null);
+      setCurrentScreen('list');
     }
   };
 
@@ -965,6 +1010,232 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
   const maxAttempts = activeQuiz?.attemptsAllowed || 0;
   const canAttempt = maxAttempts === 0 || usedAttempts < maxAttempts;
 
+  // Build readable text for a question (for Listen button, auto-read, and voice commands)
+  const buildQuestionSpeech = (
+    q: QuizQuestion,
+    idx: number,
+    total: number,
+    includeOptions: boolean = true
+  ): string[] => {
+    const blocks: string[] = [];
+    if (q.type === 'fill-gaps') {
+      const gapMap: Record<string, string> =
+        selectedAnswers[q.id] && typeof selectedAnswers[q.id] === 'object' && !Array.isArray(selectedAnswers[q.id])
+          ? selectedAnswers[q.id]
+          : {};
+      const readablePassage = (q.text || '')
+        .replace(/\((\d+)\)/g, '[$1]')
+        .replace(/\[(\d+)\]/g, (_, n) => {
+          const filled = gapMap[n];
+          return filled ? ` gap ${n}, filled with ${filled}, ` : ` gap ${n}, blank, `;
+        });
+      blocks.push(`Question ${idx + 1} of ${total}. Fill in the gaps. ${cleanMarkdownForSpeech(readablePassage)}`);
+      if (includeOptions) {
+        const bankChips = shuffledWordBankMap[q.id] || [];
+        const usedIds = new Set(Object.values(gapChipIdMap[q.id] || {}));
+        const unusedWords = bankChips.filter(c => !usedIds.has(c.id)).map(c => c.word);
+        const curGap = activeGapNum || getQuestionGapNumbers(q)[0] || 1;
+        blocks.push(
+          `Active gap is gap ${curGap}. ${
+            unusedWords.length > 0
+              ? `Available word bank options: ${unusedWords.join(', ')}. Say pick followed by a word.`
+              : 'All gaps are filled.'
+          }`
+        );
+      }
+      return blocks;
+    }
+
+    blocks.push(`Question ${idx + 1} of ${total}. ${cleanMarkdownForSpeech(q.text)}`);
+    if (!includeOptions) return blocks;
+
+    if (q.type === 'true-false') {
+      blocks.push('Option A: True. Option B: False.');
+    } else if (q.type === 'theory-self-check') {
+      blocks.push('Think of your answer, then select show model answer to compare.');
+    } else if (q.options && q.options.length > 0) {
+      const displayIndices = shuffledOptionIndicesMap[q.id] || q.options.map((_, i) => i);
+      const optionLines = displayIndices.map((origIdx, pos) => {
+        const letter = String.fromCharCode(65 + pos);
+        return `Option ${letter}: ${cleanMarkdownForSpeech(q.options[origIdx])}.`;
+      });
+      blocks.push(optionLines.join(' '));
+    }
+    return blocks;
+  };
+
+  // Auto-read active question and options when Accessibility mode is active
+  useEffect(() => {
+    if (!a11ySettings.accessibilityMode) return;
+    if (currentScreen !== 'taking' || !currentQ) return;
+    const key = `${activeQuiz?.id || ''}_${currentQ.id}_${currentQuestionIndex}`;
+    if (lastAutoReadKeyRef.current === key) return;
+    lastAutoReadKeyRef.current = key;
+    const text = buildQuestionSpeech(currentQ, currentQuestionIndex, activeQuestions.length, true).join(' ');
+    speak(text);
+  }, [a11ySettings.accessibilityMode, currentScreen, currentQ?.id, currentQuestionIndex]);
+
+  // Register contextual Voice Assistant commands for Quizzes
+  useRegisterVoiceHandlers('student-quizzes', {
+    startQuiz: () => {
+      if (currentScreen === 'list') {
+        const target = filteredQuizzes[0];
+        if (!target) return 'No quizzes match the current list.';
+        handleOpenIntro(target);
+        return `Opening ${target.courseCode}: ${target.title}. Say start quiz again to begin.`;
+      }
+      if (currentScreen === 'intro' && activeQuiz) {
+        if (!canAttempt) return 'You have reached the maximum allowed attempts for this quiz.';
+        handleStartTakingQuiz();
+        return `Starting ${activeQuiz.courseCode} quiz.`;
+      }
+      if (currentScreen === 'review' && activeQuiz && canAttempt) {
+        handleStartTakingQuiz();
+        return `Restarting ${activeQuiz.courseCode} quiz.`;
+      }
+      return 'A quiz is already in progress.';
+    },
+    readQuestion: () => {
+      if (currentScreen === 'taking' && currentQ) {
+        return buildQuestionSpeech(currentQ, currentQuestionIndex, activeQuestions.length, true).join(' ');
+      }
+      return undefined;
+    },
+    repeatOptions: () => {
+      if (currentScreen !== 'taking' || !currentQ) return undefined;
+      const blocks = buildQuestionSpeech(currentQ, currentQuestionIndex, activeQuestions.length, true);
+      return blocks[1] || blocks[0];
+    },
+    selectOption: (idx, letter) => {
+      if (currentScreen !== 'taking' || !currentQ) return undefined;
+      if (isCurrentTrueFalse) {
+        if (idx === 0 || idx === 1) {
+          handleSelectOption(idx);
+          return `Selected ${idx === 0 ? 'True' : 'False'}.`;
+        }
+        return 'Say option A for True or option B for False.';
+      }
+      if (currentQ.type === 'theory-self-check') {
+        return 'This is a self check question. Tap show model answer to rate your recall.';
+      }
+      if (currentQ.type === 'fill-gaps') {
+        return 'This is a fill in the gaps question. Say pick followed by a word from the word bank.';
+      }
+      const displayIndices = shuffledOptionIndicesMap[currentQ.id] || (currentQ.options || []).map((_, i) => i);
+      if (idx < 0 || idx >= displayIndices.length) {
+        return `Option ${letter} is not available for this question.`;
+      }
+      const origIdx = displayIndices[idx];
+      if (currentQ.type === 'theory-select-all') {
+        handleToggleSelectAllOption(origIdx);
+        return `Toggled Option ${letter}: ${currentQ.options[origIdx]}.`;
+      }
+      handleSelectOption(origIdx);
+      return `Selected Option ${letter}: ${currentQ.options[origIdx]}.`;
+    },
+    selectTrueFalse: (value) => {
+      if (currentScreen !== 'taking' || !currentQ) return undefined;
+      if (!isCurrentTrueFalse) return 'This question is not a True or False question.';
+      handleSelectOption(value ? 0 : 1);
+      return `Selected ${value ? 'True' : 'False'}.`;
+    },
+    selectWordBankWord: (spokenText, explicitGap) => {
+      if (currentScreen !== 'taking' || !currentQ || currentQ.type !== 'fill-gaps') {
+        return 'This command works on fill in the gaps questions.';
+      }
+      const chips = shuffledWordBankMap[currentQ.id] || [];
+      const usedIds = new Set(Object.values(gapChipIdMap[currentQ.id] || {}));
+      const available = chips.filter(c => !usedIds.has(c.id));
+      const cleanSpoken = spokenText.toLowerCase().trim();
+      const match =
+        available.find(c => c.word.toLowerCase() === cleanSpoken) ||
+        available.find(c => c.word.toLowerCase().includes(cleanSpoken) || cleanSpoken.includes(c.word.toLowerCase()));
+      if (!match) {
+        return `Could not find an available word matching ${spokenText}.`;
+      }
+      const targetGap = explicitGap || activeGapNum || getQuestionGapNumbers(currentQ)[0] || 1;
+      handleFillGap(targetGap, match);
+      return `Placed ${match.word} into gap ${targetGap}.`;
+    },
+    nextQuestion: () => {
+      if (currentScreen !== 'taking') return undefined;
+      if (currentQuestionIndex >= activeQuestions.length - 1) {
+        return 'You are on the last question. Say submit quiz when ready.';
+      }
+      setCurrentQuestionIndex(prev => prev + 1);
+      return `Moving to question ${currentQuestionIndex + 2}.`;
+    },
+    previousQuestion: () => {
+      if (currentScreen !== 'taking') return undefined;
+      if (currentQuestionIndex <= 0) {
+        return 'You are on the first question.';
+      }
+      setCurrentQuestionIndex(prev => prev - 1);
+      return `Moving back to question ${currentQuestionIndex}.`;
+    },
+    howMuchTimeIsLeft: () => {
+      if (currentScreen !== 'taking') return undefined;
+      if (timeLeft === null) return 'This quiz has no time limit.';
+      const mins = Math.floor(timeLeft / 60);
+      const secs = timeLeft % 60;
+      return `${mins} ${mins === 1 ? 'minute' : 'minutes'} and ${secs} ${secs === 1 ? 'second' : 'seconds'} remaining.`;
+    },
+    requestSubmitQuiz: () => {
+      if (currentScreen !== 'taking' || !activeQuiz) return undefined;
+      return {
+        confirmPrompt: `You have answered ${answeredCount} of ${activeQuestions.length} questions. Say yes to submit your quiz, or no to keep reviewing.`,
+        onConfirm: () => handleSubmitQuiz(false)
+      };
+    },
+    goBack: () => {
+      if (currentScreen === 'taking') {
+        setShowQuitModal(true);
+        return 'Opened quit confirmation.';
+      }
+      if (currentScreen === 'intro' || currentScreen === 'review') {
+        if (onBackToTopic && activeQuiz?.topicId) {
+          onBackToTopic();
+          return 'Returning to topic.';
+        }
+        setCurrentScreen('list');
+        return 'Returning to quizzes list.';
+      }
+      if (onBackToHome) {
+        onBackToHome();
+        return 'Returning home.';
+      }
+      return undefined;
+    },
+    getPageDescription: () => {
+      if (currentScreen === 'taking' && currentQ) {
+        return `Taking ${activeQuiz?.courseCode} quiz, question ${currentQuestionIndex + 1} of ${activeQuestions.length}. ${answeredCount} answered.`;
+      }
+      if (currentScreen === 'intro' && activeQuiz) {
+        return `Quiz details for ${activeQuiz.courseCode}: ${activeQuiz.title}. ${activeQuiz.questionCount} questions.`;
+      }
+      if (currentScreen === 'review' && reviewAttempt && activeQuiz) {
+        return `Quiz results for ${activeQuiz.title}. Score ${reviewAttempt.score} out of ${reviewAttempt.total}.`;
+      }
+      return `Department quizzes page showing ${filteredQuizzes.length} quizzes.`;
+    },
+    getPageBlocks: () => {
+      if (currentScreen === 'taking' && currentQ) {
+        return buildQuestionSpeech(currentQ, currentQuestionIndex, activeQuestions.length, true);
+      }
+      if (currentScreen === 'review' && latestQuizReviewSpeechRef.current) {
+        return [latestQuizReviewSpeechRef.current];
+      }
+      if (currentScreen === 'intro' && activeQuiz) {
+        return [
+          `${activeQuiz.courseCode}: ${activeQuiz.title}. ${activeQuiz.questionCount} questions. ${
+            activeQuiz.instructions || ''
+          }`
+        ];
+      }
+      return filteredQuizzes.slice(0, 12).map((q, i) => `${i + 1}. ${q.courseCode}: ${q.title}, ${q.questionCount} questions.`);
+    }
+  });
+
   // ==============================================================
   // SCREEN 1: INTRO CARD BEFORE STARTING
   // ==============================================================
@@ -992,9 +1263,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 setCurrentScreen('list');
               }
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
+            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:text-[#fde047] cursor-pointer group transition-colors"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>{onBackToTopic && activeQuiz.topicId ? 'Back to Topic' : 'Back to Quizzes'}</span>
           </button>
 
@@ -1059,7 +1330,11 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A]">
               <span className="text-[10px] text-[#9AA8C7] uppercase font-bold block">Time Limit</span>
               <span className="text-base font-black text-[#FFC700]">
-                {timeLimitMins > 0 ? `${timeLimitMins}m` : 'Untimed'}
+                {timeLimitMins > 0
+                  ? (a11ySettings.extendedQuizTime || 1) > 1
+                    ? `${Math.round(timeLimitMins * (a11ySettings.extendedQuizTime || 1))}m (${a11ySettings.extendedQuizTime}x)`
+                    : `${timeLimitMins}m`
+                  : 'Untimed'}
               </span>
             </div>
 
@@ -1097,8 +1372,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           <div className="space-y-2 pt-2">
             {canAttempt ? (
               <button
+                type="button"
                 onClick={handleStartTakingQuiz}
-                className="w-full py-3 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white font-black text-sm shadow-[0_0_20px_rgba(47,82,255,0.4)] transition-all cursor-pointer flex items-center justify-center gap-2"
+                className="w-full min-h-[48px] py-3 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white font-black text-sm shadow-[0_0_20px_rgba(47,82,255,0.4)] transition-all cursor-pointer flex items-center justify-center gap-2"
               >
                 <span>Start Quiz Now</span>
                 <ChevronRight className="w-4 h-4" />
@@ -1136,23 +1412,28 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={handleQuitQuiz}
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#9AA8C7] hover:text-rose-400 cursor-pointer group transition-colors"
             >
-              <ArrowLeft className="w-3.5 h-3.5" />
+              <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
               <span>Quit Quiz</span>
             </button>
 
             {/* Countdown Timer */}
             {timeLeft !== null && (
               <div
-                className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-xs font-bold ${
+                aria-live={timeLeft <= 60 ? 'polite' : 'off'}
+                aria-label={`Time remaining: ${formatTime(timeLeft)}`}
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full font-mono text-xs font-bold transition-all ${
                   timeLeft <= 60
-                    ? 'bg-rose-950 text-rose-400 border border-rose-500/60 animate-pulse'
+                    ? 'bg-rose-950/80 text-rose-300 border border-rose-500/70 animate-timer-pulse shadow-[0_0_15px_rgba(244,63,94,0.4)]'
                     : 'bg-[#0A1224] text-[#FFC700] border border-[#24315A]'
                 }`}
               >
-                <Clock className="w-3.5 h-3.5" />
+                <Clock className="w-3.5 h-3.5" aria-hidden="true" />
                 <span>{formatTime(timeLeft)}</span>
+                {(a11ySettings.extendedQuizTime || 1) > 1 && (
+                  <span className="text-[10px] text-[#60A5FA] ml-1">({a11ySettings.extendedQuizTime}x)</span>
+                )}
               </div>
             )}
           </div>
@@ -1168,6 +1449,15 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             </span>
           </div>
         </div>
+
+        {submitError && (
+          <div role="alert" className="p-3 rounded-xl bg-rose-950/80 border border-rose-500/60 text-xs text-rose-200 flex items-center justify-between gap-2">
+            <span>{submitError}</span>
+            <button type="button" onClick={() => setSubmitError(null)} aria-label="Dismiss submit error" className="p-1 text-rose-300 hover:text-white">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
 
         {/* Question Palette (Numbers 1..N showing Answered, Flagged, Unanswered) */}
         <div className="p-3 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-2">
@@ -1186,7 +1476,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pr-1">
+          <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pr-1">
             {activeQuestions.map((q, idx) => {
               const isAnswered = isQuestionAnswered(q, selectedAnswers[q.id]);
               const isFlagged = !!flaggedQuestions[q.id];
@@ -1195,8 +1485,11 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               return (
                 <button
                   key={q.id}
+                  type="button"
                   onClick={() => setCurrentQuestionIndex(idx)}
-                  className={`relative w-7 h-7 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center ${
+                  aria-label={`Question ${idx + 1}, ${isFlagged ? 'flagged' : isAnswered ? 'answered' : 'unanswered'}${isCurrent ? ', current question' : ''}`}
+                  aria-current={isCurrent ? 'step' : undefined}
+                  className={`relative min-w-[36px] min-h-[36px] px-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center justify-center ${
                     isCurrent
                       ? 'ring-2 ring-[#FFC700] ring-offset-1 ring-offset-[#0A1224]'
                       : ''
@@ -1218,11 +1511,11 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           </div>
         </div>
 
-        {/* Current Question Card */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 shadow-sm">
+        {/* Current Question Card with smooth slide and fade */}
+        <div key={currentQuestionIndex} className="p-4 sm:p-5 rounded-2xl bg-[#121C36] border border-[#24315A] space-y-4 shadow-sm animate-page-enter">
           {/* Question Meta Row */}
-          <div className="flex items-center justify-between pb-2 border-b border-[#24315A]/70 text-xs">
-            <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#24315A]/70 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
               <span className="font-extrabold text-sm text-[#FFC700]">
                 Question {currentQuestionIndex + 1} of {activeQuestions.length}
               </span>
@@ -1248,18 +1541,29 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
               )}
             </div>
 
-            {/* Mark for Review Button */}
-            <button
-              onClick={handleToggleFlag}
-              className={`px-2.5 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
-                currentQIsFlagged
-                  ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/60'
-                  : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#E6ECFA]'
-              }`}
-            >
-              <Flag className={`w-3.5 h-3.5 ${currentQIsFlagged ? 'fill-current text-[#FFC700]' : ''}`} />
-              <span>{currentQIsFlagged ? 'Flagged' : 'Mark for review'}</span>
-            </button>
+            <div className="flex items-center gap-2">
+              <ReadAloudBar
+                sourceId={`quiz-q-${currentQ.id}`}
+                label="Listen"
+                blocks={buildQuestionSpeech(currentQ, currentQuestionIndex, activeQuestions.length, true)}
+                compact
+              />
+
+              {/* Mark for Review Button */}
+              <button
+                type="button"
+                onClick={handleToggleFlag}
+                aria-pressed={currentQIsFlagged}
+                className={`min-h-[40px] px-3 py-1 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer border ${
+                  currentQIsFlagged
+                    ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/60'
+                    : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#E6ECFA]'
+                }`}
+              >
+                <Flag className={`w-3.5 h-3.5 ${currentQIsFlagged ? 'fill-current text-[#FFC700]' : ''}`} aria-hidden="true" />
+                <span>{currentQIsFlagged ? 'Flagged' : 'Mark for review'}</span>
+              </button>
+            </div>
           </div>
 
           {/* Question Text (for standard questions) */}
@@ -1308,7 +1612,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                                   setActiveGapNum(gapNum);
                                 }
                               }}
-                              className={`inline-flex items-center gap-1.5 px-3 py-1.5 mx-1 my-1 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer border shadow-sm ${
+                              aria-pressed={isSelected}
+                              aria-label={
+                                chosenWord
+                                  ? `Gap ${gapNum}, filled with ${chosenWord}. Tap to clear and free this word.`
+                                  : `Gap ${gapNum}, empty${isSelected ? ', selected' : ''}. Tap to select.`
+                              }
+                              className={`inline-flex items-center gap-1.5 min-h-[40px] px-3 py-1.5 mx-1 my-1 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer border shadow-sm ${
                                 isSelected
                                   ? 'ring-2 ring-[#FFC700] ring-offset-2 ring-offset-[#0A1224] bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.35)]'
                                   : chosenWord
@@ -1322,7 +1632,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                                 {chosenWord || '____'}
                               </span>
                               {chosenWord && (
-                                <span className="text-[10px] text-rose-400/80 hover:text-rose-300 font-bold ml-0.5">✕</span>
+                                <span aria-hidden="true" className="text-[10px] text-rose-400/80 hover:text-rose-300 font-bold ml-0.5">✕</span>
                               )}
                             </button>
                           );
@@ -1343,7 +1653,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                       </div>
                       <div className="w-full bg-[#121C36] h-2 rounded-full overflow-hidden border border-[#24315A]">
                         <div
-                          className="h-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-300"
+                          className="h-full bg-gradient-to-r from-[#2F52FF] to-[#FFC700] transition-all duration-300 ease-out"
                           style={{ width: `${fillPercentage}%` }}
                         />
                       </div>
@@ -1394,12 +1704,17 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                                 key={chip.id || wIdx}
                                 type="button"
                                 disabled={isUsed}
+                                aria-label={
+                                  isUsed
+                                    ? `${chip.word}, already placed in a gap`
+                                    : `Place ${chip.word} in Gap ${currentActive}`
+                                }
                                 onClick={() => {
                                   if (!isUsed && currentActive) {
                                     handleFillGap(currentActive, chip);
                                   }
                                 }}
-                                className={`inline-flex items-center justify-center px-3 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
+                                className={`inline-flex items-center justify-center min-h-[44px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-semibold border transition-all ${
                                   isUsed
                                     ? 'bg-[#0A1224]/70 text-[#9AA8C7]/30 border-[#24315A]/40 line-through opacity-35 cursor-not-allowed select-none'
                                     : 'bg-[#121C36] border-[#2F52FF]/60 hover:border-[#FFC700] hover:bg-[#2F52FF]/20 text-[#E6ECFA] cursor-pointer shadow-sm active:scale-95'
@@ -1524,14 +1839,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     <button
                       key={origIdx}
                       type="button"
+                      aria-pressed={isSelected}
                       onClick={() => handleSelectOption(origIdx)}
-                      className={`w-full p-4 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
+                      className={`w-full min-h-[48px] p-4 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3.5 ${
                         isSelected
                           ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
                           : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
                       <span
+                        aria-hidden="true"
                         className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
                           isSelected
                             ? 'border-white bg-[#2F52FF]'
@@ -1567,14 +1884,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     <button
                       key={origIdx}
                       type="button"
+                      aria-pressed={isChecked}
                       onClick={() => handleToggleSelectAllOption(origIdx)}
-                      className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                      className={`w-full min-h-[48px] p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                         isChecked
                           ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
                           : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
                       <span
+                        aria-hidden="true"
                         className={`w-5 h-5 rounded border-2 flex items-center justify-center shrink-0 transition-colors ${
                           isChecked
                             ? 'border-white bg-white text-[#2F52FF]'
@@ -1596,8 +1915,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
                 type="button"
+                aria-pressed={currentQAnswer === 0}
                 onClick={() => handleSelectOption(0)}
-                className={`py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
+                className={`min-h-[56px] py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
                   currentQAnswer === 0
                     ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_20px_rgba(47,82,255,0.5)] scale-[1.02]'
                     : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
@@ -1608,8 +1928,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
               <button
                 type="button"
+                aria-pressed={currentQAnswer === 1}
                 onClick={() => handleSelectOption(1)}
-                className={`py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
+                className={`min-h-[56px] py-4 rounded-xl text-center font-heading font-extrabold text-base transition-all cursor-pointer border-2 ${
                   currentQAnswer === 1
                     ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_20px_rgba(47,82,255,0.5)] scale-[1.02]'
                     : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
@@ -1635,14 +1956,16 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                     <button
                       key={origIdx}
                       type="button"
+                      aria-pressed={isSelected}
                       onClick={() => handleSelectOption(origIdx)}
-                      className={`w-full p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
+                      className={`w-full min-h-[48px] p-3.5 rounded-xl border text-left transition-all cursor-pointer flex items-center gap-3 ${
                         isSelected
                           ? 'bg-[#2F52FF] text-white border-white shadow-[0_0_15px_rgba(47,82,255,0.35)]'
                           : 'bg-[#0A1224] text-[#E6ECFA] border-[#24315A] hover:border-[#2F52FF]'
                       }`}
                     >
                       <span
+                        aria-hidden="true"
                         className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 border ${
                           isSelected
                             ? 'bg-white text-[#2F52FF] border-white'
@@ -1663,42 +1986,52 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         {/* Navigation & Submit Bar */}
         <div className="flex items-center justify-between gap-2 pt-2">
           <button
+            type="button"
             onClick={() => setCurrentQuestionIndex(prev => Math.max(0, prev - 1))}
             disabled={currentQuestionIndex === 0}
-            className="px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
+            className="min-h-[48px] px-4 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
           >
-            <ChevronLeft className="w-4 h-4" />
+            <ChevronLeft className="w-4 h-4" aria-hidden="true" />
             <span>Previous</span>
           </button>
 
           <button
+            type="button"
             onClick={() => setShowSubmitModal(true)}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer transition-all"
+            className="min-h-[48px] px-5 py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-emerald-500 hover:from-emerald-500 hover:to-emerald-400 text-white font-extrabold text-xs shadow-[0_0_15px_rgba(16,185,129,0.3)] cursor-pointer transition-all"
           >
             Submit Quiz
           </button>
 
           <button
+            type="button"
             onClick={() => setCurrentQuestionIndex(prev => Math.min(activeQuestions.length - 1, prev + 1))}
             disabled={currentQuestionIndex === activeQuestions.length - 1}
-            className="px-3.5 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
+            className="min-h-[48px] px-4 py-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-xs font-bold text-[#E6ECFA] disabled:opacity-40 disabled:pointer-events-none flex items-center gap-1.5 cursor-pointer"
           >
             <span>Next</span>
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="w-4 h-4" aria-hidden="true" />
           </button>
         </div>
 
         {/* Submit Confirmation Dialog */}
         {showSubmitModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm">
-            <div className="relative w-full max-w-sm bg-[#121C36] border-2 border-[#24315A] rounded-2xl p-5 space-y-4 shadow-2xl">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="submit-quiz-dialog-title"
+              className="relative w-full max-w-sm bg-[#121C36] border-2 border-[#24315A] rounded-2xl p-5 space-y-4 shadow-2xl"
+            >
               <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
-                <h3 className="font-heading font-extrabold text-sm text-[#E6ECFA]">
+                <h3 id="submit-quiz-dialog-title" className="font-heading font-extrabold text-sm text-[#E6ECFA]">
                   Ready to submit?
                 </h3>
                 <button
+                  type="button"
                   onClick={() => setShowSubmitModal(false)}
-                  className="text-[#9AA8C7] hover:text-white"
+                  aria-label="Close submit confirmation dialog"
+                  className="min-w-[40px] min-h-[40px] flex items-center justify-center text-[#9AA8C7] hover:text-white cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1712,7 +2045,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
                 {unansweredCount > 0 && (
                   <div className="p-3 rounded-xl bg-amber-500/15 border border-amber-500/40 text-amber-300 text-xs flex items-center gap-2">
-                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
+                    <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" aria-hidden="true" />
                     <span>
                       You have <strong>{unansweredCount}</strong> unanswered questions. Unanswered questions will receive 0 points.
                     </span>
@@ -1724,7 +2057,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 <button
                   type="button"
                   onClick={() => setShowSubmitModal(false)}
-                  className="px-3.5 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
+                  className="min-h-[48px] px-3.5 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
                 >
                   Review Questions
                 </button>
@@ -1732,10 +2065,55 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                   type="button"
                   disabled={submitting}
                   onClick={() => handleSubmitQuiz(false)}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs shadow-md transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                 >
                   {submitting && <RefreshCw className="w-3.5 h-3.5 animate-spin" />}
                   <span>{submitting ? 'Submitting...' : 'Yes, Submit Now'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Quit Quiz Confirmation Dialog (Accessible replacement for window.confirm) */}
+        {showQuitModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="quit-quiz-dialog-title"
+              className="relative w-full max-w-sm bg-[#121C36] border-2 border-[#24315A] rounded-2xl p-5 space-y-4 shadow-2xl"
+            >
+              <div className="flex items-center justify-between border-b border-[#24315A] pb-3">
+                <h3 id="quit-quiz-dialog-title" className="font-heading font-extrabold text-sm text-[#E6ECFA]">
+                  Quit quiz?
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setShowQuitModal(false)}
+                  aria-label="Cancel and stay in quiz"
+                  className="min-w-[40px] min-h-[40px] flex items-center justify-center text-[#9AA8C7] hover:text-white cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-xs text-[#E6ECFA] leading-relaxed">
+                Your answers for this attempt will not be saved if you leave now.
+              </p>
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#24315A]">
+                <button
+                  type="button"
+                  onClick={() => setShowQuitModal(false)}
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#E6ECFA] cursor-pointer"
+                >
+                  Continue Quiz
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmQuitQuiz}
+                  className="min-h-[48px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs cursor-pointer"
+                >
+                  Quit Attempt
                 </button>
               </div>
             </div>
@@ -1808,10 +2186,21 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         ? correctQuestions
         : allQuestionsWithIndex;
 
+    const reviewBlocks: string[] = [
+      `${activeQuiz.courseCode} ${activeQuiz.title} results. ${hasPassed ? 'Passed' : 'Not passed'}. Score ${studentScore} out of ${studentTotal}, ${studentPct} percent.`,
+      ...activeDisplayList.map(({ q, originalIndex }) => {
+        const matchingKey = keys.find(k => k.questionId === q.id);
+        const earned = reviewAttempt.questionScores?.[q.id] ?? 0;
+        const exp = matchingKey?.explanation ? ` Explanation: ${cleanMarkdownForSpeech(matchingKey.explanation)}` : '';
+        return `Question ${originalIndex + 1}: ${cleanMarkdownForSpeech(q.text)}. Points earned: ${earned}.${exp}`;
+      })
+    ];
+    latestQuizReviewSpeechRef.current = reviewBlocks.join(' ');
+
     return (
-      <div className="space-y-4 max-w-xl mx-auto">
+      <div className="space-y-4 max-w-xl mx-auto animate-page-enter">
         {/* Celebration Confetti when passing (>=50%) */}
-        {showConfetti && (
+        {showConfetti && !a11ySettings.reduceMotion && (
           <ConfettiEffect onComplete={() => setShowConfetti(false)} />
         )}
 
@@ -1826,6 +2215,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         {/* Navigation Bar */}
         <div className="flex items-center justify-between">
           <button
+            type="button"
             onClick={() => {
               if (onBackToTopic && activeQuiz.topicId) {
                 onBackToTopic();
@@ -1833,9 +2223,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                 setCurrentScreen('list');
               }
             }}
-            className="inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:underline cursor-pointer"
+            className="min-h-[44px] inline-flex items-center gap-1.5 text-xs font-bold text-[#FFC700] hover:text-[#fde047] cursor-pointer group transition-colors"
           >
-            <ArrowLeft className="w-3.5 h-3.5" />
+            <ArrowLeft className="w-3.5 h-3.5 group-hover:-translate-x-1.5 transition-transform duration-200 ease-out" />
             <span>{onBackToTopic && activeQuiz.topicId ? 'Back to Topic' : 'Back to Quizzes'}</span>
           </button>
 
@@ -1858,6 +2248,7 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             </span>
             {onBackToTopic && (
               <button
+                type="button"
                 onClick={onBackToTopic}
                 className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold shrink-0 cursor-pointer"
               >
@@ -1884,6 +2275,15 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
             <h2 className="font-heading font-extrabold text-lg text-[#E6ECFA]">
               {activeQuiz.title}
             </h2>
+          </div>
+
+          <div className="flex justify-center">
+            <ReadAloudBar
+              sourceId="quiz-review-summary"
+              label="Listen to results & explanations"
+              blocks={reviewBlocks}
+              showParagraphNav
+            />
           </div>
 
           {/* Pass / Fail Badge & Big Score */}
@@ -1922,8 +2322,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
           <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 border-t border-[#24315A]/70">
             {canAttempt ? (
               <button
+                type="button"
                 onClick={handleStartTakingQuiz}
-                className="px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
+                className="min-h-[48px] px-4 py-2 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-1.5"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
                 <span>
@@ -1940,8 +2341,9 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
             {onBackToTopic && activeQuiz.topicId && (
               <button
+                type="button"
                 onClick={onBackToTopic}
-                className="px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#FFC700] text-[#E6ECFA] text-xs font-bold transition-all cursor-pointer"
+                className="min-h-[48px] px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] hover:border-[#FFC700] text-[#E6ECFA] text-xs font-bold transition-all cursor-pointer"
               >
                 Back to Lesson Topic
               </button>
@@ -2163,22 +2565,36 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
                         )}
                       </div>
 
-                      {/* Bookmark Button to Save for Revision */}
-                      <button
-                        type="button"
-                        onClick={() => handleToggleQuestionBookmark(q, matchingKey, originalIndex + 1)}
-                        title={bookmarked ? 'Remove from revision bookmarks' : 'Bookmark question for revision'}
-                        className={`p-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
-                          bookmarked
-                            ? 'bg-[#FFC700]/15 border-[#FFC700] text-[#FFC700]'
-                            : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF]'
-                        }`}
-                      >
-                        <Bookmark className={`w-3.5 h-3.5 ${bookmarked ? 'fill-current text-[#FFC700]' : ''}`} />
-                        <span className="text-[10px] hidden sm:inline">
-                          {bookmarked ? 'Bookmarked' : 'Bookmark'}
-                        </span>
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <ReadAloudBar
+                          sourceId={`quiz-review-q-${q.id}`}
+                          label="Listen"
+                          blocks={[
+                            `Question ${originalIndex + 1}. ${q.text}`,
+                            matchingKey?.explanation ? `Explanation: ${matchingKey.explanation}` : '',
+                          ].filter(Boolean)}
+                          compact
+                        />
+
+                        {/* Bookmark Button to Save for Revision */}
+                        <button
+                          type="button"
+                          onClick={() => handleToggleQuestionBookmark(q, matchingKey, originalIndex + 1)}
+                          aria-pressed={bookmarked}
+                          aria-label={bookmarked ? `Remove Question ${originalIndex + 1} from revision bookmarks` : `Bookmark Question ${originalIndex + 1} for revision`}
+                          title={bookmarked ? 'Remove from revision bookmarks' : 'Bookmark question for revision'}
+                          className={`min-h-[36px] px-2.5 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                            bookmarked
+                              ? 'bg-[#FFC700]/15 border-[#FFC700] text-[#FFC700]'
+                              : 'bg-[#0A1224] border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] hover:border-[#2F52FF]'
+                          }`}
+                        >
+                          <Bookmark className={`w-3.5 h-3.5 ${bookmarked ? 'fill-current text-[#FFC700]' : ''}`} aria-hidden="true" />
+                          <span className="text-[10px] hidden sm:inline">
+                            {bookmarked ? 'Bookmarked' : 'Bookmark'}
+                          </span>
+                        </button>
+                      </div>
                     </div>
 
                     {/* Question Prompt Text (for non-gap questions) */}
@@ -2642,11 +3058,13 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         </div>
 
         <button
+          type="button"
           onClick={fetchData}
+          aria-label="Refresh quizzes"
           title="Refresh quizzes"
-          className="self-end sm:self-auto p-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] transition-colors cursor-pointer"
+          className="self-end sm:self-auto min-w-[44px] min-h-[44px] flex items-center justify-center p-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-[#E6ECFA] transition-colors cursor-pointer"
         >
-          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#FFC700]' : ''}`} />
+          <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-[#FFC700]' : ''}`} aria-hidden="true" />
         </button>
       </div>
 
@@ -2654,13 +3072,14 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       <div className="p-3.5 rounded-2xl bg-[#121C36] border border-[#24315A] shadow-sm space-y-3">
         <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2.5">
           {/* Semester Switcher */}
-          <div className="flex items-center p-0.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
+          <div role="group" aria-label="Filter quizzes by semester" className="flex items-center p-0.5 rounded-lg bg-[#0A1224] border border-[#24315A]">
             {(['All', 'First Semester', 'Second Semester'] as const).map(sem => (
               <button
                 key={sem}
                 type="button"
+                aria-pressed={semesterFilter === sem}
                 onClick={() => setSemesterFilter(sem)}
-                className={`flex-1 sm:flex-initial px-3 py-1 rounded text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex-1 sm:flex-initial min-h-[36px] px-3 py-1 rounded text-[11px] font-bold transition-all cursor-pointer ${
                   semesterFilter === sem
                     ? 'bg-[#2F52FF] text-white shadow-sm'
                     : 'text-[#9AA8C7] hover:text-[#E6ECFA]'
@@ -2673,11 +3092,12 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
           {/* Level Dropdown */}
           <div className="flex items-center gap-2 self-end sm:self-auto text-xs">
-            <span className="text-[#9AA8C7] text-[11px] font-semibold">Level:</span>
+            <label htmlFor="quizLevelFilter" className="text-[#9AA8C7] text-[11px] font-semibold">Level:</label>
             <select
+              id="quizLevelFilter"
               value={levelFilter}
               onChange={e => setLevelFilter(e.target.value)}
-              className="px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
+              className="min-h-[36px] px-2.5 py-1 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#FFC700] focus:outline-none focus:border-[#2F52FF] cursor-pointer"
             >
               {ACADEMIC_LEVELS.map(lvl => (
                 <option key={lvl} value={lvl}>{lvl}</option>
@@ -2690,18 +3110,21 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
         <div className="relative">
           <input
             type="text"
+            aria-label="Search quizzes by title or course code"
             value={searchQuery}
             onChange={e => setSearchQuery(e.target.value)}
             placeholder="Search quizzes by title or course code..."
-            className="w-full pl-8 pr-7 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+            className="w-full pl-8 pr-9 py-2.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
           />
-          <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-2.5" />
+          <Search className="w-3.5 h-3.5 text-[#9AA8C7] absolute left-2.5 top-3" aria-hidden="true" />
           {searchQuery && (
             <button
+              type="button"
+              aria-label="Clear quiz search"
               onClick={() => setSearchQuery('')}
-              className="absolute right-2.5 top-2 text-[#9AA8C7] hover:text-[#E6ECFA]"
+              className="absolute right-2 top-1.5 min-w-[28px] min-h-[28px] flex items-center justify-center text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
             >
-              <X className="w-3 h-3" />
+              <X className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           )}
         </div>

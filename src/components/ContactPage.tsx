@@ -105,19 +105,19 @@ export const ContactPage: React.FC = () => {
                 <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider block">
                   Lead Student Representative
                 </span>
-                <h3 className="font-display font-bold text-xl text-[#E6ECFA] mt-1">
+                <h2 className="font-display font-bold text-xl text-[#E6ECFA] mt-1">
                   {SITE_CONFIG.contact.representativeName}
-                </h3>
+                </h2>
                 <p className="text-xs text-[#9AA8C7] mt-0.5">School of Technology Student Desk</p>
               </div>
 
               <div className="space-y-4 text-sm">
                 <div className="flex items-start gap-3.5">
                   <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shrink-0">
-                    <Phone className="w-4 h-4" />
+                    <Phone className="w-4 h-4" aria-hidden="true" />
                   </div>
                   <div>
-                    <h4 className="text-xs uppercase font-bold text-[#9AA8C7]">Phone / WhatsApp</h4>
+                    <h3 className="text-xs uppercase font-bold text-[#9AA8C7]">Phone / WhatsApp</h3>
                     <a
                       href={`tel:${SITE_CONFIG.contact.phone}`}
                       className="text-sm font-semibold text-[#E6ECFA] hover:text-[#FFC700] transition-colors"
@@ -129,10 +129,10 @@ export const ContactPage: React.FC = () => {
 
                 <div className="flex items-start gap-3.5">
                   <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shrink-0">
-                    <Mail className="w-4 h-4" />
+                    <Mail className="w-4 h-4" aria-hidden="true" />
                   </div>
                   <div>
-                    <h4 className="text-xs uppercase font-bold text-[#9AA8C7]">Email Address</h4>
+                    <h3 className="text-xs uppercase font-bold text-[#9AA8C7]">Email Address</h3>
                     <a
                       href={`mailto:${SITE_CONFIG.contact.email}`}
                       className="text-sm font-semibold text-[#E6ECFA] hover:text-[#FFC700] transition-colors"
@@ -144,10 +144,10 @@ export const ContactPage: React.FC = () => {
 
                 <div className="flex items-start gap-3.5">
                   <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shrink-0">
-                    <MapPin className="w-4 h-4" />
+                    <MapPin className="w-4 h-4" aria-hidden="true" />
                   </div>
                   <div>
-                    <h4 className="text-xs uppercase font-bold text-[#9AA8C7]">Desk Location</h4>
+                    <h3 className="text-xs uppercase font-bold text-[#9AA8C7]">Desk Location</h3>
                     <p className="text-xs text-[#E6ECFA] mt-0.5">
                       {SITE_CONFIG.contact.location}
                     </p>
@@ -156,10 +156,10 @@ export const ContactPage: React.FC = () => {
 
                 <div className="flex items-start gap-3.5">
                   <div className="w-10 h-10 rounded-xl bg-[#0A1224] border border-[#24315A] flex items-center justify-center text-[#FFC700] shrink-0">
-                    <Clock className="w-4 h-4" />
+                    <Clock className="w-4 h-4" aria-hidden="true" />
                   </div>
                   <div>
-                    <h4 className="text-xs uppercase font-bold text-[#9AA8C7]">Student Desk Hours</h4>
+                    <h3 className="text-xs uppercase font-bold text-[#9AA8C7]">Student Desk Hours</h3>
                     <p className="text-xs text-[#E6ECFA] mt-0.5">
                       {SITE_CONFIG.contact.officeHours}
                     </p>
@@ -194,44 +194,46 @@ export const ContactPage: React.FC = () => {
                   <div className="w-16 h-16 rounded-full bg-[#0A1224] border border-[#FFC700] flex items-center justify-center text-[#FFC700] mx-auto shadow-[0_0_25px_rgba(255,199,0,0.3)]">
                     <CheckCircle2 className="w-9 h-9" />
                   </div>
-                  <h3 className="font-display font-bold text-2xl text-[#E6ECFA]">
+                  <h2 className="font-display font-bold text-2xl text-[#E6ECFA]">
                     Thank You for Reaching Out!
-                  </h3>
+                  </h2>
                   <p className="text-sm text-[#9AA8C7] max-w-md mx-auto leading-relaxed">
                     Your message has been received by our student editorial team. We will review it promptly and get back to you at <span className="text-[#FFC700] font-semibold">{email}</span>.
                   </p>
                   {user && (
                     <div className="p-3.5 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] max-w-md mx-auto flex items-center justify-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-[#FFC700] shrink-0" />
+                      <ShieldCheck className="w-4 h-4 text-[#FFC700] shrink-0" aria-hidden="true" />
                       <span>You can track this message status and admin replies in your dashboard under <strong>"My Messages"</strong>.</span>
                     </div>
                   )}
                   <button
+                    type="button"
                     onClick={() => setSubmitted(false)}
-                    className="mt-4 px-6 py-2.5 rounded-xl text-xs font-bold bg-[#2F52FF] text-white hover:bg-[#2545df] cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.3)]"
+                    className="mt-4 min-h-[48px] px-6 py-2.5 rounded-xl text-xs font-bold bg-[#2F52FF] text-white hover:bg-[#2545df] cursor-pointer shadow-[0_0_15px_rgba(47,82,255,0.3)]"
                   >
                     Submit Another Message
                   </button>
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
-                  <h3 className="font-display font-bold text-xl text-[#E6ECFA] mb-2">
+                  <h2 className="font-display font-bold text-xl text-[#E6ECFA] mb-2">
                     Send a Message to the Student Desk
-                  </h3>
+                  </h2>
 
                   {error && (
-                    <div className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
-                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
+                    <div role="alert" className="p-3 rounded-lg bg-rose-950/40 border border-rose-500/50 text-xs text-rose-200 flex items-center gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" aria-hidden="true" />
                       <span>{error}</span>
                     </div>
                   )}
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                      <label htmlFor="contactNameInput" className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
                         Your Full Name *
                       </label>
                       <input
+                        id="contactNameInput"
                         type="text"
                         required
                         value={name}
@@ -242,10 +244,11 @@ export const ContactPage: React.FC = () => {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                      <label htmlFor="contactEmailInput" className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
                         Your Email Address *
                       </label>
                       <input
+                        id="contactEmailInput"
                         type="email"
                         required
                         value={email}
@@ -257,16 +260,17 @@ export const ContactPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                    <span id="contactTypeLabel" className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
                       Message Classification *
-                    </label>
-                    <div className="grid grid-cols-3 gap-3">
+                    </span>
+                    <div role="group" aria-labelledby="contactTypeLabel" className="grid grid-cols-3 gap-3">
                       {(['Complaint', 'Review', 'Enquiry'] as MessageType[]).map((t) => (
                         <button
                           type="button"
                           key={t}
+                          aria-pressed={type === t}
                           onClick={() => setType(t)}
-                          className={`py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
+                          className={`min-h-[44px] py-2 px-3 rounded-lg text-xs font-bold border transition-all cursor-pointer ${
                             type === t
                               ? 'bg-[#2F52FF] text-white border-[#2F52FF] shadow-[0_0_15px_rgba(47,82,255,0.3)]'
                               : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#E6ECFA]'
@@ -279,10 +283,11 @@ export const ContactPage: React.FC = () => {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
+                    <label htmlFor="contactMessageInput" className="block text-xs font-semibold text-[#9AA8C7] mb-1.5">
                       Your Message *
                     </label>
                     <textarea
+                      id="contactMessageInput"
                       required
                       rows={5}
                       value={message}
@@ -295,9 +300,9 @@ export const ContactPage: React.FC = () => {
                   <button
                     type="submit"
                     disabled={loading}
-                    className="w-full py-3.5 rounded-xl text-sm font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] transition-all shadow-[0_0_25px_rgba(255,199,0,0.3)] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                    className="w-full min-h-[48px] py-3.5 rounded-xl text-sm font-bold bg-[#FFC700] text-[#0A1224] hover:bg-[#ffd233] transition-all shadow-[0_0_25px_rgba(255,199,0,0.3)] flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
-                    <Send className="w-4 h-4 text-[#0A1224]" />
+                    <Send className="w-4 h-4 text-[#0A1224]" aria-hidden="true" />
                     <span>{loading ? 'Submitting Message...' : 'Transmit Message to Student Desk'}</span>
                   </button>
                 </form>

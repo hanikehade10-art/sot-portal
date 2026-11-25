@@ -53,6 +53,9 @@
         "lastTopic": {
           "type": "object"
         },
+        "accessibilitySettings": {
+          "type": "object"
+        },
         "createdAt": {
           "type": "string",
           "format": "date-time"
@@ -92,7 +95,10 @@
         "order": { "type": "number" },
         "estimatedMinutes": { "type": "number" },
         "videoUrl": { "type": "string" },
+        "videoAccessibleText": { "type": "string" },
         "notes": { "type": "string" },
+        "notesPdfUrl": { "type": "string" },
+        "notesAccessibleText": { "type": "string" },
         "summary": { "type": "string" },
         "furtherReading": { "type": "array" },
         "linkedQuizId": { "type": "string" },

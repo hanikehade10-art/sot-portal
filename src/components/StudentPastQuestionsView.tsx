@@ -23,6 +23,8 @@ import { EmptyState } from './EmptyState';
 import { QuizListSkeleton } from './SkeletonLoader';
 import { logActivity } from '../lib/activityLogger';
 import { logStudentActivity } from '../lib/studentActivity';
+import { useRegisterVoiceHandlers } from '../context/AccessibilityContext';
+import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
 import {
   FileText,
   Search,
@@ -79,11 +81,14 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
 
   // In-App PDF viewer modal state
   const [viewerItem, setViewerItem] = useState<{
+    id?: string;
     title: string;
     url: string;
     courseCode?: string;
     session?: string;
+    accessibleText?: string;
   } | null>(null);
+  const [showViewerAccessibleText, setShowViewerAccessibleText] = useState(false);
 
   // Solution Viewer Modal state
   const [activeSolutionViewer, setActiveSolutionViewer] = useState<{
@@ -99,6 +104,7 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
   const [solutionUrl, setSolutionUrl] = useState('');
   const [savingSolution, setSavingSolution] = useState(false);
   const [solutionError, setSolutionError] = useState<string | null>(null);
+  const [confirmDeleteSolution, setConfirmDeleteSolution] = useState<{ solution: ResourceItem; pqTitle: string } | null>(null);
 
   const canManage = isAdmin || (isRep && profile?.department === department);
 
@@ -257,7 +263,13 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
   };
 
   const handleDeleteSolution = async (solution: ResourceItem, pqTitle: string) => {
-    if (!confirm('Are you sure you want to permanently delete this solution?')) return;
+    setSolutionError(null);
+    setConfirmDeleteSolution({ solution, pqTitle });
+  };
+
+  const confirmDeleteSolutionAction = async () => {
+    if (!confirmDeleteSolution) return;
+    const { solution, pqTitle } = confirmDeleteSolution;
     try {
       await deleteDoc(doc(db, 'resources', solution.id));
       if (user) {
@@ -273,10 +285,65 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
       if (activeSolutionViewer?.solution.id === solution.id) {
         setActiveSolutionViewer(null);
       }
+      setConfirmDeleteSolution(null);
     } catch (err: any) {
-      alert(`Could not delete solution: ${err?.message || err}`);
+      setSolutionError(`Could not delete solution: ${err?.message || err}`);
     }
   };
+
+  useRegisterVoiceHandlers('student-past-questions', {
+    goBack: () => {
+      if (viewerItem) {
+        setViewerItem(null);
+        return 'Closed past question viewer.';
+      }
+      if (activeSolutionViewer) {
+        setActiveSolutionViewer(null);
+        return 'Closed solution viewer.';
+      }
+      if (solutionModalPq) {
+        setSolutionModalPq(null);
+        return 'Closed solution editor.';
+      }
+      if (onBack) {
+        onBack();
+        return 'Going back.';
+      }
+      return undefined;
+    },
+    getPageDescription: () => {
+      if (viewerItem) return `Viewing past question: ${viewerItem.title}.`;
+      if (activeSolutionViewer) return `Viewing solution for ${activeSolutionViewer.pastQuestion.title}.`;
+      return `Past questions for ${department}, ${selectedLevel}, ${selectedSemester}. ${filteredList.length} available.`;
+    },
+    getPageBlocks: () => {
+      if (activeSolutionViewer) {
+        const blocks: string[] = [
+          `Official solution for ${activeSolutionViewer.pastQuestion.title}.`
+        ];
+        if (activeSolutionViewer.solution.content) {
+          blocks.push(...activeSolutionViewer.solution.content.split(/\n+/).filter(Boolean));
+        } else if (activeSolutionViewer.solution.accessibleText) {
+          blocks.push(...activeSolutionViewer.solution.accessibleText.split(/\n+/).filter(Boolean));
+        } else {
+          blocks.push('An external solution link is attached.');
+        }
+        return blocks;
+      }
+      if (viewerItem?.accessibleText) {
+        return [viewerItem.title, ...viewerItem.accessibleText.split(/\n+/).filter(Boolean)];
+      }
+      if (filteredList.length === 0) {
+        return [`No past questions available for ${selectedLevel} ${selectedSemester}.`];
+      }
+      return filteredList.map(
+        (pq, i) =>
+          `${i + 1}. ${pq.courseCode ? pq.courseCode + ', ' : ''}${pq.title}${
+            pq.session ? `, ${pq.session} session` : ''
+          }.${pq.accessibleText ? ` Text summary: ${pq.accessibleText}` : ''}`
+      );
+    }
+  });
 
   return (
     <div className="space-y-4">
@@ -345,16 +412,19 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
         <div className="relative">
           <input
             type="text"
+            aria-label="Search past questions by course or title"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search past questions by course or title..."
-            className="w-full pl-9 pr-4 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
+            className="w-full pl-9 pr-10 py-2 rounded-lg bg-[#0A1224] border border-[#24315A] text-xs text-[#E6ECFA] placeholder-[#9AA8C7]/60 focus:outline-none focus:border-[#2F52FF]"
           />
-          <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-2.5" />
+          <Search className="w-4 h-4 text-[#9AA8C7] absolute left-3 top-2.5" aria-hidden="true" />
           {searchQuery && (
             <button
+              type="button"
               onClick={() => setSearchQuery('')}
-              className="absolute right-3 top-2.5 text-[#9AA8C7] hover:text-[#E6ECFA]"
+              aria-label="Clear past questions search"
+              className="absolute right-2 top-1.5 p-1 text-[#9AA8C7] hover:text-[#E6ECFA] cursor-pointer"
             >
               <X className="w-3.5 h-3.5" />
             </button>
@@ -438,7 +508,9 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                           courseCode: item.courseCode
                         })
                       }
-                      className={`p-1.5 rounded-lg border transition-colors cursor-pointer ${
+                      aria-label={bookmarked ? `Remove bookmark for ${item.title}` : `Bookmark ${item.title}`}
+                      aria-pressed={bookmarked}
+                      className={`min-h-[40px] min-w-[40px] p-2 rounded-lg border transition-colors cursor-pointer flex items-center justify-center ${
                         bookmarked
                           ? 'bg-[#FFC700]/20 text-[#FFC700] border-[#FFC700]/40'
                           : 'bg-[#0A1224] text-[#9AA8C7] border-[#24315A] hover:text-[#FFC700]'
@@ -462,16 +534,20 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                             title: `${item.courseCode ? item.courseCode + ' ' : ''}${item.title}`
                           });
                         }
+                        setShowViewerAccessibleText(false);
                         setViewerItem({
+                          id: item.id,
                           title: item.title,
                           url: previewUrl,
                           courseCode: item.courseCode,
-                          session: item.session || item.year
+                          session: item.session || item.year,
+                          accessibleText: item.accessibleText
                         });
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
+                      aria-label={`Open ${item.title}`}
+                      className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-sm"
                     >
-                      <Eye className="w-3.5 h-3.5" />
+                      <Eye className="w-3.5 h-3.5" aria-hidden="true" />
                       <span>Open</span>
                     </button>
 
@@ -502,9 +578,9 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
 
                 {/* SOLUTION SECTION (Requirement 3) */}
                 <div className="pt-2 border-t border-[#24315A]/70 flex flex-wrap items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <span className="text-[11px] font-bold text-[#9AA8C7] uppercase tracking-wider flex items-center gap-1">
-                      <Lightbulb className="w-3.5 h-3.5 text-[#FFC700]" />
+                      <Lightbulb className="w-3.5 h-3.5 text-[#FFC700]" aria-hidden="true" />
                       <span>Solution:</span>
                     </span>
 
@@ -514,13 +590,22 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                         onClick={() => setActiveSolutionViewer({ pastQuestion: item, solution })}
                         className="px-2.5 py-1 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/40 text-[11px] font-bold flex items-center gap-1.5 cursor-pointer shadow-sm transition-all"
                       >
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" aria-hidden="true" />
                         <span>View solution</span>
                       </button>
                     ) : (
                       <span className="text-[11px] text-[#9AA8C7]/70 italic">
                         No solution uploaded yet
                       </span>
+                    )}
+
+                    {item.accessibleText && item.accessibleText.trim() && (
+                      <ReadAloudBar
+                        sourceId={`pq-card-${item.id}`}
+                        label="Listen to text"
+                        blocks={[item.title, ...item.accessibleText.split(/\n+/).filter(Boolean)]}
+                        compact
+                      />
                     )}
                   </div>
 
@@ -540,7 +625,8 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                           <button
                             type="button"
                             onClick={() => handleDeleteSolution(solution, item.title)}
-                            className="p-1 rounded bg-[#0A1224] hover:bg-rose-950/40 border border-[#24315A] hover:border-rose-500/50 text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
+                            aria-label={`Delete solution for ${item.title}`}
+                            className="p-1.5 rounded bg-[#0A1224] hover:bg-rose-950/40 border border-[#24315A] hover:border-rose-500/50 text-[#9AA8C7] hover:text-rose-400 cursor-pointer"
                             title="Delete solution"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -568,7 +654,12 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
       {/* MODAL 1: VIEW SOLUTION MODAL (Students & Staff) */}
       {activeSolutionViewer && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md">
-          <div className="relative w-full max-w-2xl bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.85)] max-h-[88vh]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="solution-viewer-title"
+            className="relative w-full max-w-2xl bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.85)] max-h-[88vh]"
+          >
             <div className="p-4 bg-[#121C36] border-b border-[#24315A] flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
@@ -581,13 +672,15 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                     </span>
                   )}
                 </div>
-                <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate mt-1">
+                <h3 id="solution-viewer-title" className="font-heading font-bold text-sm text-[#E6ECFA] truncate mt-1">
                   {activeSolutionViewer.pastQuestion.title}
                 </h3>
               </div>
               <button
+                type="button"
                 onClick={() => setActiveSolutionViewer(null)}
-                className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white"
+                aria-label="Close solution viewer"
+                className="min-w-[40px] min-h-[40px] flex items-center justify-center p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
@@ -595,13 +688,30 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
 
             <div className="p-5 overflow-y-auto space-y-4">
               {activeSolutionViewer.solution.solutionType === 'text' || activeSolutionViewer.solution.content ? (
-                <div className="p-4 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-bold text-[#FFC700]">
-                    <Lightbulb className="w-4 h-4 text-[#FFC700]" />
-                    <span>Step-by-step Solution &amp; Working</span>
+                <div className="p-4 rounded-xl bg-[#070D1A] border border-[#1E2E52] space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#FFC700]">
+                      <Lightbulb className="w-4 h-4 text-[#FFC700]" aria-hidden="true" />
+                      <span>Step-by-step Solution &amp; Working</span>
+                    </div>
+                    <ReadAloudBar
+                      sourceId={`pq-solution-${activeSolutionViewer.solution.id}`}
+                      label="Listen to solution"
+                      blocks={(activeSolutionViewer.solution.content || '').split(/\n+/).filter(Boolean)}
+                      showParagraphNav
+                      compact
+                    />
                   </div>
-                  <div className="text-xs text-[#E6ECFA] leading-relaxed whitespace-pre-wrap font-sans">
-                    {activeSolutionViewer.solution.content}
+                  <div className="text-xs sm:text-sm text-[#E6ECFA] leading-relaxed whitespace-pre-wrap font-sans space-y-2">
+                    {(activeSolutionViewer.solution.content || '').split(/\n+/).filter(Boolean).map((para, pIdx) => (
+                      <p key={pIdx}>
+                        <SentenceHighlightText
+                          text={para}
+                          sourceId={`pq-solution-${activeSolutionViewer.solution.id}`}
+                          blockIndex={pIdx}
+                        />
+                      </p>
+                    ))}
                   </div>
                 </div>
               ) : null}
@@ -757,12 +867,17 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
         </div>
       )}
 
-      {/* In-App PDF Viewer Modal with Open and Download */}
+      {/* In-App PDF Viewer Modal with Open, Download & Accessible Text Toggle */}
       {viewerItem && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-[#070D1A]/90 backdrop-blur-md">
-          <div className="relative w-full max-w-4xl h-[90vh] bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="pq-pdf-viewer-title"
+            className="relative w-full max-w-4xl h-[90vh] bg-[#0A1224] border border-[#24315A] rounded-2xl flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.8)]"
+          >
             {/* Modal Header */}
-            <div className="p-3.5 bg-[#121C36] border-b border-[#24315A] flex items-center justify-between gap-3">
+            <div className="p-3.5 bg-[#121C36] border-b border-[#24315A] flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   {viewerItem.courseCode && (
@@ -776,47 +891,128 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
                     </span>
                   )}
                 </div>
-                <h3 className="font-heading font-bold text-sm text-[#E6ECFA] truncate mt-0.5">
+                <h3 id="pq-pdf-viewer-title" className="font-heading font-bold text-sm text-[#E6ECFA] truncate mt-0.5">
                   {viewerItem.title}
                 </h3>
               </div>
 
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                {viewerItem.accessibleText && viewerItem.accessibleText.trim() && (
+                  <button
+                    type="button"
+                    onClick={() => setShowViewerAccessibleText((v) => !v)}
+                    aria-pressed={showViewerAccessibleText}
+                    className={`min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors cursor-pointer ${
+                      showViewerAccessibleText
+                        ? 'bg-[#FFC700] border-[#FFC700] text-[#0A1224]'
+                        : 'bg-[#0A1224] border-[#24315A] text-[#FFC700] hover:border-[#FFC700]'
+                    }`}
+                  >
+                    {showViewerAccessibleText ? 'PDF View' : 'Accessible Text'}
+                  </button>
+                )}
                 <a
                   href={viewerItem.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                  className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#121C36] hover:bg-[#1A2E63] text-[#E6ECFA] border border-[#24315A] text-xs font-semibold flex items-center gap-1.5 transition-colors"
                 >
-                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" />
+                  <ExternalLink className="w-3.5 h-3.5 text-[#FFC700]" aria-hidden="true" />
                   <span className="hidden sm:inline">External</span>
                 </a>
                 <a
                   href={getPdfDownloadUrl(viewerItem.url)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                  className="min-h-[40px] px-3 py-1.5 rounded-lg bg-[#2F52FF] hover:bg-[#2542D9] text-white text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
                 >
-                  <Download className="w-3.5 h-3.5" />
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
                   <span>Download</span>
                 </a>
                 <button
+                  type="button"
                   onClick={() => setViewerItem(null)}
-                  className="p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white hover:border-rose-500 transition-colors cursor-pointer"
+                  aria-label="Close past question viewer"
+                  className="min-w-[40px] min-h-[40px] flex items-center justify-center p-1.5 rounded-lg bg-[#0A1224] border border-[#24315A] text-[#9AA8C7] hover:text-white hover:border-rose-500 transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* Embedded PDF iframe */}
-            <div className="flex-1 bg-[#070D1A] relative">
-              <iframe
-                src={viewerItem.url}
-                title={viewerItem.title}
-                className="w-full h-full border-none"
-                allow="autoplay"
-              />
+            {/* Viewer Body: Accessible Text View or Embedded PDF iframe */}
+            {showViewerAccessibleText && viewerItem.accessibleText ? (
+              <div className="flex-1 bg-[#070D1A] p-5 overflow-y-auto space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1E2E52] pb-3">
+                  <span className="text-xs font-bold text-[#FFC700] uppercase tracking-wider">
+                    Accessible Text Version
+                  </span>
+                  <ReadAloudBar
+                    sourceId={`pq-viewer-text-${viewerItem.id || 'active'}`}
+                    label="Listen"
+                    blocks={viewerItem.accessibleText.split(/\n+/).filter(Boolean)}
+                    showParagraphNav
+                  />
+                </div>
+                <div className="space-y-3 text-sm text-[#E6ECFA] leading-relaxed">
+                  {viewerItem.accessibleText.split(/\n+/).filter(Boolean).map((para, pIdx) => (
+                    <p key={pIdx}>
+                      <SentenceHighlightText
+                        text={para}
+                        sourceId={`pq-viewer-text-${viewerItem.id || 'active'}`}
+                        blockIndex={pIdx}
+                      />
+                    </p>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 bg-[#070D1A] relative">
+                <iframe
+                  src={viewerItem.url}
+                  title={viewerItem.title}
+                  className="w-full h-full border-none"
+                  allow="autoplay"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Delete Solution Confirmation Modal */}
+      {confirmDeleteSolution && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#070D1A]/85 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-solution-dialog-title"
+            className="w-full max-w-sm rounded-2xl bg-[#121C36] border-2 border-[#24315A] p-5 space-y-4 shadow-2xl"
+          >
+            <h3 id="delete-solution-dialog-title" className="font-heading font-bold text-sm text-[#E6ECFA]">
+              Delete solution?
+            </h3>
+            <p className="text-xs text-[#9AA8C7]">
+              Are you sure you want to permanently delete this solution for <strong className="text-[#E6ECFA]">{confirmDeleteSolution.pqTitle}</strong>?
+            </p>
+            {solutionError && (
+              <p role="alert" className="text-xs text-rose-300">{solutionError}</p>
+            )}
+            <div className="flex justify-end gap-2 pt-2 border-t border-[#24315A]">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteSolution(null)}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-[#0A1224] border border-[#24315A] text-xs font-bold text-[#E6ECFA] cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteSolutionAction}
+                className="min-h-[44px] px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold cursor-pointer"
+              >
+                Delete
+              </button>
             </div>
           </div>
         </div>

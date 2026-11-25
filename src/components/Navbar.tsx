@@ -47,15 +47,17 @@ export const Navbar: React.FC<NavbarProps> = ({
           
           {/* Logo & Wordmark */}
           <button
+            type="button"
             onClick={() => handleNav('landing')}
-            className="flex items-center gap-2.5 sm:gap-3 group text-left transition-opacity hover:opacity-90 cursor-pointer"
+            aria-label="School of Technology Student Portal Home"
+            className="flex items-center gap-2.5 sm:gap-3 group text-left transition-opacity hover:opacity-90 cursor-pointer min-h-[48px]"
           >
             <div
               className={`rounded-xl bg-[#121C36] border border-[#24315A] flex items-center justify-center text-[#FFC700] shadow-[0_0_15px_rgba(255,199,0,0.15)] group-hover:border-[#2F52FF] group-hover:shadow-[0_0_20px_rgba(47,82,255,0.25)] transition-all ${
                 isScrolled ? 'w-9 h-9' : 'w-10 h-10'
               }`}
             >
-              <GraduationCap className={isScrolled ? 'w-5 h-5' : 'w-5.5 h-5.5'} />
+              <GraduationCap className={isScrolled ? 'w-5 h-5' : 'w-5.5 h-5.5'} aria-hidden="true" />
             </div>
             <div>
               <div className="flex items-center gap-1.5 sm:gap-2">
@@ -74,11 +76,13 @@ export const Navbar: React.FC<NavbarProps> = ({
             <button
               type="button"
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="p-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-[#E6ECFA] hover:text-white transition-all cursor-pointer shadow-sm focus:outline-none"
-              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              className="min-h-[48px] min-w-[48px] p-2 rounded-xl bg-[#121C36] border border-[#24315A] hover:border-[#2F52FF] text-[#E6ECFA] hover:text-white transition-all cursor-pointer shadow-sm flex items-center justify-center"
+              aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
+              aria-expanded={mobileMenuOpen}
+              aria-controls="sot-header-menu"
               title={mobileMenuOpen ? 'Close menu' : 'Open menu'}
             >
-              {mobileMenuOpen ? <X className="w-5 h-5 text-[#FFC700]" /> : <Menu className="w-5 h-5 text-[#E6ECFA]" />}
+              {mobileMenuOpen ? <X className="w-5 h-5 text-[#FFC700]" aria-hidden="true" /> : <Menu className="w-5 h-5 text-[#E6ECFA]" aria-hidden="true" />}
             </button>
           </div>
 
@@ -87,7 +91,11 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Header Menu Drawer (Opens when menu icon is clicked) */}
       {mobileMenuOpen && (
-        <div className="mt-2 max-w-6xl mx-auto rounded-2xl bg-[#0A1224]/95 border border-[#24315A] backdrop-blur-xl px-5 pt-3 pb-5 space-y-4 shadow-2xl pointer-events-auto animate-page-enter">
+        <nav
+          id="sot-header-menu"
+          aria-label="Primary site navigation"
+          className="mt-2 max-w-6xl mx-auto rounded-2xl bg-[#0A1224]/95 border border-[#24315A] backdrop-blur-xl px-5 pt-3 pb-5 space-y-4 shadow-2xl pointer-events-auto animate-page-enter"
+        >
           <div className="flex flex-col space-y-1 sm:space-y-1.5">
             <button
               onClick={() => handleNav('landing')}
@@ -219,7 +227,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               </div>
             )}
           </div>
-        </div>
+        </nav>
       )}
     </header>
   );
