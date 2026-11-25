@@ -48,7 +48,7 @@ import { BookmarkItem, UserProfile, BadgeItem } from '../types';
 import { logStudentActivity } from '../lib/studentActivity';
 import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
 import { ReadAloudBar } from './ReadAloudBar';
-import { cleanMarkdownForSpeech } from '../lib/speechUtils';
+import { cleanMarkdownForSpeech, stringSimilarity } from '../lib/speechUtils';
 
 interface StudentQuizzesViewProps {
   studentDepartment: string;
@@ -1077,6 +1077,8 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
 
   // Register contextual Voice Assistant commands for Quizzes
   useRegisterVoiceHandlers('student-quizzes', {
+    getPageContextName: () => (currentScreen === 'taking' ? 'quiz-active' : 'quiz-list'),
+    hasWordBankQuestion: () => currentScreen === 'taking' && currentQ?.type === 'fill-gaps',
     startQuiz: () => {
       if (currentScreen === 'list') {
         const target = filteredQuizzes[0];
@@ -1147,9 +1149,19 @@ export const StudentQuizzesView: React.FC<StudentQuizzesViewProps> = ({
       const usedIds = new Set(Object.values(gapChipIdMap[currentQ.id] || {}));
       const available = chips.filter(c => !usedIds.has(c.id));
       const cleanSpoken = spokenText.toLowerCase().trim();
-      const match =
+      let match =
         available.find(c => c.word.toLowerCase() === cleanSpoken) ||
         available.find(c => c.word.toLowerCase().includes(cleanSpoken) || cleanSpoken.includes(c.word.toLowerCase()));
+      if (!match && cleanSpoken.length >= 3) {
+        let bestScore = 0;
+        for (const c of available) {
+          const sim = stringSimilarity(cleanSpoken, c.word.toLowerCase());
+          if (sim >= 0.72 && sim > bestScore) {
+            bestScore = sim;
+            match = c;
+          }
+        }
+      }
       if (!match) {
         return `Could not find an available word matching ${spokenText}.`;
       }

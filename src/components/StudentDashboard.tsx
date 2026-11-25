@@ -119,7 +119,8 @@ import { SITE_CONFIG } from '../config/site';
 import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
 import { AccessibilitySettingsPanel } from './AccessibilitySettingsPanel';
 import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
-import { formatTableForSpeech, normalizeCourseCodeQuery } from '../lib/speechUtils';
+import { formatTableForSpeech } from '../lib/speechUtils';
+import { matchCoursesFuzzy } from '../lib/voiceIntentEngine';
 
 interface StudentDashboardProps {
   onNavigateHome: () => void;
@@ -1256,6 +1257,25 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
   const isDelegatingPQ = activeTab === 'past-questions';
 
   useRegisterVoiceHandlers('student-dashboard', {
+    getPageContextName:
+      isDelegatingCourses || isDelegatingQuizzes || isDelegatingPQ
+        ? undefined
+        : () => {
+            if (activeTab === 'timetables') return 'timetable';
+            if (activeTab === 'announcements') return 'announcements';
+            if (activeTab === 'overview') return 'dashboard';
+            return 'other';
+          },
+    getAvailableCourses: () =>
+      courses
+        .filter((c) => c.department === studentDept)
+        .map((c) => ({ id: c.id, code: c.code, title: c.title })),
+    requestLogout: () => ({
+      confirmPrompt: 'Are you sure you want to log out of SOT Portal? Say yes or no.',
+      onConfirm: () => {
+        handleConfirmLogout();
+      }
+    }),
     goHome: () => {
       navigateToBottomTab('overview');
       return 'Opening Student Home dashboard.';
@@ -1283,25 +1303,18 @@ export const StudentDashboard: React.FC<StudentDashboardProps> = ({
     openCourse: isDelegatingCourses
       ? undefined
       : (rawQuery: string) => {
-          const normalized = normalizeCourseCodeQuery(rawQuery);
-          const qLower = rawQuery.toLowerCase().trim();
-          const match = courses.find((c) => {
-            if (c.department !== studentDept) return false;
-            const codeNorm = normalizeCourseCodeQuery(c.code || '');
-            const titleLower = (c.title || '').toLowerCase();
-            return (
-              (normalized && codeNorm === normalized) ||
-              (normalized && codeNorm.includes(normalized)) ||
-              (qLower && titleLower.includes(qLower))
-            );
-          });
+          const deptCourses = courses
+            .filter((c) => c.department === studentDept)
+            .map((c) => ({ id: c.id, code: c.code, title: c.title }));
+          const ranked = matchCoursesFuzzy(rawQuery, deptCourses);
+          const match = ranked[0] ? courses.find((c) => c.id === ranked[0].course.id) : undefined;
           if (!match) {
             return `Could not find a course matching ${rawQuery} in ${studentDept}.`;
           }
           setResumeTopicId(null);
           setResumeCourseId(match.id);
           navigateToTab('courses', `${match.code}: ${match.title}`, true, match.id);
-          return `Opened ${match.code}, ${match.title}.`;
+          return `Opening course ${match.code}, ${match.title}.`;
         },
     goBack: isDelegatingCourses || isDelegatingQuizzes
       ? undefined

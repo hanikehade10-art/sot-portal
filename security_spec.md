@@ -20,3 +20,5 @@
 10. **Shadow Fields Injection**: Writing arbitrary rogue fields like `isAdmin: true` or `role: 'dean'` into `/users/{userId}` -> PERMISSION_DENIED.
 11. **Blanket Collection Scrape**: Attempting unbounded query without user UID isolation -> PERMISSION_DENIED.
 12. **Unauthenticated Matric Check/Write**: Guest writes to `/matric_registry/{matricId}` -> PERMISSION_DENIED.
+13. **Zero-PII Voice Phrase Logs**: `/unrecognizedVoicePhrases/{phraseId}` allows signed-in creation ONLY with fields `['phrase', 'normalizedPhrase', 'pageContext', 'createdAt']` (`phrase.size() <= 300`). Any PII fields (`uid`, `name`, `email`, `audio`), updates, or non-admin reads are rejected -> PERMISSION_DENIED.
+

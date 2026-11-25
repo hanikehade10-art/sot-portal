@@ -1,33 +1,35 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 
-// In-memory sliding window rate limiter: max 30 requests per 24 hours per IP / user
+// In-memory sliding window rate limiter: default 60 requests per 24 hours per IP / user
 const rateLimitMap = new Map<string, number[]>();
-const MAX_REQUESTS_PER_DAY = 30;
+const DEFAULT_MAX_REQUESTS_PER_DAY = 60;
 const RATE_WINDOW_MS = 24 * 60 * 60 * 1000; // 24 hours
 
-function checkRateLimitReadOnly(key: string): { allowed: boolean; remaining: number; resetHours: number } {
+function checkRateLimitReadOnly(key: string, limit: number = DEFAULT_MAX_REQUESTS_PER_DAY): { allowed: boolean; remaining: number; resetHours: number } {
   const now = Date.now();
   const timestamps = rateLimitMap.get(key) || [];
   const validTimestamps = timestamps.filter(ts => now - ts < RATE_WINDOW_MS);
   rateLimitMap.set(key, validTimestamps);
 
-  if (validTimestamps.length >= MAX_REQUESTS_PER_DAY) {
+  const effectiveLimit = limit > 0 ? limit : DEFAULT_MAX_REQUESTS_PER_DAY;
+  if (validTimestamps.length >= effectiveLimit) {
     const oldest = validTimestamps[0];
     const resetHours = Math.max(1, Math.ceil((oldest + RATE_WINDOW_MS - now) / 3600000));
     return { allowed: false, remaining: 0, resetHours };
   }
 
-  const remaining = MAX_REQUESTS_PER_DAY - validTimestamps.length;
+  const remaining = effectiveLimit - validTimestamps.length;
   return { allowed: true, remaining, resetHours: 24 };
 }
 
-function commitRateLimit(key: string): number {
+function commitRateLimit(key: string, limit: number = DEFAULT_MAX_REQUESTS_PER_DAY): number {
   const now = Date.now();
   const timestamps = rateLimitMap.get(key) || [];
   const validTimestamps = timestamps.filter(ts => now - ts < RATE_WINDOW_MS);
   validTimestamps.push(now);
   rateLimitMap.set(key, validTimestamps);
-  return Math.max(0, MAX_REQUESTS_PER_DAY - validTimestamps.length);
+  const effectiveLimit = limit > 0 ? limit : DEFAULT_MAX_REQUESTS_PER_DAY;
+  return Math.max(0, effectiveLimit - validTimestamps.length);
 }
 
 // System Instruction builder for MODE 1: "Portal Help"
@@ -134,21 +136,36 @@ export default async function handler(req: any, res: any) {
 
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {});
-    const { message, history, faqs, clientUid, mode = 'portal', department, studentName } = body;
+    const {
+      message,
+      history,
+      faqs,
+      clientUid,
+      mode = 'portal',
+      department,
+      studentName,
+      maxDailyLimit,
+      pageContext,
+      allowedCommands,
+      courses,
+      topics
+    } = body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Message text is required.' });
     }
+
+    const effectiveLimit = typeof maxDailyLimit === 'number' && maxDailyLimit > 0 ? maxDailyLimit : DEFAULT_MAX_REQUESTS_PER_DAY;
 
     // Rate limiting key: use clientUid or IP
     const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket?.remoteAddress || 'unknown';
     const rateLimitKey = clientUid ? `uid_${clientUid}` : `ip_${clientIp}`;
 
     // Read-only rate limit check: do NOT consume quota before a successful response
-    const rateResult = checkRateLimitReadOnly(rateLimitKey);
+    const rateResult = checkRateLimitReadOnly(rateLimitKey, effectiveLimit);
     if (!rateResult.allowed) {
       return res.status(429).json({
-        error: "You've reached your daily limit of 30 AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.",
+        error: `You've reached your daily limit of ${effectiveLimit} AI messages. You're doing great studying today! Please come back tomorrow or take a well-deserved break.`,
         remaining: 0,
         resetHours: rateResult.resetHours
       });
@@ -170,6 +187,106 @@ export default async function handler(req: any, res: any) {
         }
       }
     });
+
+    if (mode === 'voice-intent') {
+      const cleanTranscript = message.trim().slice(0, 300);
+      const validCommands = Array.isArray(allowedCommands)
+        ? allowedCommands.filter((c: any) => c && typeof c.id === 'string' && typeof c.label === 'string').slice(0, 40)
+        : [];
+      const allowedIdSet = new Set(validCommands.map((c: any) => c.id));
+
+      if (validCommands.length === 0) {
+        return res.status(200).json({ commandId: 'NONE', argument: '', remaining: rateResult.remaining, mode });
+      }
+
+      const commandListText = validCommands
+        .map((c: any) => `- "${c.id}": ${c.label}${c.acceptsArgument ? ' (may set argument)' : ''}`)
+        .join('\n');
+
+      const courseListText = Array.isArray(courses) && courses.length > 0
+        ? `\nAVAILABLE COURSES ON SCREEN:\n${courses.slice(0, 60).map((c: any) => `- ${c.code}: ${c.title}`).join('\n')}`
+        : '';
+
+      const topicListText = Array.isArray(topics) && topics.length > 0
+        ? `\nAVAILABLE TOPICS IN CURRENT COURSE:\n${topics.slice(0, 40).map((t: any) => `- Topic ${t.number}: ${t.title}`).join('\n')}`
+        : '';
+
+      const voiceSystemInstruction = `You are a voice command classifier for a university student accessibility portal (School of Technology).
+Students speak English or Nigerian Pidgin phrases (e.g., "abeg carry me go courses", "I wan do quiz", "make you read am").
+Current screen context: ${typeof pageContext === 'string' ? pageContext : 'unknown'}.
+
+ALLOWED COMMANDS FOR THIS SCREEN:
+${commandListText}${courseListText}${topicListText}
+
+STRICT RULES:
+1. Choose ONLY ONE commandId from the ALLOWED COMMANDS list above, OR return "NONE" if the phrase does not clearly match any allowed command.
+2. NEVER invent a commandId outside the list.
+3. For selectOption, put the option letter (A-F) in "argument". For selectTrueFalse, put "true" or "false" in "argument". For openCourse, put the matching course code or title in "argument". For goToTopic, put the topic number or title in "argument". For selectWordBankWord, put the chosen word in "argument". Otherwise set "argument" to "".`;
+
+      const classifyVoice = async (modelName: string, timeoutMs: number): Promise<string> => {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout after ${timeoutMs / 1000}s`)), timeoutMs)
+        );
+        const config: any = {
+          systemInstruction: voiceSystemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              commandId: { type: Type.STRING },
+              argument: { type: Type.STRING }
+            },
+            required: ['commandId', 'argument']
+          }
+        };
+        if (modelName === 'gemini-4-hydrogen') {
+          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+        }
+        const genPromise = ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: 'user', parts: [{ text: `Spoken phrase: "${cleanTranscript}"` }] }],
+          config
+        });
+        const response = await Promise.race([genPromise, timeoutPromise]);
+        return response.text || '';
+      };
+
+      let rawJson = '';
+      let voiceErr: any = null;
+      try {
+        rawJson = await classifyVoice('gemini-4-hydrogen', 8000);
+      } catch (err1: any) {
+        voiceErr = err1;
+        try {
+          rawJson = await classifyVoice('gemini-3.1-flash-lite', 12000);
+        } catch (err2: any) {
+          voiceErr = err2;
+        }
+      }
+
+      if (!rawJson) {
+        const errorMsg = String(voiceErr?.message || 'AI unavailable');
+        if (/429|quota|resource_exhausted|too many requests|overloaded/i.test(errorMsg)) {
+          return res.status(429).json({ error: 'The AI is busy right now. Please try again shortly.', isBusy: true });
+        }
+        return res.status(503).json({ error: 'AI voice classifier unavailable right now.' });
+      }
+
+      let parsed: { commandId?: string; argument?: string } = {};
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch {
+        parsed = { commandId: 'NONE', argument: '' };
+      }
+
+      const candidateId = typeof parsed.commandId === 'string' && allowedIdSet.has(parsed.commandId)
+        ? parsed.commandId
+        : 'NONE';
+      const argument = typeof parsed.argument === 'string' ? parsed.argument.slice(0, 120) : '';
+
+      const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
+      return res.status(200).json({ commandId: candidateId, argument, remaining, mode });
+    }
 
     const isStudyMode = mode === 'study';
     const systemInstruction = isStudyMode
@@ -252,8 +369,8 @@ export default async function handler(req: any, res: any) {
       });
     }
 
-    // Only commit against the 30 daily message limit upon successful reply generation
-    const remaining = commitRateLimit(rateLimitKey);
+    // Only commit against daily message limit upon successful reply generation
+    const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
 
     return res.status(200).json({ reply: replyText.trim(), remaining, mode });
   } catch (error: any) {

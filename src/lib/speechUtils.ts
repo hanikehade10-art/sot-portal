@@ -1,6 +1,6 @@
 /**
- * Speech, text normalization, markdown/table reading, and natural-language number utilities
- * for WCAG Accessibility & Voice Assistant.
+ * Speech, text normalization, markdown/table reading, phonetic/fuzzy matching,
+ * and natural-language number utilities for WCAG Accessibility & Voice Assistant.
  */
 
 const NUMBER_WORDS: Record<string, number> = {
@@ -30,24 +30,161 @@ const NUMBER_WORDS: Record<string, number> = {
   twelve: 12,
   twelfth: 12,
   thirteen: 13,
+  thirteenth: 13,
   fourteen: 14,
+  fourteenth: 14,
   fifteen: 15,
+  fifteenth: 15,
   sixteen: 16,
+  sixteenth: 16,
   seventeen: 17,
+  seventeenth: 17,
   eighteen: 18,
+  eighteenth: 18,
   nineteen: 19,
+  nineteenth: 19,
   twenty: 20,
+  twentieth: 20,
   thirty: 30,
+  thirtieth: 30,
   forty: 40,
-  fifty: 50
+  fortieth: 40,
+  fifty: 50,
+  fiftieth: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90
 };
+
+/**
+ * Converts spoken number words and digit sequences into digits inside text:
+ * - "topic five" -> "topic 5"
+ * - "one two four" -> "124"
+ * - "one twenty four" -> "124"
+ * - "two oh one" -> "201"
+ * - "one hundred and twenty four" -> "124"
+ */
+export function convertNumberWordsToDigits(input: string): string {
+  if (!input) return '';
+  const tokens = input.toLowerCase().trim().split(/\s+/);
+  const out: string[] = [];
+
+  const isDigitWord = (t: string) => NUMBER_WORDS[t] !== undefined && NUMBER_WORDS[t] <= 9;
+  const isTensWord = (t: string) => {
+    const v = NUMBER_WORDS[t];
+    return v !== undefined && v >= 20 && v <= 90 && v % 10 === 0;
+  };
+  const isTeenOrTens = (t: string) => {
+    const v = NUMBER_WORDS[t];
+    return v !== undefined && v >= 10 && v <= 99;
+  };
+
+  let i = 0;
+  while (i < tokens.length) {
+    const t = tokens[i];
+
+    // Preserve idiomatic "next one" / "previous one" / "last one" / "this one"
+    if (
+      t === 'one' &&
+      i > 0 &&
+      ['next', 'previous', 'prev', 'last', 'this', 'that', 'which', 'another'].includes(tokens[i - 1])
+    ) {
+      out.push(t);
+      i++;
+      continue;
+    }
+
+    // Handle "oh" as 0 only when sandwiched or paired with other number words/digits
+    if (t === 'oh' && (
+      (i > 0 && (isDigitWord(tokens[i - 1]) || /^\d+$/.test(tokens[i - 1]))) ||
+      (i + 1 < tokens.length && (isDigitWord(tokens[i + 1]) || /^\d+$/.test(tokens[i + 1])))
+    )) {
+      // Let sequence collector handle below
+    } else if (NUMBER_WORDS[t] === undefined) {
+      out.push(t);
+      i++;
+      continue;
+    }
+
+    // Collect a contiguous run of number words (plus optional "oh" / "and" before tens/units)
+    const run: string[] = [];
+    while (i < tokens.length) {
+      const cur = tokens[i];
+      if (NUMBER_WORDS[cur] !== undefined || cur === 'hundred') {
+        run.push(cur);
+        i++;
+      } else if (
+        cur === 'oh' &&
+        run.length > 0 &&
+        i + 1 < tokens.length &&
+        (NUMBER_WORDS[tokens[i + 1]] !== undefined || /^\d+$/.test(tokens[i + 1]))
+      ) {
+        run.push('zero');
+        i++;
+      } else if (
+        cur === 'and' &&
+        run.includes('hundred') &&
+        i + 1 < tokens.length &&
+        NUMBER_WORDS[tokens[i + 1]] !== undefined
+      ) {
+        i++;
+      } else {
+        break;
+      }
+    }
+
+    if (run.length === 0) {
+      continue;
+    }
+
+    // Case A: Contains "hundred" -> compute mathematical hundred value (e.g. "one hundred twenty four" -> 124)
+    if (run.includes('hundred')) {
+      let total = 0;
+      let current = 0;
+      for (const word of run) {
+        if (word === 'hundred') {
+          current = (current || 1) * 100;
+        } else {
+          current += NUMBER_WORDS[word] ?? 0;
+        }
+      }
+      total += current;
+      out.push(String(total));
+      continue;
+    }
+
+    // Case B: Convert run tokens into digit groups and concatenate when appropriate:
+    // - "one twenty four" -> "1" + "24" -> "124"
+    // - "one two four" -> "1" + "2" + "4" -> "124"
+    // - "twenty four" -> "24"
+    const parts: string[] = [];
+    let j = 0;
+    while (j < run.length) {
+      const w = run[j];
+      if (isTensWord(w) && j + 1 < run.length && isDigitWord(run[j + 1]) && NUMBER_WORDS[run[j + 1]] > 0) {
+        parts.push(String(NUMBER_WORDS[w] + NUMBER_WORDS[run[j + 1]]));
+        j += 2;
+      } else if (isTeenOrTens(w) || isDigitWord(w)) {
+        parts.push(String(NUMBER_WORDS[w]));
+        j++;
+      } else {
+        j++;
+      }
+    }
+    out.push(parts.join(''));
+  }
+
+  return out.join(' ').trim();
+}
 
 /**
  * Parses spoken digits or English number words ("five", "topic 12", "twenty three") into an integer.
  */
 export function parseSpokenNumber(input: string): number | null {
   if (!input) return null;
-  const digitMatch = input.match(/\b(\d+)\b/);
+  const converted = convertNumberWordsToDigits(input);
+  const digitMatch = converted.match(/\b(\d+)\b/);
   if (digitMatch) {
     const n = parseInt(digitMatch[1], 10);
     if (!Number.isNaN(n)) return n;
@@ -63,7 +200,7 @@ export function parseSpokenNumber(input: string): number | null {
     const t = tokens[i];
     if (NUMBER_WORDS[t] !== undefined) {
       const val = NUMBER_WORDS[t];
-      if ((val === 20 || val === 30 || val === 40 || val === 50) && i + 1 < tokens.length) {
+      if (val >= 20 && val <= 90 && val % 10 === 0 && i + 1 < tokens.length) {
         const nextVal = NUMBER_WORDS[tokens[i + 1]];
         if (nextVal !== undefined && nextVal > 0 && nextVal < 10) {
           return val + nextVal;
@@ -73,6 +210,47 @@ export function parseSpokenNumber(input: string): number | null {
     }
   }
   return null;
+}
+
+/**
+ * Computes Levenshtein edit distance between two strings.
+ */
+export function levenshteinDistance(a: string, b: string): number {
+  const s1 = a.toLowerCase();
+  const s2 = b.toLowerCase();
+  const len1 = s1.length;
+  const len2 = s2.length;
+  if (len1 === 0) return len2;
+  if (len2 === 0) return len1;
+
+  const dp: number[] = Array.from({ length: len2 + 1 }, (_, j) => j);
+  for (let i = 1; i <= len1; i++) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= len2; j++) {
+      const temp = dp[j];
+      if (s1[i - 1] === s2[j - 1]) {
+        dp[j] = prev;
+      } else {
+        dp[j] = 1 + Math.min(prev, dp[j], dp[j - 1]);
+      }
+      prev = temp;
+    }
+  }
+  return dp[len2];
+}
+
+/**
+ * Returns similarity ratio between 0 and 1 using Levenshtein edit distance.
+ */
+export function stringSimilarity(a: string, b: string): number {
+  const s1 = a.toLowerCase().trim();
+  const s2 = b.toLowerCase().trim();
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+  const maxLen = Math.max(s1.length, s2.length);
+  const dist = levenshteinDistance(s1, s2);
+  return Math.max(0, 1 - dist / maxLen);
 }
 
 /**
@@ -168,15 +346,15 @@ export function cleanMarkdownForSpeech(text: string): string {
 export function splitIntoSentences(text: string): string[] {
   if (!text || !text.trim()) return [];
   const normalized = text.replace(/\s+/g, ' ').trim();
-  // Split at sentence punctuation followed by whitespace + sentence start, preserving punctuation
   const matches = normalized.match(/[^.!?]+(?:[.!?]+["')\]]*)?(?=\s+|$)/g);
   if (!matches) return [normalized];
   return matches.map((s) => s.trim()).filter(Boolean);
 }
 
 /**
- * Normalizes a course code for fuzzy comparison (e.g. "COM 124" == "com124").
+ * Normalizes a course code for fuzzy comparison (e.g. "COM 124" == "com124", "COM one twenty four" == "COM124").
  */
 export function normalizeCourseCodeQuery(raw: string): string {
-  return raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const digits = convertNumberWordsToDigits(raw || '');
+  return digits.toUpperCase().replace(/[^A-Z0-9]/g, '');
 }

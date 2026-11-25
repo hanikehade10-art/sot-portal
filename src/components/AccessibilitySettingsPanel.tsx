@@ -10,7 +10,9 @@ import {
   Sparkles,
   RotateCcw,
   CheckCircle2,
-  Gauge
+  Gauge,
+  Brain,
+  MessageSquarePlus
 } from 'lucide-react';
 
 interface AccessibilitySettingsPanelProps {
@@ -140,6 +142,22 @@ export const AccessibilitySettingsPanel: React.FC<AccessibilitySettingsPanelProp
           settings.reduceMotion,
           (val) => updateSettings({ reduceMotion: val }),
           <Sparkles className="w-5 h-5" />
+        )}
+
+        {toggleSwitch(
+          'AI Voice Fallback (Optional)',
+          'When off, commands are matched offline on your device only. When on, unmatched phrases send only your spoken words and this page\'s command list to Gemini AI and count toward your daily AI limit.',
+          Boolean(settings.aiVoiceFallbackEnabled),
+          (val) => updateSettings({ aiVoiceFallbackEnabled: val }),
+          <Brain className="w-5 h-5" />
+        )}
+
+        {toggleSwitch(
+          'Help Improve Voice Assistant',
+          'Opt-in only: if a spoken command is not understood, save only the unrecognized text and page name (never audio, names, or IDs) so portal admins can add more natural phrases.',
+          Boolean(settings.helpImproveVoiceEnabled),
+          (val) => updateSettings({ helpImproveVoiceEnabled: val }),
+          <MessageSquarePlus className="w-5 h-5" />
         )}
       </div>
 

@@ -292,6 +292,7 @@ export const StudentPastQuestionsView: React.FC<StudentPastQuestionsViewProps> =
   };
 
   useRegisterVoiceHandlers('student-past-questions', {
+    getPageContextName: () => 'past-questions',
     goBack: () => {
       if (viewerItem) {
         setViewerItem(null);

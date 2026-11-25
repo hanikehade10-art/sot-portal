@@ -4,7 +4,7 @@ import type { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import subscribeHandler from './api/subscribe.ts';
 import sendHandler from './api/send.ts';
 
@@ -181,7 +181,20 @@ STRICT ACADEMIC INTEGRITY & SAFETY RULES:
 // Chat API Route
 app.post('/api/chat', async (req: Request, res: Response) => {
   try {
-    const { message, history, faqs, clientUid, mode = 'portal', department, studentName, maxDailyLimit } = req.body;
+    const {
+      message,
+      history,
+      faqs,
+      clientUid,
+      mode = 'portal',
+      department,
+      studentName,
+      maxDailyLimit,
+      pageContext,
+      allowedCommands,
+      courses,
+      topics
+    } = req.body;
 
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'Message text is required.' });
@@ -219,6 +232,107 @@ app.post('/api/chat', async (req: Request, res: Response) => {
         }
       }
     });
+
+    // MODE 3: Optional Voice Intent Fallback Classification (returns strict JSON commandId from allowedCommands)
+    if (mode === 'voice-intent') {
+      const cleanTranscript = message.trim().slice(0, 300);
+      const validCommands = Array.isArray(allowedCommands)
+        ? allowedCommands.filter((c: any) => c && typeof c.id === 'string' && typeof c.label === 'string').slice(0, 40)
+        : [];
+      const allowedIdSet = new Set(validCommands.map((c: any) => c.id));
+
+      if (validCommands.length === 0) {
+        return res.json({ commandId: 'NONE', argument: '', remaining: rateResult.remaining, mode });
+      }
+
+      const commandListText = validCommands
+        .map((c: any) => `- "${c.id}": ${c.label}${c.acceptsArgument ? ' (may set argument)' : ''}`)
+        .join('\n');
+
+      const courseListText = Array.isArray(courses) && courses.length > 0
+        ? `\nAVAILABLE COURSES ON SCREEN:\n${courses.slice(0, 60).map((c: any) => `- ${c.code}: ${c.title}`).join('\n')}`
+        : '';
+
+      const topicListText = Array.isArray(topics) && topics.length > 0
+        ? `\nAVAILABLE TOPICS IN CURRENT COURSE:\n${topics.slice(0, 40).map((t: any) => `- Topic ${t.number}: ${t.title}`).join('\n')}`
+        : '';
+
+      const voiceSystemInstruction = `You are a voice command classifier for a university student accessibility portal (School of Technology).
+Students speak English or Nigerian Pidgin phrases (e.g., "abeg carry me go courses", "I wan do quiz", "make you read am").
+Current screen context: ${typeof pageContext === 'string' ? pageContext : 'unknown'}.
+
+ALLOWED COMMANDS FOR THIS SCREEN:
+${commandListText}${courseListText}${topicListText}
+
+STRICT RULES:
+1. Choose ONLY ONE commandId from the ALLOWED COMMANDS list above, OR return "NONE" if the phrase does not clearly match any allowed command.
+2. NEVER invent a commandId outside the list.
+3. For selectOption, put the option letter (A-F) in "argument". For selectTrueFalse, put "true" or "false" in "argument". For openCourse, put the matching course code or title in "argument". For goToTopic, put the topic number or title in "argument". For selectWordBankWord, put the chosen word in "argument". Otherwise set "argument" to "".`;
+
+      const classifyVoice = async (modelName: string, timeoutMs: number): Promise<string> => {
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Timeout after ${timeoutMs / 1000}s`)), timeoutMs)
+        );
+        const config: any = {
+          systemInstruction: voiceSystemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              commandId: { type: Type.STRING },
+              argument: { type: Type.STRING }
+            },
+            required: ['commandId', 'argument']
+          }
+        };
+        if (modelName === 'gemini-4-hydrogen') {
+          config.thinkingConfig = { thinkingLevel: ThinkingLevel.LOW };
+        }
+        const genPromise = ai.models.generateContent({
+          model: modelName,
+          contents: [{ role: 'user', parts: [{ text: `Spoken phrase: "${cleanTranscript}"` }] }],
+          config
+        });
+        const response = await Promise.race([genPromise, timeoutPromise]);
+        return response.text || '';
+      };
+
+      let rawJson = '';
+      let voiceErr: any = null;
+      try {
+        rawJson = await classifyVoice('gemini-4-hydrogen', 8000);
+      } catch (err1: any) {
+        voiceErr = err1;
+        try {
+          rawJson = await classifyVoice('gemini-3.1-flash-lite', 12000);
+        } catch (err2: any) {
+          voiceErr = err2;
+        }
+      }
+
+      if (!rawJson) {
+        const errorMsg = String(voiceErr?.message || 'AI unavailable');
+        if (/429|quota|resource_exhausted|too many requests|overloaded/i.test(errorMsg)) {
+          return res.status(429).json({ error: 'The AI is busy right now. Please try again shortly.', isBusy: true });
+        }
+        return res.status(503).json({ error: 'AI voice classifier unavailable right now.' });
+      }
+
+      let parsed: { commandId?: string; argument?: string } = {};
+      try {
+        parsed = JSON.parse(rawJson);
+      } catch {
+        parsed = { commandId: 'NONE', argument: '' };
+      }
+
+      const candidateId = typeof parsed.commandId === 'string' && allowedIdSet.has(parsed.commandId)
+        ? parsed.commandId
+        : 'NONE';
+      const argument = typeof parsed.argument === 'string' ? parsed.argument.slice(0, 120) : '';
+
+      const remaining = commitRateLimit(rateLimitKey, effectiveLimit);
+      return res.json({ commandId: candidateId, argument, remaining, mode });
+    }
 
     const isStudyMode = mode === 'study';
     const systemInstruction = isStudyMode

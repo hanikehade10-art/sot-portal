@@ -333,5 +333,19 @@ service cloud.firestore {
       allow read, delete: if isAdmin();
       allow update: if false;
     }
+
+    // Opt-in Unrecognized Voice Phrases (Zero PII, Zero Audio, Admin Review Only)
+    match /unrecognizedVoicePhrases/{phraseId} {
+      allow get, list, delete: if isAdmin();
+      allow update: if false;
+      allow create: if isSignedIn() &&
+                       isValidId(phraseId) &&
+                       incoming().keys().hasAll(['phrase', 'normalizedPhrase', 'pageContext', 'createdAt']) &&
+                       incoming().keys().hasOnly(['phrase', 'normalizedPhrase', 'pageContext', 'createdAt']) &&
+                       incoming().phrase is string && incoming().phrase.size() > 0 && incoming().phrase.size() <= 300 &&
+                       incoming().normalizedPhrase is string && incoming().normalizedPhrase.size() <= 300 &&
+                       incoming().pageContext is string && incoming().pageContext.size() > 0 && incoming().pageContext.size() <= 64 &&
+                       incoming().createdAt is string && incoming().createdAt.size() <= 64;
+    }
   }
 }

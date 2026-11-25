@@ -17,7 +17,8 @@ import {
   useRegisterVoiceHandlers
 } from '../context/AccessibilityContext';
 import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
-import { markdownToSpeechBlocks, normalizeCourseCodeQuery } from '../lib/speechUtils';
+import { markdownToSpeechBlocks } from '../lib/speechUtils';
+import { matchTopicsFuzzy } from '../lib/voiceIntentEngine';
 import {
   ArrowLeft,
   ChevronRight,
@@ -242,99 +243,124 @@ export const StudentLessonView: React.FC<StudentLessonViewProps> = ({
     return topic.summary ? [topic.summary] : [];
   }, [activeContentTab, typedNoteSpeechBlocks, pdfAccessibleBlocks, videoAccessibleBlocks, topic.summary]);
 
-  // Register Lesson Voice Commands
+  // Register Lesson Voice Commands (defer when embedded topic quiz is open)
+  const isInTopicQuiz = Boolean(activeTopicQuizId);
   useRegisterVoiceHandlers('student-lesson-view', {
-    goBack: () => {
-      if (activeTopicQuizId) {
-        setActiveTopicQuizId(null);
-        return `Returned to ${topic.title}.`;
-      }
-      onBackToCourse();
-      return `Returning to ${course.code} syllabus.`;
-    },
-    goToTopic: (num, rawQuery) => {
-      if (num !== null && num >= 1 && num <= sortedTopics.length) {
-        const target = sortedTopics[num - 1];
-        onSelectTopic(target);
-        return `Opening topic ${num}: ${target.title}.`;
-      }
-      const q = normalizeCourseCodeQuery(rawQuery);
-      const byTitle = sortedTopics.find((t) =>
-        normalizeCourseCodeQuery(t.title).includes(q)
-      );
-      if (byTitle) {
-        onSelectTopic(byTitle);
-        return `Opening topic ${byTitle.title}.`;
-      }
-      return `Topic ${rawQuery} was not found. This course has ${sortedTopics.length} topics.`;
-    },
-    nextTopic: () => {
-      if (nextTopic) {
-        onSelectTopic(nextTopic);
-        return `Opening next topic: ${nextTopic.title}.`;
-      }
-      return `You are already on the last topic in ${course.code}.`;
-    },
-    previousTopic: () => {
-      if (prevTopic) {
-        onSelectTopic(prevTopic);
-        return `Opening previous topic: ${prevTopic.title}.`;
-      }
-      return `You are already on the first topic in ${course.code}.`;
-    },
-    listTopics: () => {
-      const listText = sortedTopics
-        .map((t, i) => `Topic ${i + 1}: ${t.title}`)
-        .join('. ');
-      return `${course.code} has ${sortedTopics.length} topics. ${listText}.`;
-    },
-    markTopicComplete: () => {
-      if (topic.requireQuizToComplete && !hasPassedAnyTopicQuiz && !isCompleted) {
-        return 'Passing the topic quiz is required before marking this topic complete. Say start quiz to begin.';
-      }
-      const nextState = !isCompleted;
-      handleToggleCompleteWrapper();
-      return nextState
-        ? `Marked ${topic.title} as complete.`
-        : `Removed completion mark for ${topic.title}.`;
-    },
-    bookmarkThis: () => {
-      const willSave = !topicBookmarked;
-      toggleBookmark({
-        id: topic.id,
-        type: 'topic',
-        title: `${course.code}: ${topic.title}`,
-        code: course.code,
-        department: course.department
-      });
-      return willSave ? `Bookmarked ${topic.title}.` : `Removed bookmark for ${topic.title}.`;
-    },
-    getSummaryText: () => {
-      return topic.summary?.trim() || '';
-    },
-    getNotesBlocks: () => {
-      return activeNotesBlocks;
-    },
-    getPageBlocks: () => {
-      const intro = [
-        `${course.code}: ${topic.title}. Topic ${currentStep} of ${totalTopics}.`,
-        ...(topic.whatYoullLearn?.length
-          ? [`What you will learn: ${topic.whatYoullLearn.join('. ')}`]
-          : []),
-        ...(topic.beforeYouBegin ? [`Before you begin: ${topic.beforeYouBegin}`] : [])
-      ];
-      return [...intro, ...activeNotesBlocks, ...(topic.summary ? [`Topic summary: ${topic.summary}`] : [])];
-    },
-    getPageDescription: () => {
-      return `You are studying ${course.code}, topic ${currentStep} of ${totalTopics}: ${topic.title}. Say read the notes, read the summary, next topic, or start quiz.`;
-    },
-    startQuiz: () => {
-      if (topicQuizzes.length > 0) {
-        setActiveTopicQuizId(topicQuizzes[0].id);
-        return `Opening quiz ${topicQuizzes[0].title}.`;
-      }
-      return 'There is no quiz linked to this topic yet.';
-    }
+    getPageContextName: isInTopicQuiz ? undefined : () => 'lesson',
+    getAvailableTopics: isInTopicQuiz
+      ? undefined
+      : () => sortedTopics.map((t) => ({ id: t.id, title: t.title, order: t.order || 0 })),
+    goBack: isInTopicQuiz
+      ? undefined
+      : () => {
+          onBackToCourse();
+          return `Returning to ${course.code} syllabus.`;
+        },
+    goToTopic: isInTopicQuiz
+      ? undefined
+      : (num, rawQuery) => {
+          if (num !== null && num >= 1 && num <= sortedTopics.length) {
+            const target = sortedTopics[num - 1];
+            onSelectTopic(target);
+            return `Opening topic ${num}: ${target.title}.`;
+          }
+          const ranked = matchTopicsFuzzy(
+            rawQuery,
+            sortedTopics.map((t) => ({ id: t.id, title: t.title, order: t.order || 0 }))
+          );
+          const byTitle = ranked[0] ? sortedTopics.find((t) => t.id === ranked[0].topic.id) : undefined;
+          if (byTitle) {
+            onSelectTopic(byTitle);
+            return `Opening topic ${byTitle.title}.`;
+          }
+          return `Topic ${rawQuery} was not found. This course has ${sortedTopics.length} topics.`;
+        },
+    nextTopic: isInTopicQuiz
+      ? undefined
+      : () => {
+          if (nextTopic) {
+            onSelectTopic(nextTopic);
+            return `Opening next topic: ${nextTopic.title}.`;
+          }
+          return `You are already on the last topic in ${course.code}.`;
+        },
+    previousTopic: isInTopicQuiz
+      ? undefined
+      : () => {
+          if (prevTopic) {
+            onSelectTopic(prevTopic);
+            return `Opening previous topic: ${prevTopic.title}.`;
+          }
+          return `You are already on the first topic in ${course.code}.`;
+        },
+    listTopics: isInTopicQuiz
+      ? undefined
+      : () => {
+          const listText = sortedTopics
+            .map((t, i) => `Topic ${i + 1}: ${t.title}`)
+            .join('. ');
+          return `${course.code} has ${sortedTopics.length} topics. ${listText}.`;
+        },
+    markTopicComplete: isInTopicQuiz
+      ? undefined
+      : () => {
+          if (topic.requireQuizToComplete && !hasPassedAnyTopicQuiz && !isCompleted) {
+            return 'Passing the topic quiz is required before marking this topic complete. Say start quiz to begin.';
+          }
+          const nextState = !isCompleted;
+          handleToggleCompleteWrapper();
+          return nextState
+            ? `Marked ${topic.title} as complete.`
+            : `Removed completion mark for ${topic.title}.`;
+        },
+    bookmarkThis: isInTopicQuiz
+      ? undefined
+      : () => {
+          const willSave = !topicBookmarked;
+          toggleBookmark({
+            id: topic.id,
+            type: 'topic',
+            title: `${course.code}: ${topic.title}`,
+            code: course.code,
+            department: course.department
+          });
+          return willSave ? `Bookmarked ${topic.title}.` : `Removed bookmark for ${topic.title}.`;
+        },
+    getSummaryText: isInTopicQuiz
+      ? undefined
+      : () => {
+          return topic.summary?.trim() || '';
+        },
+    getNotesBlocks: isInTopicQuiz
+      ? undefined
+      : () => {
+          return activeNotesBlocks;
+        },
+    getPageBlocks: isInTopicQuiz
+      ? undefined
+      : () => {
+          const intro = [
+            `${course.code}: ${topic.title}. Topic ${currentStep} of ${totalTopics}.`,
+            ...(topic.whatYoullLearn?.length
+              ? [`What you will learn: ${topic.whatYoullLearn.join('. ')}`]
+              : []),
+            ...(topic.beforeYouBegin ? [`Before you begin: ${topic.beforeYouBegin}`] : [])
+          ];
+          return [...intro, ...activeNotesBlocks, ...(topic.summary ? [`Topic summary: ${topic.summary}`] : [])];
+        },
+    getPageDescription: isInTopicQuiz
+      ? undefined
+      : () => {
+          return `You are studying ${course.code}, topic ${currentStep} of ${totalTopics}: ${topic.title}. Say read the notes, read the summary, next topic, or start quiz.`;
+        },
+    // Only register startQuiz if a quiz actually exists on this topic; otherwise "take quiz" opens the Quizzes hub
+    startQuiz:
+      !isInTopicQuiz && topicQuizzes.length > 0
+        ? () => {
+            setActiveTopicQuizId(topicQuizzes[0].id);
+            return `Opening topic quiz: ${topicQuizzes[0].title}.`;
+          }
+        : undefined
   });
 
   // If in-place quiz is active, render StudentQuizzesView right inside this topic flow!

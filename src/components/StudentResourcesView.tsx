@@ -42,7 +42,7 @@ import { getCourseAccent } from '../config/courseAccents';
 import { CourseListSkeleton } from './SkeletonLoader';
 import { useAccessibility, useRegisterVoiceHandlers } from '../context/AccessibilityContext';
 import { ReadAloudBar, SentenceHighlightText } from './ReadAloudBar';
-import { normalizeCourseCodeQuery } from '../lib/speechUtils';
+import { matchCoursesFuzzy, matchTopicsFuzzy } from '../lib/voiceIntentEngine';
 
 interface StudentResourcesViewProps {
   courses: CourseItem[];
@@ -411,18 +411,21 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
   // Register contextual voice handlers for courses, topics, and curriculum listing
   const isNestedLessonOrQuiz = Boolean((selectedCourse && selectedLessonTopic) || curriculumQuizState);
   useRegisterVoiceHandlers('student-resources', {
+    getPageContextName: isNestedLessonOrQuiz
+      ? undefined
+      : () => (selectedCourse ? 'course-detail' : 'courses-list'),
+    getAvailableCourses: () =>
+      courses.map((c) => ({ id: c.id, code: c.code, title: c.title })),
+    getAvailableTopics:
+      isNestedLessonOrQuiz || !selectedCourse
+        ? undefined
+        : () => courseTopics.map((t) => ({ id: t.id, title: t.title, order: t.order || 0 })),
     openCourse: (rawQuery: string) => {
-      const normalized = normalizeCourseCodeQuery(rawQuery);
-      const qLower = rawQuery.toLowerCase().trim();
-      const match = courses.find((c) => {
-        const codeNorm = normalizeCourseCodeQuery(c.code || '');
-        const titleLower = (c.title || '').toLowerCase();
-        return (
-          (normalized && codeNorm === normalized) ||
-          (normalized && codeNorm.includes(normalized)) ||
-          (qLower && titleLower.includes(qLower))
-        );
-      });
+      const ranked = matchCoursesFuzzy(
+        rawQuery,
+        courses.map((c) => ({ id: c.id, code: c.code, title: c.title }))
+      );
+      const match = ranked[0] ? courses.find((c) => c.id === ranked[0].course.id) : undefined;
       if (!match) {
         return `Could not find a course matching ${rawQuery}.`;
       }
@@ -433,7 +436,7 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
       setActiveTab('courses');
       setSelectedCourseId(match.id);
       setCourseDetailTab('topics');
-      return `Opened ${match.code}, ${match.title}.`;
+      return `Opening course ${match.code}, ${match.title}.`;
     },
     goToTopic: isNestedLessonOrQuiz
       ? undefined
@@ -448,8 +451,13 @@ export const StudentResourcesView: React.FC<StudentResourcesViewProps> = ({
           if (topicNumber && topicNumber >= 1 && topicNumber <= courseTopics.length) {
             target = courseTopics[topicNumber - 1];
           } else if (rawQuery) {
-            const qLower = rawQuery.toLowerCase();
-            target = courseTopics.find((t) => t.title.toLowerCase().includes(qLower));
+            const ranked = matchTopicsFuzzy(
+              rawQuery,
+              courseTopics.map((t) => ({ id: t.id, title: t.title, order: t.order || 0 }))
+            );
+            if (ranked[0]) {
+              target = courseTopics.find((t) => t.id === ranked[0].topic.id);
+            }
           }
           if (!target) {
             return `Could not find that topic in ${selectedCourse.code}. There are ${courseTopics.length} topics.`;

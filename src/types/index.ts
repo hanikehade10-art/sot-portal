@@ -69,6 +69,16 @@ export interface AccessibilitySettings {
   speechSpeed: SpeechSpeed;
   speechVoice: string; // SpeechSynthesisVoice.voiceURI or '' for default
   extendedQuizTime: ExtendedQuizTimeMultiplier;
+  aiVoiceFallbackEnabled?: boolean; // Optional AI intent fallback (OFF by default)
+  helpImproveVoiceEnabled?: boolean; // Opt-in anonymous unrecognized phrase logging (OFF by default)
+}
+
+export interface UnrecognizedVoicePhraseItem {
+  id: string;
+  phrase: string;
+  normalizedPhrase: string;
+  pageContext: string;
+  createdAt: string;
 }
 
 export interface UserProfile {

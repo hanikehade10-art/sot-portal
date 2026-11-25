@@ -249,6 +249,7 @@ function AppContent() {
 
   // Root-level voice handlers (overridden when inside StudentDashboard)
   useRegisterVoiceHandlers('app-root', {
+    getPageContextName: () => (currentView === 'landing' ? 'landing' : 'other'),
     goHome: () => {
       if (user && (profile?.profileComplete || isAdmin)) {
         navigateTo('dashboard');

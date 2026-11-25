@@ -6,16 +6,31 @@ import React, {
   useRef,
   useState
 } from 'react';
+import { doc } from 'firebase/firestore';
+import { db, safeSetDoc } from '../lib/firebase';
 import { useAuth } from './AuthContext';
+import { useSiteSettings } from '../hooks/useSiteSettings';
 import {
   AccessibilitySettings,
-  ExtendedQuizTimeMultiplier,
   SpeechSpeed
 } from '../types';
 import {
   parseSpokenNumber,
-  splitIntoSentences
+  splitIntoSentences,
+  stringSimilarity
 } from '../lib/speechUtils';
+import {
+  getAllowedCommandsForPage,
+  getExampleCommandsForPage,
+  normalizeSpokenCommand,
+  resolveVoiceIntent,
+  sanitizePhraseForLogging,
+  VoiceCommandId,
+  VoiceCourseRef,
+  VoiceIntentCandidate,
+  VoicePageContext,
+  VoiceTopicRef
+} from '../lib/voiceIntentEngine';
 
 export const DEFAULT_ACCESSIBILITY_SETTINGS: AccessibilitySettings = {
   accessibilityMode: false,
@@ -26,7 +41,9 @@ export const DEFAULT_ACCESSIBILITY_SETTINGS: AccessibilitySettings = {
   reduceMotion: false,
   speechSpeed: 'normal',
   speechVoice: '',
-  extendedQuizTime: 1
+  extendedQuizTime: 1,
+  aiVoiceFallbackEnabled: false,
+  helpImproveVoiceEnabled: false
 };
 
 const STORAGE_KEY_SETTINGS = 'sot_accessibility_settings';
@@ -35,10 +52,13 @@ const STORAGE_KEY_MIC_PRIVACY = 'sot_mic_privacy_seen';
 export const MIC_PRIVACY_NOTICE_TEXT =
   "Your voice is processed by your browser's speech service to understand commands. The app does not store your voice.";
 
-export const VOICE_FALLBACK_TEXT =
-  'I did not understand. Say what can I say for help.';
-
 export interface VoiceCommandHandlers {
+  // Context & Catalog Metadata
+  getPageContextName?: () => VoicePageContext;
+  getAvailableCourses?: () => VoiceCourseRef[];
+  getAvailableTopics?: () => VoiceTopicRef[];
+  hasWordBankQuestion?: () => boolean;
+
   // Navigation
   goHome?: () => string | void;
   openCourses?: () => string | void;
@@ -47,6 +67,7 @@ export interface VoiceCommandHandlers {
   openAnnouncements?: () => string | void;
   openQuizzes?: () => string | void;
   goBack?: () => string | void;
+  requestLogout?: () => { confirmPrompt: string; onConfirm: () => void } | string | void;
 
   // Courses & Lessons
   openCourse?: (courseQuery: string) => string | void;
@@ -78,7 +99,13 @@ export interface VoiceCommandHandlers {
 
 interface PendingConfirmation {
   prompt: string;
+  confirmLabel?: string;
   onConfirm: () => void;
+}
+
+interface PendingDisambiguation {
+  prompt: string;
+  options: [VoiceIntentCandidate, VoiceIntentCandidate];
 }
 
 interface AccessibilityContextValue {
@@ -121,6 +148,7 @@ interface AccessibilityContextValue {
 
   // Voice Assistant / Speech Recognition
   isListening: boolean;
+  aiFallbackBusy: boolean;
   speechRecognitionSupported: boolean;
   privacyNoticePending: boolean;
   acceptMicPrivacyAndListen: () => void;
@@ -135,6 +163,9 @@ interface AccessibilityContextValue {
   processVoiceCommand: (rawText: string) => void;
   pendingConfirmation: PendingConfirmation | null;
   cancelPendingConfirmation: () => void;
+  pendingDisambiguation: PendingDisambiguation | null;
+  selectDisambiguationOption: (index: 0 | 1) => void;
+  cancelDisambiguation: () => void;
 
   // Handler Registration
   registerVoiceHandlers: (id: string, getHandlers: () => VoiceCommandHandlers) => () => void;
@@ -155,6 +186,13 @@ function getSpeechRecognitionCtor(): any {
 
 export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user, profile, updateAccessibilitySettings } = useAuth();
+  const { settings: siteSettings } = useSiteSettings();
+  const dailyAiLimit =
+    typeof siteSettings.aiDailyLimit === 'number' && siteSettings.aiDailyLimit > 0
+      ? siteSettings.aiDailyLimit
+      : 60;
+  const dailyAiLimitRef = useRef(dailyAiLimit);
+  dailyAiLimitRef.current = dailyAiLimit;
 
   const [settings, setSettings] = useState<AccessibilitySettings>(() => {
     try {
@@ -179,6 +217,8 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
       const merged: AccessibilitySettings = {
         ...DEFAULT_ACCESSIBILITY_SETTINGS,
         ...profile.accessibilitySettings,
+        aiVoiceFallbackEnabled: Boolean(profile.accessibilitySettings.aiVoiceFallbackEnabled),
+        helpImproveVoiceEnabled: Boolean(profile.accessibilitySettings.helpImproveVoiceEnabled),
         textScale: Math.min(200, Math.max(100, Number(profile.accessibilitySettings.textScale) || 100))
       };
       setSettings(merged);
@@ -250,7 +290,6 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     const list = window.speechSynthesis.getVoices();
     if (list && list.length > 0) {
-      // Prioritize English voices at the top
       const sorted = [...list].sort((a, b) => {
         const aEn = a.lang.toLowerCase().startsWith('en') ? 0 : 1;
         const bEn = b.lang.toLowerCase().startsWith('en') ? 0 : 1;
@@ -536,16 +575,21 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   // -------------------------------------------------------------
-  // VOICE ASSISTANT & COMMAND PARSER
+  // VOICE ASSISTANT & NATURAL LANGUAGE COMMAND PROCESSOR
   // -------------------------------------------------------------
   const [isListening, setIsListening] = useState(false);
+  const [aiFallbackBusy, setAiFallbackBusy] = useState(false);
   const [privacyNoticePending, setPrivacyNoticePending] = useState(false);
   const [lastTranscript, setLastTranscript] = useState('');
   const [lastAssistantReply, setLastAssistantReply] = useState('');
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [pendingDisambiguation, setPendingDisambiguation] = useState<PendingDisambiguation | null>(null);
+
   const pendingConfirmRef = useRef<PendingConfirmation | null>(null);
   pendingConfirmRef.current = pendingConfirmation;
+  const pendingDisambigRef = useRef<PendingDisambiguation | null>(null);
+  pendingDisambigRef.current = pendingDisambiguation;
 
   const recognitionRef = useRef<any>(null);
   const speechRecognitionSupported = Boolean(getSpeechRecognitionCtor());
@@ -574,380 +618,331 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
     return blocks.slice(0, 60);
   }, []);
 
-  const processVoiceCommand = useCallback(
-    (rawText: string) => {
-      const cleaned = rawText.trim();
-      if (!cleaned) return;
-      setLastTranscript(cleaned);
-      const norm = cleaned
-        .toLowerCase()
-        .replace(/[.,!?'"()]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+  const inferPageContext = useCallback((handlers: VoiceCommandHandlers): VoicePageContext => {
+    const explicit = handlers.getPageContextName?.();
+    if (explicit) return explicit;
+    if (handlers.readQuestion && handlers.selectOption) return 'quiz-active';
+    if (handlers.getNotesBlocks && handlers.nextTopic) return 'lesson';
+    if (handlers.goToTopic && handlers.listTopics) return 'course-detail';
+    if (handlers.openCourse) return 'courses-list';
+    if (handlers.startQuiz) return 'quiz-list';
+    return 'dashboard';
+  }, []);
 
-      const handlers = getMergedHandlers();
+  const buildAvailableCommandSet = useCallback((handlers: VoiceCommandHandlers): Set<VoiceCommandId> => {
+    const set = new Set<VoiceCommandId>([
+      'help',
+      'describePage',
+      'stopSpeech',
+      'pauseSpeech',
+      'resumeSpeech',
+      'repeatSpeech',
+      'fasterSpeech',
+      'slowerSpeech',
+      'nextParagraph',
+      'previousParagraph',
+      'readPage',
+      'readFromHere'
+    ]);
 
-      // 0. Check Pending Spoken Confirmation First (e.g. Quiz Submission)
-      if (pendingConfirmRef.current) {
-        if (/\b(yes|confirm|submit|yeah|sure|proceed|ok|okay)\b/.test(norm)) {
-          const action = pendingConfirmRef.current.onConfirm;
-          setPendingConfirmation(null);
-          replyAndSpeak('Confirmed. Submitting now.');
-          action();
-          return;
-        }
-        if (/\b(no|cancel|wait|stop|dont|don t|back)\b/.test(norm)) {
-          setPendingConfirmation(null);
-          replyAndSpeak('Submission cancelled. You can continue reviewing your answers.');
-          return;
-        }
-        replyAndSpeak('Please say yes to confirm submission, or no to cancel.');
-        return;
-      }
+    if (handlers.goHome) set.add('goHome');
+    if (handlers.openCourses) set.add('openCourses');
+    if (handlers.openPastQuestions) set.add('openPastQuestions');
+    if (handlers.openTimetable) set.add('openTimetable');
+    if (handlers.openAnnouncements) set.add('openAnnouncements');
+    if (handlers.openQuizzes) set.add('openQuizzes');
+    if (handlers.goBack) set.add('goBack');
+    if (handlers.requestLogout) set.add('logout');
+    if (handlers.openCourse) set.add('openCourse');
+    if (handlers.goToTopic) set.add('goToTopic');
+    if (handlers.nextTopic) set.add('nextTopic');
+    if (handlers.previousTopic) set.add('previousTopic');
+    if (handlers.listTopics) set.add('listTopics');
+    if (handlers.markTopicComplete) set.add('markTopicComplete');
+    if (handlers.bookmarkThis) set.add('bookmarkThis');
+    if (handlers.getSummaryText) set.add('readSummary');
+    if (handlers.getNotesBlocks) set.add('readNotes');
+    if (handlers.startQuiz) set.add('startQuiz');
+    if (handlers.readQuestion) set.add('readQuestion');
+    if (handlers.repeatOptions) set.add('repeatOptions');
+    if (handlers.selectOption) set.add('selectOption');
+    if (handlers.selectTrueFalse) set.add('selectTrueFalse');
+    if (handlers.selectWordBankWord) set.add('selectWordBankWord');
+    if (handlers.nextQuestion) set.add('nextQuestion');
+    if (handlers.previousQuestion) set.add('previousQuestion');
+    if (handlers.howMuchTimeIsLeft) set.add('howMuchTimeIsLeft');
+    if (handlers.requestSubmitQuiz) set.add('submitQuiz');
 
-      // 1. Help & Page Overview
-      if (/\b(what can i say|help|voice commands|command list)\b/.test(norm)) {
-        const helpMsg =
-          'You can say: Go home, open courses, open past questions, open timetable, open announcements, open quizzes, or go back. In courses say: open course COM 124, go to topic five, next topic, previous topic, read the notes, read the summary, pause, resume, stop, faster, or slower. In quizzes say: start quiz, read the question, option B, true, false, next question, how much time is left, or submit quiz.';
-        replyAndSpeak(helpMsg);
-        return;
-      }
+    return set;
+  }, []);
 
-      if (/\b(what is on this page|where am i|describe this page)\b/.test(norm)) {
-        const desc = handlers.getPageDescription?.();
-        if (desc) {
-          replyAndSpeak(desc);
-        } else {
-          const heading = document.querySelector('main h1, main h2, h1, h2')?.textContent?.trim();
+  const executeIntentCandidate = useCallback(
+    (candidate: VoiceIntentCandidate, handlers: VoiceCommandHandlers) => {
+      const sayResult = (res: string | void, fallbackMsg: string) => {
+        const msg = typeof res === 'string' && res.trim() ? res.trim() : fallbackMsg;
+        replyAndSpeak(msg);
+      };
+
+      switch (candidate.commandId) {
+        case 'help': {
+          const ctx = inferPageContext(handlers);
+          const examples = getExampleCommandsForPage(ctx);
           replyAndSpeak(
-            heading
-              ? `You are viewing ${heading}. Say read this page to hear the content, or say what can I say for commands.`
-              : 'You are on the School of Technology portal. Say go home, open courses, or open quizzes.'
+            `On this screen, try saying: ${examples[0]}, ${examples[1]}, or ${examples[2]}. You can also say go home, open courses, open past questions, open timetable, pause, resume, or stop.`
           );
-        }
-        return;
-      }
-
-      // 2. Reading Controls (Immediate Speech Control)
-      if (/^(stop|stop reading|quiet|shut up|silence)$/.test(norm) || /\bstop reading\b/.test(norm)) {
-        stopSpeech();
-        setLastAssistantReply('Stopped reading.');
-        return;
-      }
-
-      if (/^(pause|pause reading)$/.test(norm)) {
-        pauseSpeech();
-        setLastAssistantReply('Paused reading. Say resume to continue.');
-        return;
-      }
-
-      if (/^(resume|continue|continue reading|play)$/.test(norm)) {
-        resumeSpeech();
-        setLastAssistantReply('Resumed reading.');
-        return;
-      }
-
-      if (/^(repeat|say that again|again)$/.test(norm)) {
-        repeatSpeech();
-        setLastAssistantReply('Repeating.');
-        return;
-      }
-
-      if (/\b(faster|speed up|read faster|speak faster)\b/.test(norm)) {
-        fasterSpeech();
-        setLastAssistantReply('Increased speech speed.');
-        return;
-      }
-
-      if (/\b(slower|slow down|read slower|speak slower)\b/.test(norm)) {
-        slowerSpeech();
-        setLastAssistantReply('Decreased speech speed.');
-        return;
-      }
-
-      if (/\b(next paragraph|skip paragraph)\b/.test(norm)) {
-        if (activeQueueRef.current) {
-          nextParagraph();
-          setLastAssistantReply('Moving to next paragraph.');
-        } else {
-          replyAndSpeak('No lesson notes are currently playing. Say read the notes first.');
-        }
-        return;
-      }
-
-      if (/\b(previous paragraph|last paragraph|back paragraph)\b/.test(norm)) {
-        if (activeQueueRef.current) {
-          previousParagraph();
-          setLastAssistantReply('Moving to previous paragraph.');
-        } else {
-          replyAndSpeak('No lesson notes are currently playing.');
-        }
-        return;
-      }
-
-      if (/\b(read the summary|read summary)\b/.test(norm)) {
-        const summary = handlers.getSummaryText?.();
-        if (summary) {
-          setLastAssistantReply('Reading summary.');
-          speakBlocks('lesson-summary', [summary]);
-        } else {
-          replyAndSpeak('No summary is available on this screen.');
-        }
-        return;
-      }
-
-      if (/\b(read the notes|read notes|read lesson)\b/.test(norm)) {
-        const blocks = handlers.getNotesBlocks?.();
-        if (blocks && blocks.length > 0) {
-          setLastAssistantReply('Reading lesson notes.');
-          speakBlocks('lesson-notes', blocks, 0);
-        } else {
-          replyAndSpeak('No lesson notes are open right now.');
-        }
-        return;
-      }
-
-      if (/\b(read this page|read page|read everything)\b/.test(norm)) {
-        const customBlocks = handlers.getPageBlocks?.() || handlers.getNotesBlocks?.();
-        const blocks = customBlocks && customBlocks.length > 0 ? customBlocks : extractVisiblePageBlocks();
-        if (blocks.length > 0) {
-          setLastAssistantReply('Reading page content.');
-          speakBlocks('page-content', blocks, 0);
-        } else {
-          replyAndSpeak('Nothing readable was found on this page.');
-        }
-        return;
-      }
-
-      if (/\b(read from here|start reading here)\b/.test(norm)) {
-        const blocks = handlers.getNotesBlocks?.() || handlers.getPageBlocks?.() || extractVisiblePageBlocks();
-        if (blocks.length > 0) {
-          const startAt = Math.max(0, activeBlockIndex >= 0 ? activeBlockIndex : 0);
-          setLastAssistantReply(`Reading from paragraph ${startAt + 1}.`);
-          speakBlocks(activeSourceId || 'lesson-notes', blocks, startAt);
-        } else {
-          replyAndSpeak('No notes are currently selected to read from.');
-        }
-        return;
-      }
-
-      // 3. Quiz Commands (Checked before general navigation so "next question" / options work cleanly)
-      if (/\b(start quiz|begin quiz|take quiz|start the quiz)\b/.test(norm)) {
-        if (handlers.startQuiz) {
-          const res = handlers.startQuiz();
-          if (typeof res === 'string') replyAndSpeak(res);
           return;
         }
-      }
-
-      if (/\b(read the question|read question|repeat question|what is the question)\b/.test(norm)) {
-        if (handlers.readQuestion) {
-          const res = handlers.readQuestion();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'describePage': {
+          const desc = handlers.getPageDescription?.();
+          if (desc) {
+            replyAndSpeak(desc);
+          } else {
+            const heading = document.querySelector('main h1, main h2, h1, h2')?.textContent?.trim();
+            replyAndSpeak(
+              heading
+                ? `You are viewing ${heading}. Say read this page to hear the content, or say what can I say for commands.`
+                : 'You are on the School of Technology portal. Say go home, open courses, or open quizzes.'
+            );
+          }
           return;
         }
-      }
-
-      if (/\b(repeat the options|repeat options|read options|read the options|what are the options)\b/.test(norm)) {
-        if (handlers.repeatOptions) {
-          const res = handlers.repeatOptions();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'stopSpeech': {
+          stopSpeech();
+          setLastAssistantReply('Understood: Stopped reading aloud.');
           return;
         }
-      }
-
-      if (/\b(how much time is left|time left|time remaining|how many minutes left)\b/.test(norm)) {
-        if (handlers.howMuchTimeIsLeft) {
-          const res = handlers.howMuchTimeIsLeft();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'pauseSpeech': {
+          pauseSpeech();
+          setLastAssistantReply('Understood: Paused reading. Say continue or resume to go on.');
           return;
         }
-      }
-
-      if (/\b(next question)\b/.test(norm)) {
-        if (handlers.nextQuestion) {
-          const res = handlers.nextQuestion();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'resumeSpeech': {
+          resumeSpeech();
+          setLastAssistantReply('Understood: Resumed reading.');
           return;
         }
-      }
-
-      if (/\b(previous question|last question|back question)\b/.test(norm)) {
-        if (handlers.previousQuestion) {
-          const res = handlers.previousQuestion();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'repeatSpeech': {
+          setLastAssistantReply('Understood: Repeating.');
+          repeatSpeech();
           return;
         }
-      }
-
-      if (/\b(submit quiz|finish quiz|submit the quiz|done with quiz)\b/.test(norm)) {
-        if (handlers.requestSubmitQuiz) {
-          const result = handlers.requestSubmitQuiz();
+        case 'fasterSpeech': {
+          fasterSpeech();
+          setLastAssistantReply('Understood: Increased speech speed.');
+          return;
+        }
+        case 'slowerSpeech': {
+          slowerSpeech();
+          setLastAssistantReply('Understood: Decreased speech speed.');
+          return;
+        }
+        case 'nextParagraph': {
+          if (activeQueueRef.current) {
+            setLastAssistantReply('Understood: Moving to the next paragraph.');
+            nextParagraph();
+          } else {
+            replyAndSpeak('Nothing is currently playing. Say read the notes or read this page first.');
+          }
+          return;
+        }
+        case 'previousParagraph': {
+          if (activeQueueRef.current) {
+            setLastAssistantReply('Understood: Moving to the previous paragraph.');
+            previousParagraph();
+          } else {
+            replyAndSpeak('Nothing is currently playing. Say read the notes or read this page first.');
+          }
+          return;
+        }
+        case 'readSummary': {
+          const summary = handlers.getSummaryText?.();
+          if (summary) {
+            setLastAssistantReply('Understood: Reading the topic summary.');
+            speakBlocks('lesson-summary', [summary]);
+          } else {
+            replyAndSpeak('No summary is available on this screen.');
+          }
+          return;
+        }
+        case 'readNotes': {
+          const blocks = handlers.getNotesBlocks?.();
+          if (blocks && blocks.length > 0) {
+            setLastAssistantReply('Understood: Reading lesson notes.');
+            speakBlocks('lesson-notes', blocks, 0);
+          } else {
+            const pageBlocks = handlers.getPageBlocks?.() || extractVisiblePageBlocks();
+            if (pageBlocks.length > 0) {
+              setLastAssistantReply('Understood: Reading this page.');
+              speakBlocks('page-content', pageBlocks, 0);
+            } else {
+              replyAndSpeak('No lesson notes are open right now.');
+            }
+          }
+          return;
+        }
+        case 'readPage': {
+          const customBlocks = handlers.getPageBlocks?.() || handlers.getNotesBlocks?.();
+          const blocks = customBlocks && customBlocks.length > 0 ? customBlocks : extractVisiblePageBlocks();
+          if (blocks.length > 0) {
+            setLastAssistantReply('Understood: Reading this page.');
+            speakBlocks('page-content', blocks, 0);
+          } else {
+            replyAndSpeak('Nothing readable was found on this page.');
+          }
+          return;
+        }
+        case 'readFromHere': {
+          const blocks = handlers.getNotesBlocks?.() || handlers.getPageBlocks?.() || extractVisiblePageBlocks();
+          if (blocks.length > 0) {
+            const startAt = Math.max(0, activeBlockIndex >= 0 ? activeBlockIndex : 0);
+            setLastAssistantReply(`Understood: Reading from paragraph ${startAt + 1}.`);
+            speakBlocks(activeSourceId || 'lesson-notes', blocks, startAt);
+          } else {
+            replyAndSpeak('No content is currently available to read from.');
+          }
+          return;
+        }
+        case 'startQuiz': {
+          if (handlers.startQuiz) {
+            sayResult(handlers.startQuiz(), 'Opening the quiz.');
+          } else if (handlers.openQuizzes) {
+            sayResult(handlers.openQuizzes(), 'Opening Quizzes.');
+          }
+          return;
+        }
+        case 'readQuestion': {
+          sayResult(handlers.readQuestion?.(), 'Reading the current question.');
+          return;
+        }
+        case 'repeatOptions': {
+          sayResult(handlers.repeatOptions?.(), 'Repeating the options.');
+          return;
+        }
+        case 'selectOption': {
+          const letter = (candidate.argument || 'A').toUpperCase().slice(0, 1);
+          const idx = letter.charCodeAt(0) - 65;
+          sayResult(handlers.selectOption?.(idx, letter), `Selecting option ${letter}.`);
+          return;
+        }
+        case 'selectTrueFalse': {
+          const isTrue = String(candidate.argument || 'true').toLowerCase() === 'true';
+          sayResult(handlers.selectTrueFalse?.(isTrue), `Selecting ${isTrue ? 'True' : 'False'}.`);
+          return;
+        }
+        case 'selectWordBankWord': {
+          const rawArg = String(candidate.argument || '');
+          const parts = rawArg.split('|');
+          const gapNum = parts.length === 2 && parts[0] ? parseInt(parts[0], 10) : undefined;
+          const word = parts.length === 2 ? parts[1] : rawArg;
+          sayResult(
+            handlers.selectWordBankWord?.(word, Number.isNaN(gapNum as any) ? undefined : gapNum),
+            `Picking word ${word}.`
+          );
+          return;
+        }
+        case 'nextQuestion': {
+          sayResult(handlers.nextQuestion?.(), 'Moving to the next question.');
+          return;
+        }
+        case 'previousQuestion': {
+          sayResult(handlers.previousQuestion?.(), 'Moving to the previous question.');
+          return;
+        }
+        case 'howMuchTimeIsLeft': {
+          sayResult(handlers.howMuchTimeIsLeft?.(), 'Checking remaining time.');
+          return;
+        }
+        case 'submitQuiz': {
+          const result = handlers.requestSubmitQuiz?.();
           if (result && typeof result === 'object' && 'confirmPrompt' in result) {
             setPendingConfirmation({
               prompt: result.confirmPrompt,
+              confirmLabel: 'Yes, Submit Quiz',
               onConfirm: result.onConfirm
             });
             replyAndSpeak(result.confirmPrompt);
-            return;
-          } else if (typeof result === 'string') {
-            replyAndSpeak(result);
-            return;
+          } else {
+            sayResult(result, 'No active quiz is ready to submit.');
           }
+          return;
         }
-      }
-
-      // Option A..F matching ("option b", "choose option a", "answer c", "pick d")
-      const optionMatch = norm.match(/\b(?:option|choice|answer|pick|select)\s+([a-f])\b/i);
-      if (optionMatch && handlers.selectOption) {
-        const letter = optionMatch[1].toUpperCase();
-        const idx = letter.charCodeAt(0) - 65;
-        const res = handlers.selectOption(idx, letter);
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-
-      // Standalone single letter A-F while in quiz
-      if (/^[a-f]$/.test(norm) && handlers.selectOption) {
-        const letter = norm.toUpperCase();
-        const idx = letter.charCodeAt(0) - 65;
-        const res = handlers.selectOption(idx, letter);
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-
-      // True / False
-      if (/^(?:select |choose |answer |it is )?true$/.test(norm) && handlers.selectTrueFalse) {
-        const res = handlers.selectTrueFalse(true);
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-      if (/^(?:select |choose |answer |it is )?false$/.test(norm) && handlers.selectTrueFalse) {
-        const res = handlers.selectTrueFalse(false);
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-
-      // 4. Topic / Lesson Actions ("chapter" means "topic")
-      if (/\b(mark topic complete|complete topic|mark as complete|finish topic)\b/.test(norm)) {
-        if (handlers.markTopicComplete) {
-          const res = handlers.markTopicComplete();
-          if (typeof res === 'string') replyAndSpeak(res);
+        case 'markTopicComplete': {
+          sayResult(handlers.markTopicComplete?.(), 'Updated topic completion status.');
+          return;
+        }
+        case 'bookmarkThis': {
+          sayResult(handlers.bookmarkThis?.(), 'Updated bookmark.');
+          return;
+        }
+        case 'listTopics': {
+          sayResult(handlers.listTopics?.(), 'Listing topics.');
+          return;
+        }
+        case 'nextTopic': {
+          sayResult(handlers.nextTopic?.(), 'Opening the next topic.');
+          return;
+        }
+        case 'previousTopic': {
+          sayResult(handlers.previousTopic?.(), 'Opening the previous topic.');
+          return;
+        }
+        case 'goToTopic': {
+          const arg = String(candidate.argument || '').trim();
+          const num = parseSpokenNumber(arg);
+          sayResult(handlers.goToTopic?.(num, arg), `Opening topic ${arg}.`);
+          return;
+        }
+        case 'openCourse': {
+          const arg = String(candidate.argument || '').trim();
+          sayResult(handlers.openCourse?.(arg), `Opening course ${arg}.`);
+          return;
+        }
+        case 'goHome': {
+          sayResult(handlers.goHome?.(), 'Opening Student Home.');
+          return;
+        }
+        case 'openCourses': {
+          sayResult(handlers.openCourses?.(), 'Opening Courses.');
+          return;
+        }
+        case 'openPastQuestions': {
+          sayResult(handlers.openPastQuestions?.(), 'Opening Past Questions.');
+          return;
+        }
+        case 'openTimetable': {
+          sayResult(handlers.openTimetable?.(), 'Opening Timetable.');
+          return;
+        }
+        case 'openAnnouncements': {
+          sayResult(handlers.openAnnouncements?.(), 'Opening Announcements.');
+          return;
+        }
+        case 'openQuizzes': {
+          sayResult(handlers.openQuizzes?.(), 'Opening Quizzes.');
+          return;
+        }
+        case 'goBack': {
+          sayResult(handlers.goBack?.(), 'Going back.');
+          return;
+        }
+        case 'logout': {
+          const result = handlers.requestLogout?.();
+          if (result && typeof result === 'object' && 'confirmPrompt' in result) {
+            setPendingConfirmation({
+              prompt: result.confirmPrompt,
+              confirmLabel: 'Yes, Log Out',
+              onConfirm: result.onConfirm
+            });
+            replyAndSpeak(result.confirmPrompt);
+          } else {
+            sayResult(result, 'Log out is only available while signed in.');
+          }
           return;
         }
       }
-
-      if (/\b(bookmark this|save bookmark|add bookmark|remove bookmark)\b/.test(norm)) {
-        if (handlers.bookmarkThis) {
-          const res = handlers.bookmarkThis();
-          if (typeof res === 'string') replyAndSpeak(res);
-          return;
-        }
-      }
-
-      if (/\b(what topics are there|list topics|read topics|list chapters)\b/.test(norm)) {
-        if (handlers.listTopics) {
-          const res = handlers.listTopics();
-          if (typeof res === 'string') replyAndSpeak(res);
-          return;
-        }
-      }
-
-      if (/\b(next topic|next chapter)\b/.test(norm)) {
-        if (handlers.nextTopic) {
-          const res = handlers.nextTopic();
-          if (typeof res === 'string') replyAndSpeak(res);
-          return;
-        }
-      }
-
-      if (/\b(previous topic|previous chapter|last topic|last chapter)\b/.test(norm)) {
-        if (handlers.previousTopic) {
-          const res = handlers.previousTopic();
-          if (typeof res === 'string') replyAndSpeak(res);
-          return;
-        }
-      }
-
-      // "go to topic five" / "open chapter 3" / "topic 2"
-      const topicMatch = norm.match(/\b(?:go to |open |select )?(?:topic|chapter)\s+(.+)$/);
-      if (topicMatch && handlers.goToTopic) {
-        const rest = topicMatch[1].trim();
-        const num = parseSpokenNumber(rest);
-        const res = handlers.goToTopic(num, rest);
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-
-      // "open course COM 124" / "open COM 124"
-      const courseMatch = norm.match(/\b(?:open|go to|view|select)\s+(?:course\s+)?([a-z]{2,5}\s*\d{3})\b/i)
-        || norm.match(/\bopen course\s+(.+)$/i);
-      if (courseMatch && handlers.openCourse) {
-        const res = handlers.openCourse(courseMatch[1].trim());
-        if (typeof res === 'string') replyAndSpeak(res);
-        return;
-      }
-
-      // 5. Fill-in-the-gap spoken word bank fallback ("put modem", "gap 1 modem", or direct bank word)
-      if (handlers.selectWordBankWord) {
-        const gapNumMatch = norm.match(/\bgap\s+(\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)\s+(.+)$/i);
-        const gapNum = gapNumMatch ? parseSpokenNumber(gapNumMatch[1]) ?? undefined : undefined;
-        const wordCandidate = gapNumMatch ? gapNumMatch[2].trim() : norm.replace(/^(put|fill|choose|select)\s+/i, '').trim();
-        const res = handlers.selectWordBankWord(wordCandidate, gapNum);
-        if (typeof res === 'string' && res.length > 0) {
-          replyAndSpeak(res);
-          return;
-        }
-      }
-
-      // 6. Primary App Navigation
-      if (/\b(go home|open home|home page|dashboard)\b/.test(norm)) {
-        const res = handlers.goHome?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening home dashboard.');
-        return;
-      }
-
-      if (/\b(open courses|my courses|go to courses|courses)\b/.test(norm)) {
-        const res = handlers.openCourses?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening courses.');
-        return;
-      }
-
-      if (/\b(open past questions|past questions|go to past questions)\b/.test(norm)) {
-        const res = handlers.openPastQuestions?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening past questions.');
-        return;
-      }
-
-      if (/\b(open timetable|timetable|class schedule|exam timetable)\b/.test(norm)) {
-        const res = handlers.openTimetable?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening timetable.');
-        return;
-      }
-
-      if (/\b(open announcements|announcements|notices)\b/.test(norm)) {
-        const res = handlers.openAnnouncements?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening announcements.');
-        return;
-      }
-
-      if (/\b(open quizzes|quizzes|my quizzes|open quiz)\b/.test(norm)) {
-        const res = handlers.openQuizzes?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Opening quizzes.');
-        return;
-      }
-
-      if (/^(go back|back|return|previous page)$/.test(norm)) {
-        const res = handlers.goBack?.();
-        replyAndSpeak(typeof res === 'string' ? res : 'Going back.');
-        return;
-      }
-
-      // 7. Unrecognized fallback
-      replyAndSpeak(VOICE_FALLBACK_TEXT);
     },
     [
-      getMergedHandlers,
+      inferPageContext,
       replyAndSpeak,
       stopSpeech,
       pauseSpeech,
@@ -961,6 +956,221 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
       extractVisiblePageBlocks,
       activeBlockIndex,
       activeSourceId
+    ]
+  );
+
+  const logUnrecognizedPhraseIfOptedIn = useCallback(
+    (rawPhrase: string, normalizedCompact: string, pageContext: VoicePageContext) => {
+      if (!settingsRef.current.helpImproveVoiceEnabled) return;
+      if (!user?.uid) return;
+      const cleanPhrase = sanitizePhraseForLogging(rawPhrase);
+      if (!cleanPhrase) return;
+      const docId = `vp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      // Strictly NO audio, NO user names, NO emails, NO uid stored
+      safeSetDoc(doc(db, 'unrecognizedVoicePhrases', docId), {
+        phrase: cleanPhrase,
+        normalizedPhrase: normalizedCompact.slice(0, 280),
+        pageContext,
+        createdAt: new Date().toISOString()
+      }).catch(() => {
+        // fail silently so learning flow is never interrupted
+      });
+    },
+    [user?.uid]
+  );
+
+  const speakPageExamplesFallback = useCallback(
+    (pageContext: VoicePageContext) => {
+      const examples = getExampleCommandsForPage(pageContext);
+      replyAndSpeak(
+        `I didn't match that command. Try saying: "${examples[0]}", "${examples[1]}", or "${examples[2]}".`
+      );
+    },
+    [replyAndSpeak]
+  );
+
+  const processVoiceCommand = useCallback(
+    (rawText: string) => {
+      const cleaned = rawText.trim();
+      if (!cleaned) return;
+      setLastTranscript(cleaned);
+      const handlers = getMergedHandlers();
+      const norm = normalizeSpokenCommand(cleaned);
+      const low = norm.lowercaseClean;
+
+      // 0a. Pending Spoken Confirmation ("Did you mean ...?" or "Confirm quiz submission")
+      if (pendingConfirmRef.current) {
+        if (/^(?:yes|yeah|yep|confirm|submit|sure|proceed|ok|okay|correct|do it|go ahead)\b/.test(low) || /\b(?:yes|confirm|correct)\b/.test(low)) {
+          const action = pendingConfirmRef.current.onConfirm;
+          setPendingConfirmation(null);
+          action();
+          return;
+        }
+        if (/\b(?:no|nah|cancel|wait|stop|dont|don t|never mind)\b/.test(low)) {
+          setPendingConfirmation(null);
+          replyAndSpeak('Cancelled.');
+          return;
+        }
+        replyAndSpeak('Please say yes to confirm, or no to cancel.');
+        return;
+      }
+
+      // 0b. Pending 2-Option Disambiguation ("Did you mean X or Y?")
+      if (pendingDisambigRef.current) {
+        const [optA, optB] = pendingDisambigRef.current.options;
+        if (/\b(?:no|neither|cancel|none|stop)\b/.test(low)) {
+          setPendingDisambiguation(null);
+          replyAndSpeak('Cancelled. Please say your command again.');
+          return;
+        }
+        if (/\b(?:first|one|1|a|option a|option 1)\b/.test(low)) {
+          setPendingDisambiguation(null);
+          executeIntentCandidate(optA, handlers);
+          return;
+        }
+        if (/\b(?:second|two|2|b|option b|option 2)\b/.test(low)) {
+          setPendingDisambiguation(null);
+          executeIntentCandidate(optB, handlers);
+          return;
+        }
+        // Check phrase similarity against either candidate label
+        const simA = stringSimilarity(norm.compact, optA.label.toLowerCase());
+        const simB = stringSimilarity(norm.compact, optB.label.toLowerCase());
+        if (simA > simB && simA >= 0.45) {
+          setPendingDisambiguation(null);
+          executeIntentCandidate(optA, handlers);
+          return;
+        }
+        if (simB > simA && simB >= 0.45) {
+          setPendingDisambiguation(null);
+          executeIntentCandidate(optB, handlers);
+          return;
+        }
+        setPendingDisambiguation(null);
+        // Fall through to parse as fresh command if neither chosen!
+      }
+
+      const pageContext = inferPageContext(handlers);
+      const availableCommands = buildAvailableCommandSet(handlers);
+      const availableCourses = handlers.getAvailableCourses?.() || [];
+      const availableTopics = handlers.getAvailableTopics?.() || [];
+      const hasWordBankQuestion = handlers.hasWordBankQuestion?.() || false;
+
+      const resolution = resolveVoiceIntent({
+        transcript: cleaned,
+        pageContext,
+        isSpeaking,
+        hasWordBankQuestion,
+        availableCommands,
+        availableCourses,
+        availableTopics
+      });
+
+      if (resolution.status === 'matched') {
+        executeIntentCandidate(resolution.candidate, handlers);
+        return;
+      }
+
+      if (resolution.status === 'confirm-single') {
+        const cand = resolution.candidate;
+        setPendingConfirmation({
+          prompt: `Did you mean ${cand.label}? Say yes or no.`,
+          confirmLabel: `Yes, ${cand.label}`,
+          onConfirm: () => executeIntentCandidate(cand, handlers)
+        });
+        replyAndSpeak(`Did you mean ${cand.label}? Say yes or no.`);
+        return;
+      }
+
+      if (resolution.status === 'disambiguate-two') {
+        const [candA, candB] = resolution.candidates;
+        const prompt = `Did you mean ${candA.label} or ${candB.label}?`;
+        setPendingDisambiguation({
+          prompt,
+          options: [candA, candB]
+        });
+        replyAndSpeak(prompt);
+        return;
+      }
+
+      // Unmatched deterministically -> try Optional AI Fallback if opted in & online
+      const allowedSpecs = getAllowedCommandsForPage(pageContext, availableCommands);
+      if (
+        settingsRef.current.aiVoiceFallbackEnabled &&
+        (typeof navigator === 'undefined' || navigator.onLine !== false) &&
+        allowedSpecs.length > 0
+      ) {
+        setAiFallbackBusy(true);
+        setLastAssistantReply('Checking what you meant...');
+        fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: 'voice-intent',
+            message: cleaned.slice(0, 300),
+            pageContext,
+            allowedCommands: allowedSpecs.map((c) => ({
+              id: c.id,
+              label: c.label,
+              acceptsArgument: Boolean(c.acceptsArgument)
+            })),
+            courses: availableCourses.slice(0, 40).map((c) => ({ code: c.code, title: c.title })),
+            topics: availableTopics.slice(0, 30).map((t, i) => ({ number: i + 1, title: t.title })),
+            clientUid: user?.uid,
+            maxDailyLimit: dailyAiLimitRef.current
+          })
+        })
+          .then(async (res) => {
+            if (!res.ok) {
+              throw new Error(`HTTP ${res.status}`);
+            }
+            return res.json();
+          })
+          .then((data: { commandId?: string; argument?: string }) => {
+            const matchedSpec = allowedSpecs.find((c) => c.id === data?.commandId);
+            if (!matchedSpec) {
+              logUnrecognizedPhraseIfOptedIn(cleaned, resolution.normalized.compact, pageContext);
+              speakPageExamplesFallback(pageContext);
+              return;
+            }
+            const aiCandidate: VoiceIntentCandidate = {
+              commandId: matchedSpec.id,
+              label: matchedSpec.label,
+              score: 0.8,
+              argument: data.argument || undefined,
+              requiresConfirmation: matchedSpec.requiresConfirmation
+            };
+            // Always require confirmation for submitQuiz, logout, or delete
+            if (aiCandidate.requiresConfirmation) {
+              executeIntentCandidate(aiCandidate, handlers);
+              return;
+            }
+            executeIntentCandidate(aiCandidate, handlers);
+          })
+          .catch(() => {
+            logUnrecognizedPhraseIfOptedIn(cleaned, resolution.normalized.compact, pageContext);
+            speakPageExamplesFallback(pageContext);
+          })
+          .finally(() => {
+            setAiFallbackBusy(false);
+          });
+        return;
+      }
+
+      // Deterministic unmatched & AI fallback disabled -> log if opted in, then read 3 page examples
+      logUnrecognizedPhraseIfOptedIn(cleaned, resolution.normalized.compact, pageContext);
+      speakPageExamplesFallback(pageContext);
+    },
+    [
+      getMergedHandlers,
+      inferPageContext,
+      buildAvailableCommandSet,
+      isSpeaking,
+      executeIntentCandidate,
+      replyAndSpeak,
+      user?.uid,
+      logUnrecognizedPhraseIfOptedIn,
+      speakPageExamplesFallback
     ]
   );
 
@@ -992,7 +1202,6 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
         }
       }
 
-      // Pause active TTS while listening so mic does not capture its own speaker output
       if (isSpeaking) {
         stopSpeech();
       }
@@ -1018,7 +1227,8 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
         if (transcript.trim()) {
           processVoiceCommand(transcript);
         } else {
-          replyAndSpeak(VOICE_FALLBACK_TEXT);
+          const handlers = getMergedHandlers();
+          speakPageExamplesFallback(inferPageContext(handlers));
         }
       };
 
@@ -1058,14 +1268,14 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
       recognitionRef.current = recognition;
       try {
         recognition.start();
-      } catch (err) {
+      } catch {
         setIsListening(false);
         const msg = 'Unable to start microphone right now. Please try again.';
         setVoiceError(msg);
         replyAndSpeak(msg);
       }
     },
-    [isSpeaking, stopSpeech, processVoiceCommand, replyAndSpeak]
+    [isSpeaking, stopSpeech, processVoiceCommand, replyAndSpeak, getMergedHandlers, inferPageContext, speakPageExamplesFallback]
   );
 
   const stopListening = useCallback(() => {
@@ -1080,7 +1290,6 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
   }, []);
 
   const startListening = useCallback(() => {
-    // Check privacy notice first time microphone is tapped
     let hasSeenPrivacy = false;
     try {
       hasSeenPrivacy = localStorage.getItem(STORAGE_KEY_MIC_PRIVACY) === 'true';
@@ -1123,11 +1332,29 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
     setLastTranscript('');
     setLastAssistantReply('');
     setVoiceError(null);
+    setPendingConfirmation(null);
+    setPendingDisambiguation(null);
   }, []);
 
   const cancelPendingConfirmation = useCallback(() => {
     setPendingConfirmation(null);
-    replyAndSpeak('Submission cancelled.');
+    replyAndSpeak('Cancelled.');
+  }, [replyAndSpeak]);
+
+  const selectDisambiguationOption = useCallback(
+    (index: 0 | 1) => {
+      const current = pendingDisambigRef.current;
+      if (!current) return;
+      const chosen = current.options[index];
+      setPendingDisambiguation(null);
+      executeIntentCandidate(chosen, getMergedHandlers());
+    },
+    [executeIntentCandidate, getMergedHandlers]
+  );
+
+  const cancelDisambiguation = useCallback(() => {
+    setPendingDisambiguation(null);
+    replyAndSpeak('Cancelled. Please say your command again.');
   }, [replyAndSpeak]);
 
   const enableAccessibilityMode = useCallback(() => {
@@ -1193,6 +1420,7 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
         fasterSpeech,
         slowerSpeech,
         isListening,
+        aiFallbackBusy,
         speechRecognitionSupported,
         privacyNoticePending,
         acceptMicPrivacyAndListen,
@@ -1207,6 +1435,9 @@ export const AccessibilityProvider: React.FC<{ children: React.ReactNode }> = ({
         processVoiceCommand,
         pendingConfirmation,
         cancelPendingConfirmation,
+        pendingDisambiguation,
+        selectDisambiguationOption,
+        cancelDisambiguation,
         registerVoiceHandlers
       }}
     >

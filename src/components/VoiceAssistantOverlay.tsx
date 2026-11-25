@@ -8,7 +8,8 @@ import {
   X,
   ShieldCheck,
   AlertCircle,
-  CheckCircle2
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import {
   MIC_PRIVACY_NOTICE_TEXT,
@@ -19,6 +20,7 @@ export const VoiceAssistantOverlay: React.FC = () => {
   const {
     settings,
     isListening,
+    aiFallbackBusy,
     isSpeaking,
     toggleListening,
     stopSpeech,
@@ -30,7 +32,10 @@ export const VoiceAssistantOverlay: React.FC = () => {
     voiceError,
     clearVoiceStatus,
     pendingConfirmation,
-    cancelPendingConfirmation
+    cancelPendingConfirmation,
+    pendingDisambiguation,
+    selectDisambiguationOption,
+    cancelDisambiguation
   } = useAccessibility();
 
   const [showCommandsHelp, setShowCommandsHelp] = useState(false);
@@ -40,8 +45,15 @@ export const VoiceAssistantOverlay: React.FC = () => {
     return null;
   }
 
-  const hasStatusBanner =
-    Boolean(lastTranscript || lastAssistantReply || voiceError || isListening || pendingConfirmation);
+  const hasStatusBanner = Boolean(
+    lastTranscript ||
+      lastAssistantReply ||
+      voiceError ||
+      isListening ||
+      aiFallbackBusy ||
+      pendingConfirmation ||
+      pendingDisambiguation
+  );
 
   return (
     <>
@@ -114,27 +126,33 @@ export const VoiceAssistantOverlay: React.FC = () => {
             </div>
             <div className="p-4 overflow-y-auto space-y-3 text-xs sm:text-sm text-[#E6ECFA]">
               <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
-                <div className="font-bold text-[#FFC700]">Navigation</div>
+                <div className="font-bold text-[#FFC700]">Natural Speech &amp; Pidgin Supported</div>
                 <p className="text-[#9AA8C7]">
-                  &ldquo;Go home&rdquo;, &ldquo;Open courses&rdquo;, &ldquo;Open past questions&rdquo;, &ldquo;Open timetable&rdquo;, &ldquo;Open announcements&rdquo;, &ldquo;Open quizzes&rdquo;, &ldquo;Go back&rdquo;
+                  Speak naturally! Phrases like &ldquo;I need to take the quiz&rdquo;, &ldquo;abeg carry me go courses&rdquo;, &ldquo;I wan do quiz&rdquo;, &ldquo;make you read am&rdquo;, or &ldquo;com one twenty four&rdquo; all work.
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
-                <div className="font-bold text-[#FFC700]">Courses &amp; Lessons</div>
+                <div className="font-bold text-[#FFC700]">Navigation</div>
                 <p className="text-[#9AA8C7]">
-                  &ldquo;Open course COM 124&rdquo;, &ldquo;Go to topic five&rdquo;, &ldquo;Go to chapter five&rdquo;, &ldquo;Next topic&rdquo;, &ldquo;Previous topic&rdquo;, &ldquo;What topics are there&rdquo;, &ldquo;Mark topic complete&rdquo;, &ldquo;Bookmark this&rdquo;
+                  &ldquo;Go home&rdquo;, &ldquo;Open courses&rdquo; / &ldquo;my classes&rdquo;, &ldquo;Open past papers&rdquo;, &ldquo;Open timetable&rdquo;, &ldquo;Open announcements&rdquo;, &ldquo;Open quizzes&rdquo;, &ldquo;Go back&rdquo; / &ldquo;return&rdquo;
+                </p>
+              </div>
+              <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
+                <div className="font-bold text-[#FFC700]">Courses &amp; Topics</div>
+                <p className="text-[#9AA8C7]">
+                  &ldquo;Open course COM 124&rdquo;, &ldquo;Data Structures&rdquo;, &ldquo;Open topic five&rdquo;, &ldquo;Open chapter 3&rdquo;, &ldquo;Next topic&rdquo;, &ldquo;Previous lesson&rdquo;, &ldquo;What topics are there&rdquo;, &ldquo;Mark topic complete&rdquo;, &ldquo;Bookmark this&rdquo;
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
                 <div className="font-bold text-[#FFC700]">Reading Aloud</div>
                 <p className="text-[#9AA8C7]">
-                  &ldquo;Read this page&rdquo;, &ldquo;Read from here&rdquo;, &ldquo;Read the summary&rdquo;, &ldquo;Read the notes&rdquo;, &ldquo;Pause&rdquo;, &ldquo;Resume&rdquo;, &ldquo;Stop&rdquo;, &ldquo;Repeat&rdquo;, &ldquo;Faster&rdquo;, &ldquo;Slower&rdquo;, &ldquo;Next paragraph&rdquo;, &ldquo;Previous paragraph&rdquo;
+                  &ldquo;Read this page&rdquo;, &ldquo;Read from here&rdquo;, &ldquo;Tell me the summary&rdquo;, &ldquo;Read the notes&rdquo;, &ldquo;Hold on&rdquo; / &ldquo;Pause&rdquo;, &ldquo;Go on&rdquo; / &ldquo;Resume&rdquo;, &ldquo;Quiet&rdquo; / &ldquo;Stop&rdquo;, &ldquo;Repeat&rdquo;, &ldquo;Faster&rdquo;, &ldquo;Slower&rdquo;
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
                 <div className="font-bold text-[#FFC700]">Quizzes</div>
                 <p className="text-[#9AA8C7]">
-                  &ldquo;Start quiz&rdquo;, &ldquo;Read the question&rdquo;, &ldquo;Repeat the options&rdquo;, &ldquo;Option B&rdquo;, &ldquo;True&rdquo;, &ldquo;False&rdquo;, &ldquo;Next question&rdquo;, &ldquo;Previous question&rdquo;, &ldquo;How much time is left&rdquo;, &ldquo;Submit quiz&rdquo;
+                  &ldquo;I need to take the quiz&rdquo;, &ldquo;Read the question&rdquo;, &ldquo;Repeat options&rdquo;, &ldquo;Option B&rdquo; / &ldquo;I choose B&rdquo;, &ldquo;True&rdquo;, &ldquo;False&rdquo;, &ldquo;Next&rdquo;, &ldquo;Previous&rdquo;, &ldquo;How much time is left&rdquo;, &ldquo;Submit quiz&rdquo;
                 </p>
               </div>
               <div className="p-3 rounded-xl bg-[#0A1224] border border-[#24315A] space-y-1">
@@ -166,6 +184,11 @@ export const VoiceAssistantOverlay: React.FC = () => {
                   <>
                     <Mic className="w-4 h-4 animate-pulse" />
                     <span>Listening (English Nigeria)... Speak your command</span>
+                  </>
+                ) : aiFallbackBusy ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin text-[#FFC700]" />
+                    <span>Understanding phrase...</span>
                   </>
                 ) : voiceError ? (
                   <>
@@ -214,12 +237,42 @@ export const VoiceAssistantOverlay: React.FC = () => {
                   className="min-h-[48px] px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>Yes, Submit</span>
+                  <span>{pendingConfirmation.confirmLabel || 'Yes, Confirm'}</span>
                 </button>
                 <button
                   type="button"
                   onClick={cancelPendingConfirmation}
                   className="min-h-[48px] px-3 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#E6ECFA] cursor-pointer"
+                >
+                  No / Cancel
+                </button>
+              </div>
+            )}
+
+            {pendingDisambiguation && (
+              <div className="space-y-2 pt-1">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => selectDisambiguationOption(0)}
+                    className="min-h-[48px] px-3 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold text-left flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-[#FFC700]" />
+                    <span className="truncate">1. {pendingDisambiguation.options[0].label}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => selectDisambiguationOption(1)}
+                    className="min-h-[48px] px-3 rounded-xl bg-[#2F52FF] hover:bg-[#2545df] text-white text-xs font-bold text-left flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <CheckCircle2 className="w-4 h-4 shrink-0 text-[#FFC700]" />
+                    <span className="truncate">2. {pendingDisambiguation.options[1].label}</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelDisambiguation}
+                  className="w-full min-h-[48px] px-3 rounded-xl bg-[#121C36] border border-[#24315A] text-xs font-bold text-[#9AA8C7] hover:text-white cursor-pointer"
                 >
                   Cancel
                 </button>

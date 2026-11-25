@@ -54,7 +54,8 @@
           "type": "object"
         },
         "accessibilitySettings": {
-          "type": "object"
+          "type": "object",
+          "description": "Student accessibility, speech, optional AI fallback, and voice improvement preferences"
         },
         "createdAt": {
           "type": "string",
@@ -335,6 +336,18 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["weekId", "uid", "department", "firstName", "points", "optIn"]
+    },
+    "UnrecognizedVoicePhrase": {
+      "title": "UnrecognizedVoicePhrase",
+      "description": "Opt-in unrecognized spoken phrase text and page context for admin vocabulary review (zero PII, zero audio)",
+      "type": "object",
+      "properties": {
+        "phrase": { "type": "string", "maxLength": 300 },
+        "normalizedPhrase": { "type": "string", "maxLength": 300 },
+        "pageContext": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["phrase", "normalizedPhrase", "pageContext", "createdAt"]
     }
   },
   "firestore": {
@@ -409,6 +422,10 @@
     "/weeklyLeaderboard/{docId}": {
       "schema": "WeeklyLeaderboardEntry",
       "description": "Weekly department quiz points leaderboard. Read by students; Created/updated by the student owner"
+    },
+    "/unrecognizedVoicePhrases/{phraseId}": {
+      "schema": "UnrecognizedVoicePhrase",
+      "description": "Opt-in anonymous unrecognized voice phrases for admins to review and improve command synonyms. Admins read/delete; signed-in students create text-only entries."
     }
   }
 }

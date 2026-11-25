@@ -78,7 +78,8 @@ import {
   FileText,
   UploadCloud,
   CheckCircle2,
-  FileQuestion
+  FileQuestion,
+  Mic
 } from 'lucide-react';
 import { AdminRepActivityView } from './AdminRepActivityView';
 import { AdminLinksView } from './AdminLinksView';
@@ -87,6 +88,7 @@ import { AdminPastQuestionsView } from './AdminPastQuestionsView';
 import { AdminQuizzesView } from './AdminQuizzesView';
 import { AdminActivityLogsView } from './AdminActivityLogsView';
 import { AdminStudentActivityView } from './AdminStudentActivityView';
+import { AdminVoicePhrasesView } from './AdminVoicePhrasesView';
 import { logActivity } from '../lib/activityLogger';
 import {
   dispatchPushNotification,
@@ -111,6 +113,7 @@ type AdminTab =
   | 'messages'
   | 'faqs'
   | 'links'
+  | 'voice-phrases'
   | 'activity'
   | 'settings';
 
@@ -1620,6 +1623,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
     messages: 'Messages',
     faqs: 'Chatbot FAQs',
     links: 'Links & Communities',
+    'voice-phrases': 'Voice Phrases Not Understood',
     activity: 'Activity Log',
     settings: 'Settings'
   };
@@ -1910,6 +1914,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
               <div className="flex items-center gap-2.5">
                 <Link2 className="w-4 h-4 text-[#FFC700]" />
                 <span>Links & Hubs</span>
+              </div>
+            </button>
+
+            {/* 7.6 Voice Phrases Not Understood */}
+            <button
+              onClick={() => { setActiveTab('voice-phrases'); setSidebarOpen(false); }}
+              className={`w-full flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                activeTab === 'voice-phrases'
+                  ? 'bg-[#2F52FF] text-white shadow-[0_0_12px_rgba(47,82,255,0.35)]'
+                  : 'text-[#9AA8C7] hover:text-[#E6ECFA] hover:bg-[#0F1E36]'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Mic className="w-4 h-4 text-[#FFC700]" />
+                <span>Voice Phrases</span>
               </div>
             </button>
 
@@ -2919,6 +2938,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ onNavigateHome }
           {/* TAB 7.5: LINKS & COMMUNITIES                             */}
           {/* ======================================================== */}
           {activeTab === 'links' && <AdminLinksView />}
+
+          {/* ======================================================== */}
+          {/* TAB: VOICE PHRASES NOT UNDERSTOOD                        */}
+          {/* ======================================================== */}
+          {activeTab === 'voice-phrases' && <AdminVoicePhrasesView />}
 
           {/* ======================================================== */}
           {/* TAB: ACTIVITY LOGS                                       */}
